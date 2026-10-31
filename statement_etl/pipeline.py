@@ -1,7 +1,7 @@
 """
 ph-statement-import - e-wallet / bank statement PDF -> YNAB.
 
-Steps: parse PDF transactions -> transform to YNAB format -> import into YNAB.
+Steps: parse PDF transactions -> convert to YNAB format -> import into YNAB.
 Handles every e-wallet / bank in sources.SOURCES; pick one with --source
 (default: GCash).
 
@@ -15,9 +15,11 @@ How it works:
                     split "Payment to" / MISSING
                     TRANSACTIONS) where the running balance
                     doesn't add up; a warning only               (Source.balance_warning)
-    3. Transform  - turn all rows, corrections included, into
-                    YNAB transactions (corrections flagged red)  (parse_statement ->
-                                                                  transform.transform)
+    3. Convert    - turn all rows, corrections included, into
+                    Transactions, then YNAB transactions
+                    (corrections flagged red)                    (parse_statement ->
+                                                                  convert.rows_to_transactions,
+                                                                  ynab_api.format.to_ynab)
     4. Start      - before the upload, the YNAB account balance
                     should equal the statement's starting
                     balance; a warning only, the upload goes on  (starting_balance_check ->
@@ -79,9 +81,9 @@ from decimal import Decimal
 import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
+from statement_etl.convert import rows_to_transactions
 from statement_etl.parsers.common import StatementError
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
-from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import (
     balance_check_message,
     check_starting_balance,
@@ -94,6 +96,7 @@ from statement_etl.ynab_api.client import (
     find_already_imported,
     import_transactions,
 )
+from statement_etl.ynab_api.format import to_ynab
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -108,7 +111,7 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 
 def parse_statement(pdf, password, source=DEFAULT_SOURCE):
     """ph-statement-import step: parse a statement PDF from `source` and
-    transform the rows into YNAB transactions.
+    convert the rows into YNAB transactions.
 
     Used by run_pipeline() and by app.py. Raises instead of exiting, so the
     web app can show the error on the page.
@@ -140,8 +143,8 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
     if not any(not src.is_correction_row(r) for r in rows):
         raise StatementError("no transactions found in the PDF")
 
-    # Transform every row; correction rows are uploaded too (flagged red)
-    return rows, transform(rows, source)
+    # Convert every row; correction rows are uploaded too (flagged red)
+    return rows, [to_ynab(t) for t in rows_to_transactions(rows, source)]
 
 
 def upload_transactions(transactions, account_id, plan_id, access_token=None):
@@ -317,7 +320,7 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
     # flush so this shows before any parsing error (errors go to stderr)
     print(f"Uploading {src.name} Statement...\n", flush=True)
 
-    # 1 + 3. Parsing and transforming: open the PDF with the password, read the
+    # 1 + 3. Parsing and converting: open the PDF with the password, read the
     #        transaction table, convert the rows into YNAB transactions
     try:
         rows, transactions = parse_statement(pdf_path, password, source)

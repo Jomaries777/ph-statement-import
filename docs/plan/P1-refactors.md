@@ -1,6 +1,6 @@
 # P1. Refactors (no behavior change)
 
-Status: In progress (PR 1) · Estimate: about 2 days, 3 PRs · Needs: P0
+Status: In progress (PR 2) · Estimate: about 2 days, 3 PRs · Needs: P0
 
 ## Goal
 
@@ -94,7 +94,7 @@ What each module is, so the names don't get mixed up:
 | `convert.py` (was `transform.py`) | a **step** | `rows_to_transactions(rows, source)`, plus a CLI that prints the YNAB JSON |
 | `ynab_api/format.py` | YNAB's **format** | milliunits, `import_id`, `to_ynab()` |
 
-- [ ] New `statement_etl/transaction.py`, with a module docstring explaining the three parts:
+- [x] New `statement_etl/transaction.py`, with a module docstring explaining the three parts:
   ```python
   @dataclass(frozen=True)
   class Transaction:
@@ -109,7 +109,7 @@ What each module is, so the names don't get mixed up:
       flagged: bool = False  # a row the parser added (balance correction): show it for review
   ```
   No milliunits and no `ETLPH:` prefix here. Those are YNAB's format.
-- [ ] New `statement_etl/ynab_api/format.py`: the YNAB side of the boundary. `ynab_api/` (with `client.py`, `accounts.py` and `balance.py`) is already the YNAB package; its `__init__` docstring now calls it "the YNAB destination".
+- [x] New `statement_etl/ynab_api/format.py`: the YNAB side of the boundary. `ynab_api/` (with `client.py`, `accounts.py` and `balance.py`) is already the YNAB package; its `__init__` docstring now calls it "the YNAB destination".
   - **Move** from `transform.py` without changing them: `to_milliunits`, `IMPORT_ID_PREFIX` (with its "never rename" comment), `make_import_id`, `ynab_transaction`.
   - Add `to_ynab(transaction) -> dict`:
     ```python
@@ -123,29 +123,29 @@ What each module is, so the names don't get mixed up:
     )
     ```
   - **Why this keeps every existing import_id:** GCash's `key` is its Reference No., so `make_import_id("gcash", key)` is the same call as today. The pinned test from PR 1 proves it.
-- [ ] `to_decimal`: `transform.to_decimal` and `parsers/common.to_decimal` do the same job. Keep `parsers/common.to_decimal` and use it everywhere; delete the copy in `transform.py`.
-- [ ] Move `gcash_to_ynab` to `statement_etl/parsers/gcash.py` as `to_transactions(rows) -> list[Transaction]`, together with the `GCASH` input-row comment block. Keep the logic: same date parsing, amount, payee (`gcash_payee`), memo (`"GCash Ref: …"`), `key = Reference No.` and `flagged = is_correction_row(row)`.
+- [x] `to_decimal`: `transform.to_decimal` and `parsers/common.to_decimal` do the same job. Keep `parsers/common.to_decimal` and use it everywhere; delete the copy in `transform.py`.
+- [x] Move `gcash_to_ynab` to `statement_etl/parsers/gcash.py` as `to_transactions(rows) -> list[Transaction]`, together with the `GCASH` input-row comment block. Keep the logic: same date parsing, amount, payee (`gcash_payee`), memo (`"GCash Ref: …"`), `key = Reference No.` and `flagged = is_correction_row(row)`.
   - It takes **all rows**, not one, so a source can number otherwise-identical rows. GoTyme needs this in P2.
   - Parsers no longer import anything YNAB-specific, so there's no import cycle.
-- [ ] `statement_etl/sources.py`:
+- [x] `statement_etl/sources.py`:
   - Add a **required** field `to_transactions: Callable`, documented as "rows -> list[Transaction]".
   - The `gcash` entry gets `to_transactions=gcash.to_transactions`.
   - Remove the docstring line saying transformers are registered separately.
-- [ ] **Rename `transform.py` to `convert.py`** with `git mv statement_etl/transform.py statement_etl/convert.py`, so `git log --follow` keeps its history. What's left in it:
+- [x] **Rename `transform.py` to `convert.py`** with `git mv statement_etl/transform.py statement_etl/convert.py`, so `git log --follow` keeps its history. What's left in it:
   - `rows_to_transactions(rows, source) -> list[Transaction]`: `return get_source(source).to_transactions(rows)`. It replaces `transform()`. The "Unknown source" error now comes from `get_source()`.
   - Delete `TRANSFORMERS`.
   - `main()`: `python -m statement_etl.convert rows.json --source gcash [-o out.json]` keeps **printing the same YNAB JSON** as the old `transform` CLI (`[to_ynab(t) for t in rows_to_transactions(...)]`), so P1's output diff stays empty. `--source` choices come from `SOURCES`.
   - Module docstring, first line: "ph-statement-import - turn a statement's parsed rows into neutral Transactions, using the source's own converter." Then usage, one line on the three parts, and a pointer to `docs/adding-an-e-wallet.md`.
   - Afterwards `grep -rn "statement_etl.transform\|import transform\|transform(" statement_etl tests` finds nothing.
-- [ ] `pipeline.parse_statement()`: returns `(rows, [to_ynab(t) for t in rows_to_transactions(rows, source)])`. Everything after it (web state, `import_statement()`, the YNAB client) still gets the same YNAB dicts, so nothing downstream changes.
-- [ ] **Don't build more than this.** No `Destination` registry, tracker picker or per-tracker settings until a second tracker is actually being added. Until then they'd be code that readers have to skip. `docs/architecture.md` explains where a second tracker would go.
-- [ ] Tests, one file per module (the README's rule):
+- [x] `pipeline.parse_statement()`: returns `(rows, [to_ynab(t) for t in rows_to_transactions(rows, source)])`. Everything after it (web state, `import_statement()`, the YNAB client) still gets the same YNAB dicts, so nothing downstream changes.
+- [x] **Don't build more than this.** No `Destination` registry, tracker picker or per-tracker settings until a second tracker is actually being added. Until then they'd be code that readers have to skip. `docs/architecture.md` explains where a second tracker would go.
+- [x] Tests, one file per module (the README's rule):
   - `tests/test_ynab_format.py` (new): `to_milliunits`, `make_import_id` (including the pinned id from PR 1), `ynab_transaction`, and `to_ynab()` of a `Transaction`.
   - `tests/test_parsers_gcash.py`: `gcash.to_transactions([PAYMENT])` gives the expected `Transaction`, **and** `to_ynab()` of it equals today's expected dict, field for field, including `import_id`.
   - `tests/test_convert.py`: `git mv tests/test_transform.py tests/test_convert.py`, then keep only what's about `convert.py`: `rows_to_transactions` picks the right source, an unknown source raises, and the CLI prints the same YNAB JSON as before.
   - `tests/test_sources.py`: replace the `SOURCES` vs `TRANSFORMERS` test with "every `Source` has a callable `to_transactions`".
   - Fix any other imports that `python -m unittest discover tests` reports.
-- [ ] Docs:
+- [x] Docs:
   - `docs/adding-an-e-wallet.md`: a new source is now **one parser module** (`parse_transactions`, `statement_balances`, `summary`, `to_transactions`) **plus one `Source` entry**. It returns `Transaction`s and never needs to know about YNAB. Remove the `TRANSFORMERS` step and every mention of `transform.py`.
   - `docs/architecture.md`: the three parts and the module table above.
   - README "Project layout": replace the `transform.py` line with `transaction.py` (the neutral Transaction) and `convert.py` (rows → Transactions, using the source's converter), and add `format.py` under `ynab_api/`.

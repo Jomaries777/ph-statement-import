@@ -18,10 +18,11 @@ from unittest import mock
 import ynab
 
 from statement_etl import pipeline
+from statement_etl.convert import rows_to_transactions
 from statement_etl.parsers.common import StatementError
 from statement_etl.sources import SOURCES
-from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import compare_balance
+from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
 
 ROWS = [
@@ -47,7 +48,7 @@ CORRECTION = gcash_row(
     credit="50.00",
     balance="1,299.50",
 )
-TRANSACTIONS = transform(ROWS, "gcash")
+TRANSACTIONS = [to_ynab(t) for t in rows_to_transactions(ROWS, "gcash")]
 API_ERROR = ynab.ApiException(status=500, reason="Server Error", body='{"error": "boom"}')
 
 
@@ -79,7 +80,7 @@ class ParseStatementTest(unittest.TestCase):
         self.assertEqual(rows, ROWS)
         self.assertEqual(transactions, TRANSACTIONS)
 
-    def test_correction_rows_are_transformed_too(self):
+    def test_correction_rows_are_converted_too(self):
         with gcash_parsing(ROWS + [CORRECTION]):
             _, transactions = pipeline.parse_statement("statement.pdf", "")
         self.assertEqual(len(transactions), 3)

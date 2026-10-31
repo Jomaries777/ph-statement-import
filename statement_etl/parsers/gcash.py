@@ -11,7 +11,7 @@ Output fields per transaction (same columns as the PDF table, text as shown):
     Credit         - amount text, or "" if blank
     Balance
 
-transform.py converts these rows into YNAB transactions.
+to_transactions() turns these rows into neutral Transactions (transaction.py).
 
 How it works:
     1. Open      - open the PDF with its password                (open_pdf)
@@ -56,6 +56,7 @@ from datetime import datetime
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
 from statement_etl.parsers.common import StatementError, group_lines, open_pdf, to_decimal
+from statement_etl.transaction import Transaction
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -237,7 +238,7 @@ def gcash_payee(description):
 
     "Payment to Sample Store, Merchant Transaction Number: X" -> "Sample Store"
     Anything else (e.g. "Received GCash from ...", "Refund from Angkas") is kept
-    as it is. Used for "Refund from <payee>" rows and by transform.py.
+    as it is. Used for "Refund from <payee>" rows and by to_transactions().
     """
     match = GCASH_PAYMENT_RE.match(description)
     if not match:
@@ -356,7 +357,8 @@ def _check_totals(transactions, totals):
 # Registered for GCash in sources.py, which pipeline.py and app.py use:
 #   is_correction_row(), balance_corrections(), balance_warning(),
 #   statement_balances() (for the YNAB balance checks in ynab_api/balance.py /
-#   ynab_api/client.py) and summary(). transform.py uses is_correction_row().
+#   ynab_api/client.py), summary() and to_transactions(), which uses
+#   is_correction_row().
 # =============================================================================
 
 # Descriptions of correction rows that have no payee
@@ -586,6 +588,55 @@ def summary(rows):
     debit = sum(to_decimal(r["Debit"]) for r in statement_rows)
     credit = sum(to_decimal(r["Credit"]) for r in statement_rows)
     return f"Total debit {debit:,.2f} · Total credit {credit:,.2f} · matches statement ✓"
+
+
+# =============================================================================
+# CONVERTING - rows -> neutral Transactions (registered in sources.py)
+#
+# Input row example:
+#   {
+#     "Date and Time": "2026-10-05 08:15 AM",
+#     "Description":   "Payment to Sample Store, Merchant Transaction Number: X1",
+#     "Reference No.": "1000000000002",
+#     "Debit":         "249.00",
+#     "Credit":        "",
+#     "Balance":       "1750.25"
+#   }
+#
+# The Reference No. is the Transaction key, so YNAB's import_id is
+# make_import_id("gcash", "1000000000002") (ynab_api/format.py).
+# =============================================================================
+
+
+def to_transactions(rows):
+    """Convert GCash rows into neutral Transactions, one per row.
+
+    Balance-correction rows (STARTING BALANCE CORRECTION, "Payment to" /
+    "Refund from" legs added by a split or a running-balance gap, MISSING
+    TRANSACTIONS IN GCASH STATEMENT) are converted too, with flagged=True.
+    Every row's memo is "GCash Ref: <Reference No.>".
+    """
+    return [_to_transaction(row) for row in rows]
+
+
+def _to_transaction(row):
+    # Money in (Credit) is positive, money out (Debit) is negative.
+    # One of the two cells is always blank, which to_decimal() treats as 0.
+    amount = to_decimal(row["Credit"]) - to_decimal(row["Debit"])
+
+    # Reference No. is unique per transaction; correction rows use a kind
+    # letter + digits (e.g. R1000000000002, M0000123456789), also unique and stable
+    reference = row["Reference No."]
+
+    return Transaction(
+        source="gcash",
+        key=reference,
+        date=datetime.strptime(row["Date and Time"], DATE_TIME_FORMAT),
+        payee=gcash_payee(row["Description"]),
+        amount=amount,
+        memo="GCash Ref: " + reference,
+        flagged=is_correction_row(row),
+    )
 
 
 # =============================================================================

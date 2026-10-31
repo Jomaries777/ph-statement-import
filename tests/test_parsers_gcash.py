@@ -1,6 +1,6 @@
 """
 Tests for parsers/gcash.py: reading the GCash table from page words, the
-totals check and the running-balance corrections.
+totals check, the running-balance corrections and to_transactions().
 
 Run from the project folder:  python -m unittest discover tests
 
@@ -20,6 +20,8 @@ from unittest import mock
 
 from statement_etl.parsers import gcash
 from statement_etl.parsers.common import StatementError, group_lines
+from statement_etl.transaction import Transaction
+from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import (
     BALANCE_X1,
     CREDIT_X1,
@@ -692,6 +694,90 @@ class CorrectionRowsTest(unittest.TestCase):
             gcash.summary(STATEMENT),
             "Total debit 250.50 · Total credit 1,000.00 · matches statement ✓",
         )
+
+
+# =============================================================================
+# CONVERTING - rows -> neutral Transactions
+# =============================================================================
+
+PAYMENT = gcash_row(
+    "2026-10-05 08:15 AM",
+    "Payment to Test Shop, Merchant Transaction Number: X1",
+    "1000000000002",
+    debit="249.00",
+    balance="1,750.25",
+)
+RECEIVED = gcash_row(
+    "2026-10-01 09:00 PM",
+    "Received GCash from Test Sender",
+    "1000000000001",
+    credit="1,000.00",
+    balance="1,999.25",
+)
+
+
+class ToTransactionsTest(unittest.TestCase):
+    def test_money_out(self):
+        self.assertEqual(
+            gcash.to_transactions([PAYMENT]),
+            [
+                Transaction(
+                    source="gcash",
+                    key="1000000000002",
+                    date=datetime(2026, 10, 5, 8, 15),
+                    payee="Test Shop",
+                    amount=Decimal("-249.00"),
+                    memo="GCash Ref: 1000000000002",
+                    flagged=False,
+                )
+            ],
+        )
+
+    def test_money_in(self):
+        [t] = gcash.to_transactions([RECEIVED])
+        self.assertEqual(t.amount, Decimal("1000.00"))
+        self.assertEqual(t.payee, "Received GCash from Test Sender")
+        self.assertEqual(t.date, datetime(2026, 10, 1, 21, 0))
+
+    def test_correction_rows_are_flagged(self):
+        row = gcash_row(
+            "2026-10-02 10:00 AM", "Refund from Test Shop", "R1000000000002", credit="50.00"
+        )
+        [t] = gcash.to_transactions([row])
+        self.assertTrue(t.flagged)
+        self.assertEqual(t.memo, "GCash Ref: R1000000000002")
+        self.assertEqual(t.key, "R1000000000002")
+
+    def test_key_is_only_the_reference(self):
+        # The key becomes YNAB's import_id, so later fixes to the amount,
+        # payee or date must not change it
+        changed = {
+            **PAYMENT,
+            "Debit": "600.00",
+            "Description": "Payment to Other Shop",
+            "Date and Time": "2026-10-21 07:00 AM",
+        }
+        [before, after] = gcash.to_transactions([PAYMENT, changed])
+        self.assertEqual((before.source, before.key), (after.source, after.key))
+
+    def test_ynab_format_is_unchanged(self):
+        # The same dict the old transform.gcash_to_ynab() gave, import_id included
+        self.assertEqual(
+            to_ynab(gcash.to_transactions([PAYMENT])[0]),
+            {
+                "date": "2026-10-05",
+                "payee_name": "Test Shop",
+                "import_id": "ETLPH:707f7b0d95f2bb43995f608f704d67",
+                "amount": -249000,
+                "memo": "GCash Ref: 1000000000002",
+                "flag_color": None,
+            },
+        )
+
+    def test_one_per_row_in_order(self):
+        keys = [t.key for t in gcash.to_transactions([PAYMENT, RECEIVED])]
+        self.assertEqual(keys, ["1000000000002", "1000000000001"])
+        self.assertEqual(gcash.to_transactions([]), [])
 
 
 # =============================================================================

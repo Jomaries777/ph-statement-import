@@ -19,10 +19,11 @@ from decimal import Decimal
 from unittest import mock
 
 import tests.fakes  # noqa: F401 - loads the safety net (no YNAB, no keychain)
-from statement_etl import pipeline, transform
+from statement_etl import pipeline
 from statement_etl.parsers import gcash
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, Source, get_source
-from statement_etl.transform import TRANSFORMERS, make_import_id, ynab_transaction
+from statement_etl.transaction import Transaction
+from statement_etl.ynab_api.format import to_ynab
 
 # =============================================================================
 # REGISTRY - every source is wired up consistently
@@ -30,8 +31,9 @@ from statement_etl.transform import TRANSFORMERS, make_import_id, ynab_transacti
 
 
 class RegistryTest(unittest.TestCase):
-    def test_every_source_has_a_transformer(self):
-        self.assertEqual(set(SOURCES), set(TRANSFORMERS))
+    def test_every_source_has_a_converter(self):
+        for source in SOURCES.values():
+            self.assertTrue(callable(source.to_transactions), source.key)
 
     def test_source_keys_match_their_entries(self):
         for key, source in SOURCES.items():
@@ -72,6 +74,7 @@ class SourceDefaultsTest(unittest.TestCase):
             columns=("Date",),
             parse=lambda pdf, password: [],
             statement_balances=lambda rows: {},
+            to_transactions=lambda rows: [],
         )
         row = {"Date": "2026-10-01"}
         self.assertEqual(source.amount_columns, ())
@@ -128,7 +131,7 @@ class GCashTest(unittest.TestCase):
             self.assertEqual(tuple(row), gcash.COLUMNS)
 
     def test_row_to_ynab(self):
-        t = transform.gcash_to_ynab(GCASH_ROWS[1])
+        [t] = [to_ynab(t) for t in gcash.to_transactions([GCASH_ROWS[1]])]
         self.assertEqual(t["date"], "2026-10-02")
         self.assertEqual(t["amount"], -250500)  # milliunits, money out is negative
         self.assertEqual(t["payee_name"], "Test Shop")
@@ -136,8 +139,8 @@ class GCashTest(unittest.TestCase):
         self.assertIsNone(t["flag_color"])
 
     def test_import_id_is_stable(self):
-        first = transform.gcash_to_ynab(GCASH_ROWS[1])["import_id"]
-        again = transform.gcash_to_ynab(dict(GCASH_ROWS[1]))["import_id"]
+        first = to_ynab(gcash.to_transactions([GCASH_ROWS[1]])[0])["import_id"]
+        again = to_ynab(gcash.to_transactions([dict(GCASH_ROWS[1])])[0])["import_id"]
         self.assertEqual(first, again)
         self.assertLessEqual(len(first), 36)  # YNAB's limit
 
@@ -175,14 +178,20 @@ FAKE_ROWS = [
 ]
 
 
-def fake_to_ynab(row):
-    day, month, year = row["Date"].split("/")
-    return ynab_transaction(
-        date=date(int(year), int(month), int(day)),
-        payee_name=row["Details"],
-        amount=Decimal(row["Amount"]),
-        import_id=make_import_id("fake", row["Date"] + row["Running Balance"]),
-    )
+def fake_to_transactions(rows):
+    transactions = []
+    for row in rows:
+        day, month, year = row["Date"].split("/")
+        transactions.append(
+            Transaction(
+                source="fake",
+                key=row["Date"] + row["Running Balance"],
+                date=date(int(year), int(month), int(day)),
+                payee=row["Details"],
+                amount=Decimal(row["Amount"]),
+            )
+        )
+    return transactions
 
 
 FAKE = Source(
@@ -194,11 +203,11 @@ FAKE = Source(
     text_column="Details",
     parse=lambda pdf, password: [dict(r) for r in FAKE_ROWS],
     statement_balances=lambda rows: {"starting": Decimal("100.00"), "ending": Decimal("250.00")},
+    to_transactions=fake_to_transactions,
 )
 
 
 @mock.patch.dict(SOURCES, {"fake": FAKE})
-@mock.patch.dict(TRANSFORMERS, {"fake": fake_to_ynab})
 class OtherColumnsTest(unittest.TestCase):
     def test_parse_statement(self):
         rows, transactions = pipeline.parse_statement(None, "", source="fake")

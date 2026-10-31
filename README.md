@@ -74,9 +74,10 @@ The page then also shows a **Connect with YNAB login** button next to the token 
 statement_etl/
 ├── sources.py      # the supported e-wallets / banks and their columns
 ├── parsers/        # one module per statement source (gcash.py) + shared helpers (common.py)
-├── transform.py    # parsed rows -> YNAB transactions
+├── transaction.py  # the neutral Transaction, in no budgeting app's format
+├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
-├── ynab_api/       # YNAB calls: client.py (upload), balance.py, accounts.py
+├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py
 └── web/            # Flask app, token store, page template
 tests/
 ├── test_<module>.py  # one unit test file per module above, e.g. test_parsers_gcash.py
