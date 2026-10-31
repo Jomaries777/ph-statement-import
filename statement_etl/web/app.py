@@ -26,6 +26,8 @@ and their helpers:
     ynab_oauth.py  - YNAB OAuth token calls (no Flask session)
     config.py      - PORT and the OAuth REDIRECT_URI
     token_store.py - the token saved in the OS secure store
+The page is templates/index.html, with its CSS and JavaScript in static/app.css
+and static/app.js (no inline code, so a strict Content-Security-Policy works).
 A balance mismatch is only a warning: the upload is always allowed. A newly
 created YNAB account gets its Starting Balance set to the statement's on upload.
 

@@ -152,6 +152,18 @@ class IndexTest(WebTest):
         self.assertIn(b"GCash", response.data)
         self.assertIn(b'value="gcash"', response.data)
 
+    def test_no_inline_script_or_style(self):
+        # A strict Content-Security-Policy blocks inline code: it lives in static/
+        page = self.client.get("/").data
+        self.assertIn(b'<script src="/static/app.js">', page)
+        self.assertIn(b'<link rel="stylesheet" href="/static/app.css">', page)
+        self.assertNotIn(b"<script>", page)
+        self.assertNotIn(b"<style", page)
+        self.assertNotIn(b"style=", page)
+        for path in ("/static/app.js", "/static/app.css"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+
 
 class StatusTest(WebTest):
     def test_not_connected(self):
