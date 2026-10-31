@@ -78,7 +78,7 @@ statement_etl/
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
 ├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py
-└── web/            # Flask app, token store, page template
+└── web/            # Flask app, token store, page template (templates/) and its CSS / JS (static/)
 tests/
 ├── test_<module>.py  # one unit test file per module above, e.g. test_parsers_gcash.py
 ├── fakes.py          # made-up PDF words, GCash rows and YNAB objects shared by the tests

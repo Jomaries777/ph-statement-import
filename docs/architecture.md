@@ -52,7 +52,8 @@ Entry points sit on top of the pipeline:
 | `statement_etl/web/state.py` | `STORE`, each browser's server-side state (tokens and parsed rows, in memory only) |
 | `statement_etl/web/config.py` | `PORT` and the OAuth `REDIRECT_URI`; loads `.env` |
 | `statement_etl/web/token_store.py` | Saving and deleting the YNAB personal access token in the OS secure store via `keyring` |
-| `statement_etl/web/templates/index.html` | Single-file HTML/CSS/JS front-end for the 4-step import workflow |
+| `statement_etl/web/templates/index.html` | The page for the 4-step import workflow |
+| `statement_etl/web/static/app.css`, `app.js` | The page's styles and script (no inline code, so a strict Content-Security-Policy works) |
 
 ## Design and roadmap
 
