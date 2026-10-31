@@ -312,6 +312,30 @@ class GoTymeTest(unittest.TestCase):
             "Total credit 1,000.00 · Total debit 249.00 · matches statement ✓",
         )
 
+    def test_email_and_password_settings(self):
+        source = get_source("gotyme")
+        self.assertEqual(
+            source.email_query,
+            'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" '
+            "has:attachment filename:pdf",
+        )
+        self.assertEqual(source.password_inputs, ("birth_date",))
+        self.assertIs(source.build_password, gotyme.build_password)
+        self.assertEqual(source.build_password({"birth_date": "1990-01-31"}), "01311990")
+
+    def test_attachment_pattern_picks_only_the_everyday_pdf(self):
+        # One GoTyme email carries both PDFs; the savings one isn't this source.
+        # Matched the way autoimport/gmail.py does: re.search, ignoring case.
+        pattern = re.compile(get_source("gotyme").attachment_pattern, re.IGNORECASE)
+        for filename, matches in (
+            ("GoTymeStatementForEverydayDepositAccount_20261031_101500.pdf", True),
+            ("GoTyme_BankStatement_SavingsAccounts_20261031_101500.pdf", False),
+            ("GoTymeStatementForEverydayDepositAccount_20261031_101500.pdf.zip", False),
+            ("Copy of GoTymeStatementForEverydayDepositAccount_20261031_101500.pdf", False),
+        ):
+            with self.subTest(filename=filename):
+                self.assertEqual(bool(pattern.search(filename)), matches)
+
 
 # =============================================================================
 # A SOURCE WITH OTHER COLUMNS - the pipeline and the web app only use what

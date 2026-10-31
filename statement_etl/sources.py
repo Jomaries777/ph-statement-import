@@ -74,7 +74,9 @@ class Source:
         attachment_pattern - regex for the PDF attachment's filename (an email
                              may carry several PDFs)
         password_inputs    - names of the inputs the user enters once, e.g.
-                             ("last_name", "mobile_last4")
+                             ("last_name", "mobile_last4"). A new name gets its
+                             label and field type from INPUT_FIELDS
+                             (web/auto_import.py).
         build_password     - dict of inputs -> PDF password
     """
 
@@ -143,6 +145,15 @@ SOURCES = {
             statement_balances=gotyme.statement_balances,
             summary=gotyme.summary,
             to_transactions=gotyme.to_transactions,
+            email_query=(
+                'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" '
+                "has:attachment filename:pdf"
+            ),
+            # One email carries two PDFs: this Everyday account's, and the savings
+            # (GoalSave) one, which needs its own source once its layout is known.
+            attachment_pattern=r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",
+            password_inputs=("birth_date",),
+            build_password=gotyme.build_password,
         ),
     ]
 }

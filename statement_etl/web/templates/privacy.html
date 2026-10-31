@@ -49,9 +49,10 @@
   <ul>
     <li><strong>What emails are read:</strong> Auto-import asks for read-only Gmail access
       (<code>gmail.readonly</code>) and searches only for emails matching each enabled source's
-      statement search (for example, GCash Transaction History emails with a PDF attachment).
-      Other emails are never opened. Each matching PDF attachment is read in memory only, parsed,
-      imported to YNAB unapproved, and discarded. No email body, PDF or statement transaction is
+      statement search (for example, GCash Transaction History emails, or GoTyme Bank Statement of
+      Account emails, with a PDF attachment). Other emails are never opened. Each matching PDF
+      attachment is read in memory only, parsed, imported to YNAB unapproved, and discarded.
+      No email body, PDF or statement transaction is
       stored — only a run-log entry (message ID, timestamps, source, YNAB account ID, status, and
       created / skipped counts) so an email is never imported twice.</li>
     <li><strong>What is stored, and for how long:</strong> Because background checks run every
@@ -59,8 +60,9 @@
       Google account in Google Cloud Firestore (<code>us-west1</code>): your Google account ID and
       email address, your chosen YNAB plan and e-wallet-to-account mappings, and — encrypted in
       the app before being written to Firestore — your Gmail refresh token, your YNAB refresh
-      token, and the PDF password inputs you enter once (such as your last name and the last
-      4 digits of your mobile number). They are kept until you turn auto-import off.</li>
+      token, and the PDF password inputs you enter once: for GCash, your last name and the last
+      4 digits of your mobile number; for GoTyme, your date of birth. They are kept
+      until you turn auto-import off.</li>
     <li><strong>Turn off and delete:</strong> Clicking <strong>Turn off and delete my data</strong>
       on <code>/auto-import</code> deletes your Firestore record and all of its run-log entries at
       once, revokes the app's Google token with Google, and signs you out of Google on this app.

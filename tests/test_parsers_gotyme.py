@@ -432,5 +432,22 @@ class MainTest(unittest.TestCase):
         self.assertEqual(err, f"Wrote 2 transactions to {path}\n")
 
 
+# =============================================================================
+# PDF PASSWORD - date of birth as MMDDYYYY, for Gmail auto-import
+# =============================================================================
+
+
+class BuildPasswordTest(unittest.TestCase):
+    def test_date_of_birth_as_mmddyyyy(self):
+        self.assertEqual(gotyme.build_password({"birth_date": "1990-01-31"}), "01311990")
+        self.assertEqual(gotyme.build_password({"birth_date": "2001-12-05"}), "12052001")
+
+    def test_a_date_that_does_not_exist_raises_value_error(self):
+        # /auto-import shows these as "Invalid password input" instead of saving them
+        for bad in ("1990-02-30", "1990-13-01", "not a date", ""):
+            with self.subTest(birth_date=bad), self.assertRaises(ValueError):
+                gotyme.build_password({"birth_date": bad})
+
+
 if __name__ == "__main__":
     unittest.main()

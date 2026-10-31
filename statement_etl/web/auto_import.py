@@ -61,8 +61,7 @@ blueprint = Blueprint("auto_import", __name__)
 PHT = timezone(timedelta(hours=8))
 
 # Generic metadata keyed by input name from Source.password_inputs (no source
-# special cases). Adding a new source input (e.g. P6's "birth_date") only adds
-# one entry here.
+# special cases). Adding a new source input only adds one entry here.
 INPUT_FIELDS = {
     "last_name": {
         "label": "Last name",
@@ -81,6 +80,14 @@ INPUT_FIELDS = {
         "autocomplete": "off",
         "pattern": re.compile(r"^\d{4}$"),
         "pattern_error": "Last 4 of mobile must be 4 digits.",
+    },
+    # A date field: the browser sends YYYY-MM-DD whatever format it shows
+    "birth_date": {
+        "label": "Date of birth",
+        "type": "date",
+        "autocomplete": "bday",
+        "pattern": re.compile(r"^\d{4}-\d{2}-\d{2}$"),
+        "pattern_error": "Date of birth must be a date.",
     },
 }
 
