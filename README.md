@@ -106,6 +106,20 @@ Over plain `http://localhost` the browser won't send the session cookie back, be
 
 `FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode. If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
 
+## Deploy
+
+Every merge to `main` deploys to Google Cloud Run through [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), once the owner approves it in the GitHub `production` environment. The workflow runs the unit tests, builds the Docker image, pushes it to Artifact Registry and deploys it. It logs in to Google Cloud with Workload Identity Federation, so no keys are stored in GitHub.
+
+The one-time Google Cloud setup is in [docs/plan/P4-go-live-on-gcp.md](docs/plan/P4-go-live-on-gcp.md). The workflow reads these variables from the `production` environment (variables, not secrets; none is sensitive):
+
+| Variable | What it is |
+|---|---|
+| `GCP_PROJECT_ID` | The Google Cloud project |
+| `GCP_WIF_PROVIDER` | The Workload Identity Federation provider GitHub logs in through |
+| `GCP_DEPLOYER` | The service account that deploys |
+| `PUBLIC_URL` | The app's Cloud Run URL (see [Hosted mode](#hosted-mode)) |
+| `YNAB_CLIENT_ID` | From the YNAB OAuth application |
+
 ## Project layout
 
 ```
