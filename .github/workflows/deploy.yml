@@ -1,0 +1,66 @@
+# Builds the Docker image and deploys it to Cloud Run on every push to main,
+# after approval in the GitHub "production" environment. Never runs on pull
+# requests, so code from forks can't reach Google Cloud. One-time Google Cloud
+# setup: docs/plan/P4-go-live-on-gcp.md.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write  # Workload Identity Federation: logs in to Google Cloud with no keys
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      IMAGE: us-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/app/ph-statement-import:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Unit tests only. The browser tests run in tests.yml; here they skip,
+      # because Playwright isn't installed.
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run unit tests
+        env:
+          FLASK_SECRET_KEY: test
+        run: python -m unittest discover tests
+
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER }}
+
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+
+      - name: Log Docker in to Artifact Registry
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Build and push the image
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      # The flags keep the bill at $0; see "Cost check" in P4 before changing one.
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ph-statement-import --region=us-west1 \
+            --image="$IMAGE" \
+            --service-account=app-runtime@$PROJECT.iam.gserviceaccount.com \
+            --allow-unauthenticated --min-instances=0 --max-instances=1 --concurrency=8 \
+            --cpu=1 --memory=512Mi --timeout=60 --session-affinity \
+            --set-secrets=APP_CONFIG=app-config:latest \
+            --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }}
