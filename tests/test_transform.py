@@ -20,18 +20,18 @@ from statement_etl import transform
 from tests.fakes import gcash_row
 
 PAYMENT = gcash_row(
-    "2026-10-20 06:50 AM",
+    "2026-10-05 08:15 AM",
     "Payment to Test Shop, Merchant Transaction Number: X1",
     "1000000000002",
-    debit="599.00",
-    balance="4,407.56",
+    debit="249.00",
+    balance="1,750.25",
 )
 RECEIVED = gcash_row(
     "2026-10-01 09:00 PM",
     "Received GCash from Test Sender",
     "1000000000001",
     credit="1,000.00",
-    balance="5,006.56",
+    balance="1,999.25",
 )
 
 
@@ -41,7 +41,7 @@ class AmountsTest(unittest.TestCase):
         self.assertEqual(transform.to_decimal(""), Decimal(0))
 
     def test_to_milliunits(self):
-        self.assertEqual(transform.to_milliunits(Decimal("-599.00")), -599000)
+        self.assertEqual(transform.to_milliunits(Decimal("-249.00")), -249000)
         self.assertEqual(transform.to_milliunits(Decimal("1234.56")), 1234560)
         self.assertEqual(transform.to_milliunits(Decimal("0.01")), 10)
         self.assertEqual(transform.to_milliunits(Decimal(0)), 0)
@@ -102,10 +102,10 @@ class GCashToYnabTest(unittest.TestCase):
         self.assertEqual(
             transform.gcash_to_ynab(PAYMENT),
             {
-                "date": "2026-10-20",
+                "date": "2026-10-05",
                 "payee_name": "Test Shop",
                 "import_id": transform.make_import_id("gcash", "1000000000002"),
-                "amount": -599000,
+                "amount": -249000,
                 "memo": "GCash Ref: 1000000000002",
                 "flag_color": None,
             },
