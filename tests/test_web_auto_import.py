@@ -446,7 +446,12 @@ class GoogleSignInTest(AutoImportWebTest):
 
     def test_callback_rejects_missing_refresh_token_with_clear_message(self):
         tokens = {"access_token": "ga", "id_token": "id-tok"}  # no refresh_token
-        claims = {"sub": SUB, "email": ALLOWED_EMAIL, "family_name": FAMILY_NAME}
+        claims = {
+            "sub": SUB,
+            "email": ALLOWED_EMAIL,
+            "email_verified": True,
+            "family_name": FAMILY_NAME,
+        }
         with (
             mock.patch.object(gmail, "exchange_code", return_value=tokens),
             mock.patch.object(gmail, "decode_id_token", return_value=claims),
@@ -463,13 +468,42 @@ class GoogleSignInTest(AutoImportWebTest):
         self.assertIn("did not return a refresh token", page)
         self.assertIn("Third-party access", page)
 
+    def test_unverified_email_is_rejected_before_the_invite_list(self):
+        tokens = {
+            "access_token": "ga",
+            "refresh_token": GMAIL_REFRESH_TOKEN,
+            "id_token": "id-tok",
+        }
+        base = {"sub": SUB, "email": ALLOWED_EMAIL, "family_name": FAMILY_NAME}
+        for verified in ({"email_verified": False}, {"email_verified": "true"}, {}):
+            with (
+                self.subTest(verified=verified),
+                mock.patch.object(gmail, "exchange_code", return_value=tokens),
+                mock.patch.object(gmail, "decode_id_token", return_value={**base, **verified}),
+            ):
+                response = self.callback({"code": "c", "state": "google-state-1"})
+                self.assertEqual(
+                    response.headers["Location"], "/auto-import?google_error=email_not_verified"
+                )
+                self.assertEqual(self.store.users, {})
+                with self.client.session_transaction() as sess:
+                    self.assertNotIn("google_sub", sess)
+
+        page = self.client.get(response.headers["Location"]).data.decode()
+        self.assertIn("hasn&#39;t verified this account&#39;s email address", page)
+
     def test_non_allowlisted_email_shows_friendly_page_and_stores_nothing(self):
         tokens = {
             "access_token": "ga",
             "refresh_token": GMAIL_REFRESH_TOKEN,
             "id_token": "id-tok",
         }
-        claims = {"sub": SUB, "email": UNINVITED_EMAIL, "family_name": "Visitor"}
+        claims = {
+            "sub": SUB,
+            "email": UNINVITED_EMAIL,
+            "email_verified": True,
+            "family_name": "Visitor",
+        }
         with (
             mock.patch.object(gmail, "exchange_code", return_value=tokens),
             mock.patch.object(gmail, "decode_id_token", return_value=claims),
@@ -502,6 +536,7 @@ class GoogleSignInTest(AutoImportWebTest):
         claims = {
             "sub": SUB,
             "email": "  JUAN@EXAMPLE.TEST  ",
+            "email_verified": True,
             "family_name": f"  {FAMILY_NAME}  ",
         }
         with (
@@ -974,7 +1009,12 @@ class LimitsPrivacyAndLoggingTest(AutoImportWebTest):
             "refresh_token": GMAIL_REFRESH_TOKEN,
             "id_token": "id-tok",
         }
-        claims = {"sub": SUB, "email": ALLOWED_EMAIL, "family_name": FAMILY_NAME}
+        claims = {
+            "sub": SUB,
+            "email": ALLOWED_EMAIL,
+            "email_verified": True,
+            "family_name": FAMILY_NAME,
+        }
         rotated = {
             "access_token": NEW_YNAB_ACCESS,
             "refresh_token": NEW_YNAB_REFRESH,
@@ -1084,7 +1124,12 @@ class AutoImportBrowserTest(unittest.TestCase):
             "refresh_token": GMAIL_REFRESH_TOKEN,
             "id_token": "id-tok",
         }
-        claims = {"sub": SUB, "email": ALLOWED_EMAIL, "family_name": FAMILY_NAME}
+        claims = {
+            "sub": SUB,
+            "email": ALLOWED_EMAIL,
+            "email_verified": True,
+            "family_name": FAMILY_NAME,
+        }
         page.route(
             "https://accounts.google.com/**",
             lambda route: route.fulfill(body="google-consent"),

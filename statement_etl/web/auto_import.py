@@ -8,7 +8,8 @@ these routes:
 
     GET  /auto-import             - setup view (W2) when off, run log (W3) when on
     GET  /google/login            - send the browser to Google's consent screen
-    GET  /google/callback         - check state + ALLOWED_GOOGLE_EMAILS, save token
+    GET  /google/callback         - check state, a verified email on ALLOWED_GOOGLE_EMAILS,
+                                    save token
     POST /api/auto-import         - validate and save plan, mappings, password inputs
     POST /api/auto-import/test    - try password inputs on the newest statement email
     POST /api/auto-import/delete  - delete stored data, revoke Gmail, sign out
@@ -87,6 +88,10 @@ GOOGLE_ERRORS = {
     "state_mismatch": "Google sign-in expired or didn't match this session. Try again.",
     "token_exchange_failed": "Could not finish Google sign-in. Try connecting Gmail again.",
     "missing_profile": "Google did not return an account ID and email address.",
+    "email_not_verified": (
+        "Google hasn't verified this account's email address. Verify it in your "
+        "Google Account, then connect Gmail again."
+    ),
     "missing_refresh_token": (
         "Google did not return a refresh token (consent wasn't granted). "
         "Remove this app in your Google Account → Security → Third-party access, "
@@ -352,6 +357,11 @@ def google_callback():
     family_name = (claims.get("family_name") or "").strip()
     if not sub or not email:
         return redirect("/auto-import?google_error=missing_profile")
+
+    # The invite list matches email addresses, so only trust one Google has verified
+    if claims.get("email_verified") is not True:
+        session.pop("google_sub", None)
+        return redirect("/auto-import?google_error=email_not_verified")
 
     # Reject non-invited accounts before writing anything to Firestore or session
     if not is_email_allowed(email):
