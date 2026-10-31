@@ -26,6 +26,18 @@ Entry points sit on top of the pipeline:
 - **Web app (`statement_etl/web/`):** Local Flask web UI (`python -m statement_etl.web`), split into two blueprints: `upload.py` (the page and the import steps) and `ynab_auth.py` (connecting to YNAB). It calls the same three pipeline steps as the CLI and stores personal access tokens in the OS keyring (`token_store.py`).
 - **Auto-import runner (planned in P5):** Background polling for emailed statements, calling the same `parse_statement()` and `import_statement()`.
 
+## Local and hosted mode
+
+One setting, `PUBLIC_URL`, picks the mode. Empty (the default) is **local mode**: the app on your own computer, bound to `127.0.0.1`. Set, it is **hosted mode**: the app on a server for other people. `config.HOSTED` is read once at startup, and each rule lives next to the code it changes:
+
+| Rule in hosted mode | Where |
+|---|---|
+| `FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required; `APP_CONFIG` JSON is copied into the environment | `config.py` `load_hosted_config()` |
+| OAuth redirect URI is `PUBLIC_URL/oauth/callback` | `config.py` `REDIRECT_URI` |
+| No personal access tokens: `/api/token` answers 403 | `ynab_auth.py` `api_token()` |
+| The OS secure store is never read or written | `ynab_auth.py` `get_token()` and `oauth_logout()`; `upload.py` `/api/status`; `app.py` `main()` |
+| The page shows only **Connect with YNAB login** | `templates/index.html` (`token_allowed`), `static/app.js` |
+
 ## Extending the app
 
 - **Adding an e-wallet or bank** means writing a parser in `statement_etl/parsers/` and registering a `Source` in `statement_etl/sources.py`. No YNAB or HTML code changes are needed. See [Adding an e-wallet or bank](adding-an-e-wallet.md).
@@ -50,7 +62,7 @@ Entry points sit on top of the pipeline:
 | `statement_etl/web/ynab_auth.py` | Blueprint `ynab_auth`: `/oauth/*` and `/api/token`; `get_token()` and `ynab_call()`, which every YNAB call from the page goes through |
 | `statement_etl/web/ynab_oauth.py` | YNAB OAuth token exchange and refresh, with no Flask session (so a background job can use it) |
 | `statement_etl/web/state.py` | `STORE`, each browser's server-side state (tokens and parsed rows, in memory only) |
-| `statement_etl/web/config.py` | `PORT` and the OAuth `REDIRECT_URI`; loads `.env` |
+| `statement_etl/web/config.py` | `PORT`, the OAuth `REDIRECT_URI` and `HOSTED` (hosted mode); loads `.env` and, in hosted mode, `APP_CONFIG` |
 | `statement_etl/web/token_store.py` | Saving and deleting the YNAB personal access token in the OS secure store via `keyring` |
 | `statement_etl/web/templates/index.html` | The page for the 4-step import workflow |
 | `statement_etl/web/static/app.css`, `app.js` | The page's styles and script (no inline code, so a strict Content-Security-Policy works) |

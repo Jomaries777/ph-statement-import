@@ -42,8 +42,10 @@
   <section id="card-ynab" class="card">
     <h2><span><span class="num">2</span>YNAB</span><span class="done">✓</span></h2>
     <!-- Personal access token: saved in the OS secure store when "Remember" is
-         ticked, otherwise kept in the app's memory for this session only -->
+         ticked, otherwise kept in the app's memory for this session only.
+         Hosted mode (token_allowed false) has no token field: YNAB login only. -->
     <form id="ynab-off">
+      {%- if token_allowed %}
       <div class="row"><label for="ynab-token">Access token</label>
         <input id="ynab-token" name="token" type="password" autocomplete="off"
                spellcheck="false" placeholder="YNAB personal access token"></div>
@@ -57,6 +59,12 @@
       <p class="muted">Create one in YNAB → Account Settings →
         <a href="https://app.ynab.com/settings/developer" target="_blank" rel="noopener">Developer Settings</a>
         → New Token. <span id="token-note">It is kept only while this app runs.</span></p>
+      {%- else %}
+      <div class="actions">
+        <button id="connect-btn" type="button">Connect with YNAB login</button>
+      </div>
+      <p class="muted">You log in on YNAB's own page; this app never sees your YNAB password.</p>
+      {%- endif %}
     </form>
     <div id="ynab-on" class="actions hidden">
       <span id="ynab-on-label">● Connected to YNAB</span>

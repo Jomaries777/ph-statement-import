@@ -61,12 +61,28 @@ python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick 
 
 ## Optional: OAuth instead of a token
 
-If you host the app for other people, you can use YNAB OAuth instead of a personal access token:
+You can also connect with your YNAB login instead of a personal access token:
 
 1. In YNAB Developer Settings, create an OAuth application with the redirect URI `http://localhost:5050/oauth/callback`.
 2. Set `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` in `.env`.
 
 The page then also shows a **Connect with YNAB login** button next to the token field.
+
+## Hosted mode
+
+To run the app on a server for other people, set `PUBLIC_URL`. Leave it empty on your own computer: the app then works as described above.
+
+In hosted mode:
+- **YNAB login (OAuth) only.** The token field is gone and `/api/token` is refused, because YNAB's API terms don't allow asking other people for their personal access tokens.
+- **No OS secure store.** A token saved on the server would connect every visitor, so the app never reads or writes it.
+
+| Variable | What it is |
+|---|---|
+| `PUBLIC_URL` | The address people open, e.g. `https://statements.example.com`. Turns on hosted mode. The OAuth redirect URI is `PUBLIC_URL` + `/oauth/callback`; register exactly that in your YNAB OAuth application. |
+| `YNAB_CLIENT_ID` | From your YNAB OAuth application. Not a secret, so a plain variable. |
+| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}`. Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
+
+`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode. If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
 
 ## Project layout
 

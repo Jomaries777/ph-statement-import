@@ -24,7 +24,7 @@ blueprints, one per job:
 and their helpers:
     state.py       - STORE, this browser's server-side state
     ynab_oauth.py  - YNAB OAuth token calls (no Flask session)
-    config.py      - PORT and the OAuth REDIRECT_URI
+    config.py      - PORT, the OAuth REDIRECT_URI and HOSTED (hosted mode)
     token_store.py - the token saved in the OS secure store
 The page is templates/index.html, with its CSS and JavaScript in static/app.css
 and static/app.js (no inline code, so a strict Content-Security-Policy works).
@@ -49,6 +49,11 @@ Environment (.env):
     YNAB_CLIENT_SECRET  - optional, as YNAB_CLIENT_ID
     FLASK_SECRET_KEY    - random string that signs the session cookie
     APP_PORT            - optional, default 5050 (5000 is used by macOS AirPlay)
+    PUBLIC_URL          - empty for local use. Set (e.g. https://statements.example.com),
+                          it turns on hosted mode: YNAB OAuth login only, no
+                          personal access tokens, no OS secure store. FLASK_SECRET_KEY,
+                          YNAB_CLIENT_ID and YNAB_CLIENT_SECRET are then required,
+                          and can come in one APP_CONFIG JSON (see config.py).
 
 Usage:
     python -m statement_etl.web  # then open http://localhost:5050
@@ -61,7 +66,7 @@ import sys
 from flask import Flask
 
 from statement_etl.web import token_store, upload, ynab_auth
-from statement_etl.web.config import PORT, REDIRECT_URI
+from statement_etl.web.config import HOSTED, PORT, REDIRECT_URI
 from statement_etl.web.ynab_oauth import oauth_configured
 
 app = Flask(__name__)
@@ -74,15 +79,20 @@ app.register_blueprint(ynab_auth.blueprint)
 def main():
     if not os.environ.get("FLASK_SECRET_KEY"):
         print("Note: FLASK_SECRET_KEY not set; using a random key for this run.", file=sys.stderr)
-    if token_store.load_token():  # never print the token itself
+    if HOSTED:  # never reads the OS secure store
         print(
-            f"Using the saved YNAB token from the {token_store.store_name()}.",
-            file=sys.stderr,
+            f"Hosted mode: YNAB OAuth login only (redirect URI: {REDIRECT_URI}).", file=sys.stderr
         )
     else:
-        print("Enter your YNAB personal access token on the page to connect.", file=sys.stderr)
-    if oauth_configured():
-        print(f"YNAB OAuth also available (redirect URI: {REDIRECT_URI}).", file=sys.stderr)
+        if token_store.load_token():  # never print the token itself
+            print(
+                f"Using the saved YNAB token from the {token_store.store_name()}.",
+                file=sys.stderr,
+            )
+        else:
+            print("Enter your YNAB personal access token on the page to connect.", file=sys.stderr)
+        if oauth_configured():
+            print(f"YNAB OAuth also available (redirect URI: {REDIRECT_URI}).", file=sys.stderr)
     print(f"Open http://localhost:{PORT}", file=sys.stderr)
     # Bind to this Mac only; nothing is reachable from the network
     app.run(host="127.0.0.1", port=PORT, debug=False)

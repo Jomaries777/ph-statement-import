@@ -9,6 +9,7 @@ YNAB, OAuth and the OS secure store are mocked. All data here is made up.
 
 import contextlib
 import io
+import json
 import os
 import runpy
 import time
@@ -30,6 +31,7 @@ from statement_etl.web import state as web_state
 from statement_etl.ynab_api.balance import compare_balance
 from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
+from tests.hosted import HOSTED_ENV, PUBLIC_URL, SECRETS, hosted_mode
 
 ROWS = [
     gcash_row(
@@ -174,6 +176,7 @@ class StatusTest(WebTest):
                 "connect_error": None,
                 "token_kind": None,
                 "oauth_configured": False,
+                "token_allowed": True,
                 "remember_available": False,
                 "store_name": None,
                 "parsed": None,
@@ -975,6 +978,126 @@ class MainTest(WebTest):
         with mock.patch.object(web, "main") as main:
             runpy.run_module("statement_etl.web", run_name="__main__")
         main.assert_called_once()
+
+
+# =============================================================================
+# HOSTED MODE - PUBLIC_URL set: YNAB OAuth only, never the OS secure store
+# =============================================================================
+
+
+class HostedTest(WebTest):
+    """The app as it runs on the server, for other people."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(hosted_mode())
+        self.client = web.app.test_client()
+        # One token saved on the server would connect every visitor
+        for name in ("available", "store_name", "load_token", "save_token", "delete_token"):
+            getattr(token_store, name).side_effect = AssertionError(
+                f"hosted mode called token_store.{name}()"
+            )
+
+    def test_mode(self):
+        self.assertTrue(config.HOSTED)
+        self.assertEqual(config.REDIRECT_URI, f"{PUBLIC_URL}/oauth/callback")
+
+    def test_secrets_come_from_app_config(self):
+        for key, value in SECRETS.items():
+            self.assertEqual(os.environ[key], value)
+        self.assertEqual(web.app.secret_key, SECRETS["FLASK_SECRET_KEY"])
+        self.assertTrue(ynab_oauth.oauth_configured())
+
+    def test_personal_access_token_is_refused(self):
+        with mock.patch.object(ynab_auth, "get_user") as get_user:
+            response = self.client.post("/api/token", json={"token": "a-token", "remember": True})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Personal access tokens are only supported in the local version. "
+            "Use Connect with YNAB login.",
+        )
+        get_user.assert_not_called()
+
+    def test_status(self):
+        status = self.client.get("/api/status").get_json()
+        self.assertFalse(status["token_allowed"])
+        self.assertFalse(status["remember_available"])
+        self.assertIsNone(status["store_name"])
+        self.assertTrue(status["oauth_configured"])
+        self.assertFalse(status["connected"])  # no saved token to load
+
+    def test_page_shows_only_the_ynab_login(self):
+        page = self.client.get("/").data
+        self.assertIn(b'id="connect-btn"', page)
+        for element in (b'id="ynab-token"', b'id="token-btn"', b'id="remember-row"'):
+            self.assertNotIn(element, page)
+
+    def test_oauth_redirect_uri(self):
+        location = self.client.get("/oauth/login").headers["Location"]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        self.assertEqual(query["redirect_uri"], [f"{PUBLIC_URL}/oauth/callback"])
+        self.assertEqual(query["client_id"], ["test-client-id"])
+
+    def test_oauth_still_connects(self):
+        self.set_state()
+        with self.client.session_transaction() as session:
+            session["oauth_state"] = "test-state"
+        token = {"access_token": "oauth-token", "refresh_token": "refresh", "expires_in": 7200}
+        with mock.patch.object(ynab_oauth, "exchange_token", return_value=token):
+            response = self.client.get("/oauth/callback?code=test-code&state=test-state")
+        self.assertEqual(response.headers["Location"], "/")
+        self.assertEqual(self.state()["token_kind"], "oauth")
+
+    def test_logout_never_touches_the_secure_store(self):
+        self.connected(kind="oauth", expires_at=time.time() + 3600)
+        response = self.client.post("/oauth/logout", json={"forget": True})
+        self.assertEqual(response.get_json(), {"connected": False})
+
+    def test_main_skips_the_keychain_message(self):
+        stderr = io.StringIO()
+        with mock.patch.object(web.app, "run"), contextlib.redirect_stderr(stderr):
+            web.main()
+        out = stderr.getvalue()
+        self.assertIn(f"Hosted mode: YNAB OAuth login only (redirect URI: {PUBLIC_URL}", out)
+        self.assertNotIn("personal access token", out)
+        self.assertNotIn("FLASK_SECRET_KEY", out)
+
+
+class HostedStartupTest(unittest.TestCase):
+    """Hosted mode stops at startup without its secrets, and never prints them."""
+
+    def start(self, **env):
+        with self.assertRaises(SystemExit) as caught, hosted_mode({**HOSTED_ENV, **env}):
+            pass
+        return str(caught.exception)
+
+    def test_missing_secret_key(self):
+        message = self.start(
+            FLASK_SECRET_KEY="",
+            APP_CONFIG=json.dumps({"YNAB_CLIENT_SECRET": "do-not-print-this"}),
+        )
+        self.assertIn("needs FLASK_SECRET_KEY", message)
+        self.assertNotIn("do-not-print-this", message)
+        self.assertNotIn("test-client-id", message)
+
+    def test_every_missing_key_is_named(self):
+        message = self.start(FLASK_SECRET_KEY="", YNAB_CLIENT_ID="", APP_CONFIG="{}")
+        self.assertIn("FLASK_SECRET_KEY, YNAB_CLIENT_ID, YNAB_CLIENT_SECRET", message)
+
+    def test_app_config_is_not_json(self):
+        message = self.start(APP_CONFIG='{"FLASK_SECRET_KEY": do-not-print-this')
+        self.assertEqual(message, "APP_CONFIG is not valid JSON.")
+
+    def test_app_config_values_must_be_strings(self):
+        message = self.start(APP_CONFIG='{"FLASK_SECRET_KEY": 12345678}')
+        self.assertEqual(message, "APP_CONFIG: FLASK_SECRET_KEY must be a string.")
+
+    def test_local_mode_again_afterwards(self):
+        with hosted_mode():
+            self.assertTrue(config.HOSTED)
+        self.assertFalse(config.HOSTED)
+        self.assertEqual(config.REDIRECT_URI, f"http://localhost:{config.PORT}/oauth/callback")
 
 
 if __name__ == "__main__":
