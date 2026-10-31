@@ -169,6 +169,111 @@ class BalanceStepsTest(unittest.TestCase):
         )
 
 
+class FakeYnabUpload:
+    """Stands in for upload_transactions(): like YNAB, it creates each
+    import_id once and reports it as a duplicate after that."""
+
+    def __init__(self):
+        self.imported = set()
+
+    def __call__(self, transactions, account_id, plan_id, access_token=None):
+        new = [t for t in transactions if t["import_id"] not in self.imported]
+        duplicates = [t["import_id"] for t in transactions if t["import_id"] in self.imported]
+        self.imported |= {t["import_id"] for t in new}
+        return SimpleNamespace(
+            transactions=[ynab_txn(memo=t["memo"]) for t in new],
+            duplicate_import_ids=duplicates,
+        )
+
+
+class ImportStatementTest(unittest.TestCase):
+    def setUp(self):
+        # One mock holds every step, so the tests can check the order of the calls
+        self.steps = mock.Mock()
+        self.steps.new_account_starting_balance.return_value = None
+        self.steps.get_account_balance.return_value = Decimal("500.00")
+        self.steps.upload_transactions.side_effect = FakeYnabUpload()
+        self.steps.ending_balance_check.return_value = ending_check()
+        for name in (
+            "new_account_starting_balance",
+            "get_account_balance",
+            "upload_transactions",
+            "ending_balance_check",
+        ):
+            patcher = mock.patch.object(pipeline, name, getattr(self.steps, name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def run_import(self):
+        return pipeline.import_statement(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token")
+
+    def test_runs_the_steps_in_order(self):
+        result = self.run_import()
+        self.assertEqual(
+            self.steps.mock_calls,
+            [
+                mock.call.new_account_starting_balance(
+                    ROWS, ACCOUNT_ID, PLAN_ID, "token", source="gcash"
+                ),
+                mock.call.get_account_balance(PLAN_ID, ACCOUNT_ID, "token"),
+                mock.call.upload_transactions(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"),
+                mock.call.ending_balance_check(
+                    ROWS, ACCOUNT_ID, PLAN_ID, "token", Decimal("500.00"), source="gcash"
+                ),
+            ],
+        )
+        self.assertEqual(
+            (len(result.created), result.skipped, result.ynab_before), (2, 0, Decimal("500.00"))
+        )
+        self.assertEqual(result.ending_check, ending_check())
+        self.assertIsNone(result.new_account)
+        self.assertIsNone(result.ending_error)
+
+    def test_new_account_is_set_before_the_balance_is_read(self):
+        # The balance read in step 2 already includes the new Starting Balance
+        self.steps.new_account_starting_balance.return_value = {
+            "from": Decimal("0"),
+            "to": Decimal("500.00"),
+        }
+        result = self.run_import()
+        self.assertEqual(result.new_account, {"from": Decimal("0"), "to": Decimal("500.00")})
+        called = [c[0] for c in self.steps.mock_calls]
+        self.assertLess(
+            called.index("new_account_starting_balance"), called.index("get_account_balance")
+        )
+
+    def test_running_it_twice_creates_nothing_the_second_time(self):
+        # e.g. the web app retrying after a token refresh
+        first, second = self.run_import(), self.run_import()
+        self.assertEqual((len(first.created), first.skipped), (2, 0))
+        self.assertEqual((second.created, second.skipped), ([], 2))
+
+    def test_ending_mismatch_is_returned_not_raised(self):
+        self.steps.ending_balance_check.return_value = ending_check(ynab_after="1149.50")
+        result = self.run_import()
+        self.assertFalse(result.ending_check["matches"])
+        self.assertEqual(len(result.created), 2)
+
+    def test_failed_ending_check_is_returned_not_raised(self):
+        self.steps.ending_balance_check.side_effect = API_ERROR
+        result = self.run_import()
+        self.assertIs(result.ending_error, API_ERROR)
+        self.assertIsNone(result.ending_check)
+        self.assertEqual(len(result.created), 2)
+
+    def test_errors_before_and_during_the_upload_are_raised(self):
+        for step in ("new_account_starting_balance", "get_account_balance", "upload_transactions"):
+            with self.subTest(step=step):
+                self.steps.reset_mock()
+                getattr(self.steps, step).side_effect = API_ERROR
+                with self.assertRaises(ynab.ApiException):
+                    self.run_import()
+                getattr(self.steps, step).side_effect = (
+                    FakeYnabUpload() if step == "upload_transactions" else None
+                )
+                self.steps.ending_balance_check.assert_not_called()
+
+
 # =============================================================================
 # OUTPUT HELPERS
 # =============================================================================
@@ -258,6 +363,7 @@ class RunPipelineTest(unittest.TestCase):
         self.parse = self.patch("parse_statement", return_value=(ROWS, TRANSACTIONS))
         self.start = self.patch("starting_balance_check", return_value=starting_check())
         self.new_account = self.patch("new_account_starting_balance", return_value=None)
+        self.balance = self.patch("get_account_balance", return_value=Decimal("500.00"))
         self.upload = self.patch("upload_transactions", return_value=UPLOAD_RESULT)
         self.end = self.patch("ending_balance_check", return_value=ending_check())
 
@@ -295,7 +401,7 @@ class RunPipelineTest(unittest.TestCase):
             self.assertIn(text, out)
         self.assertNotIn("WARNING", out)
         self.assertNotIn("STEP 2", out)
-        for step in (self.start, self.new_account, self.upload, self.end):
+        for step in (self.start, self.new_account, self.balance, self.upload, self.end):
             step.assert_not_called()
 
     def test_balance_warning_and_correction_count(self):
@@ -314,10 +420,12 @@ class RunPipelineTest(unittest.TestCase):
         result, out, _ = self.run_pipeline()
         self.assertEqual(result, TRANSACTIONS)
         self.start.assert_called_once_with(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, source="gcash")
-        self.new_account.assert_not_called()
-        self.upload.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID)
+        # import_statement(); None = the token from .env
+        self.new_account.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, None, source="gcash")
+        self.balance.assert_called_once_with(PLAN_ID, ACCOUNT_ID, None)
+        self.upload.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, None)
         self.end.assert_called_once_with(
-            ROWS, ACCOUNT_ID, PLAN_ID, ynab_before=Decimal("500.00"), source="gcash"
+            ROWS, ACCOUNT_ID, PLAN_ID, None, Decimal("500.00"), source="gcash"
         )
         for text in (
             "STEP 2: STARTING BALANCE\nStarting balance matches YNAB: 500.00",
@@ -357,19 +465,21 @@ class RunPipelineTest(unittest.TestCase):
         )
         self.new_account.return_value = {"from": Decimal("0"), "to": Decimal("500.00")}
         _, out, _ = self.run_pipeline()
-        self.new_account.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, source="gcash")
+        self.new_account.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, None, source="gcash")
         self.assertIn("New YNAB account: Starting Balance set from 0.00 to 500.00", out)
-        self.assertEqual(self.end.call_args.kwargs["ynab_before"], Decimal("500.00"))
+        # the balance read after the Starting Balance was set
+        self.assertEqual(self.end.call_args.args[4], Decimal("500.00"))
 
     def test_new_account_that_got_other_transactions_is_compared_normally(self):
         self.start.return_value = starting_check(
             ynab_before="0.00", new_account={"current": Decimal("0")}
         )
         self.new_account.return_value = None
+        self.balance.return_value = Decimal("0.00")
         _, out, _ = self.run_pipeline()
         self.assertIn("WARNING: Starting balance does not match YNAB. You can still import.", out)
         self.assertNotIn("New YNAB account", out)
-        self.assertEqual(self.end.call_args.kwargs["ynab_before"], Decimal("0.00"))
+        self.assertEqual(self.end.call_args.args[4], Decimal("0.00"))
 
     def test_starting_check_error_exits(self):
         self.start.side_effect = API_ERROR
@@ -381,9 +491,8 @@ class RunPipelineTest(unittest.TestCase):
         self.start.return_value = starting_check(new_account={"current": Decimal("0")})
         self.new_account.side_effect = API_ERROR
         _, err = self.run_failing()
-        self.assertIn(
-            "ERROR: Could not set the Starting Balance: YNAB returned 500 Server Error", err
-        )
+        # import_statement() raises it like any YNAB error before the upload
+        self.assertIn("ERROR: Import failed: YNAB returned 500 Server Error", err)
         self.upload.assert_not_called()
 
     def test_import_error_exits(self):

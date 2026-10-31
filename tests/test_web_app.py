@@ -21,6 +21,7 @@ from unittest import mock
 
 from ynab import exceptions
 
+from statement_etl import pipeline
 from statement_etl.parsers.common import StatementError
 from statement_etl.transform import transform
 from statement_etl.web import app as web
@@ -750,10 +751,10 @@ class StartingBalanceTest(WebTest):
 class UploadTest(WebTest):
     def setUp(self):
         super().setUp()
-        self.new_account = self.patch(web, "new_account_starting_balance", return_value=None)
-        self.balance = self.patch(web, "get_account_balance", return_value=Decimal("500"))
+        self.new_account = self.patch(pipeline, "new_account_starting_balance", return_value=None)
+        self.balance = self.patch(pipeline, "get_account_balance", return_value=Decimal("500"))
         self.upload = self.patch(
-            web,
+            pipeline,
             "upload_transactions",
             return_value=SimpleNamespace(
                 transactions=[
@@ -779,7 +780,7 @@ class UploadTest(WebTest):
         self.ending = compare_balance(
             "ending", Decimal("1299.5"), Decimal("500"), Decimal("1299.5")
         )
-        self.end = self.patch(web, "ending_balance_check", return_value=self.ending)
+        self.end = self.patch(pipeline, "ending_balance_check", return_value=self.ending)
 
     def post(self, body=TARGET):
         return self.client.post("/api/upload", json=body)

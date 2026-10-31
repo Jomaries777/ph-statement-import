@@ -35,13 +35,14 @@ How it works:
                                                                   ynab_api.client.check_ending_balance)
     7. Output     - print each step (STEP 1 to STEP 4)           (run_pipeline, _print_table)
 
+    import_statement() runs the new-account part of 4, then 5 and 6, so every
+    caller imports the same way.
+
 Who uses what:
     Command line - main() -> run_pipeline(), which prints and exits on errors.
-    Web app      - app.py calls parse_statement(), starting_balance_check(),
-                   new_account_starting_balance(), upload_transactions() and
-                   ending_balance_check() directly;
-                   they raise errors instead of exiting, so the page can show
-                   them. app.py never calls run_pipeline().
+    Web app      - app.py calls parse_statement(), starting_balance_check() and
+                   import_statement(); they raise errors instead of exiting, so
+                   the page can show them. app.py never calls run_pipeline().
 
 Adding another e-wallet or bank needs no change here: register it in
 sources.py (see docs/adding-an-e-wallet.md).
@@ -72,6 +73,7 @@ Output:
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 from decimal import Decimal
 
 import ynab
@@ -83,6 +85,7 @@ from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import (
     balance_check_message,
     check_starting_balance,
+    get_account_balance,
     new_account_message,
     set_new_account_starting_balance,
 )
@@ -211,6 +214,68 @@ def ending_balance_check(
     return check_ending_balance(ending, account_id, plan_id, access_token, ynab_before)
 
 
+@dataclass
+class ImportResult:
+    """What import_statement() did, for the caller to show or record."""
+
+    new_account: dict | None  # {"from", "to"} if a new account's Starting Balance was set
+    ynab_before: Decimal  # YNAB account balance just before the upload, in pesos
+    created: list  # YNAB TransactionDetail objects that were created
+    skipped: int  # transactions YNAB already had (same import_id), so not created again
+    ending_check: dict | None  # from ending_balance_check(); None if it failed
+    ending_error: ynab.ApiException | None  # why the ending check failed, if it did
+
+
+def import_statement(
+    rows, transactions, account_id, plan_id, access_token=None, source=DEFAULT_SOURCE
+):
+    """ph-statement-import step: import a parsed statement into one YNAB account.
+
+    The one place that uploads, used by the command line and the web app.
+    rows and transactions are from parse_statement(); access_token works as in
+    upload_transactions().
+
+        result = import_statement(rows, transactions, account_id, plan_id)
+        len(result.created), result.skipped  ->  (23, 2)
+
+    Raises ynab.ApiException if YNAB rejects steps 1-3, so each caller reports
+    it its own way. Step 4 runs after the upload is done, so its failure is
+    returned in ending_error instead.
+
+    Running it again with the same transactions is safe (the web app does
+    after refreshing an expired token): YNAB skips import_ids it already has,
+    and step 1 changes nothing once the Starting Balance matches.
+    """
+    # 1. A newly created YNAB account gets its Starting Balance set to the statement's
+    new_account = new_account_starting_balance(
+        rows, account_id, plan_id, access_token, source=source
+    )
+
+    # 2. YNAB balance just before the upload, for the ending-balance message
+    ynab_before = get_account_balance(plan_id, account_id, access_token)
+
+    # 3. All transactions in one API call; YNAB skips import_ids it already has
+    uploaded = upload_transactions(transactions, account_id, plan_id, access_token)
+
+    # 4. YNAB balance after the upload vs. the statement's ending balance
+    ending_check, ending_error = None, None
+    try:
+        ending_check = ending_balance_check(
+            rows, account_id, plan_id, access_token, ynab_before, source=source
+        )
+    except ynab.ApiException as e:
+        ending_error = e
+
+    return ImportResult(
+        new_account=new_account,
+        ynab_before=ynab_before,
+        created=uploaded.transactions or [],
+        skipped=len(uploaded.duplicate_import_ids or []),
+        ending_check=ending_check,
+        ending_error=ending_error,
+    )
+
+
 # =============================================================================
 # COMMAND-LINE RUN - parse -> check -> import, printing each step (REUSABLE)
 #
@@ -296,20 +361,24 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         _fail(
             f"Could not read the YNAB balance: YNAB returned {e.status} {e.reason}\n{e.body or ''}"
         )
-    ynab_before = check["ynab_before"]  # for the STEP 4 message
+    # A new YNAB account's message comes after import_statement() sets its
+    # Starting Balance; any other account's can be shown now
+    if not check["new_account"]:
+        print(
+            ("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ")
+            + balance_check_message(check)
+        )
+
+    # 5 + 6. Importing into YNAB: a new account's Starting Balance, one upload
+    #        call for all transactions, then the ending balance check
+    try:
+        imported = import_statement(rows, transactions, account_id, plan_id, source=source)
+    except ynab.ApiException as e:
+        _fail(f"Import failed: YNAB returned {e.status} {e.reason}\n{e.body or ''}")
 
     if check["new_account"]:
-        # New YNAB account: set its Starting Balance to the statement's
-        try:
-            new_account = new_account_starting_balance(rows, account_id, plan_id, source=source)
-        except ynab.ApiException as e:
-            _fail(
-                f"Could not set the Starting Balance: YNAB returned {e.status} {e.reason}\n"
-                f"{e.body or ''}"
-            )
-        if new_account:
-            print(new_account_message(new_account))
-            ynab_before = new_account["to"]
+        if imported.new_account:
+            print(new_account_message(imported.new_account))
         else:
             # Got other transactions since the check: compare as a normal account
             check = {**check, "new_account": None, "matches": check["difference"] == 0}
@@ -317,20 +386,9 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
                 ("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ")
                 + balance_check_message(check)
             )
-    else:
-        print(
-            ("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ")
-            + balance_check_message(check)
-        )
-
-    # 5. Importing into YNAB: one API call for all transactions
-    try:
-        result = upload_transactions(transactions, account_id, plan_id)
-    except ynab.ApiException as e:
-        _fail(f"Import failed: YNAB returned {e.status} {e.reason}\n{e.body or ''}")
 
     # STEP 3 output: what YNAB actually created (already-imported rows are not included)
-    created = result.transactions or []
+    created = imported.created
     print("\nSTEP 3: IMPORT")
     _print_table(
         ("Date", "Payee", "Category", "Memo", "Amount"),
@@ -350,24 +408,23 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
     print(f"Import successful: {len(created)} transactions created in YNAB (unapproved)")
 
     # Rows whose import_id (hashed from Reference No.) YNAB already had are skipped, not duplicated
-    if result.duplicate_import_ids:
-        print(f"Skipped {len(result.duplicate_import_ids)} already imported")
+    if imported.skipped:
+        print(f"Skipped {imported.skipped} already imported")
     if created:
         print("Review and approve them in YNAB.")
 
-    # 6. STEP 4: ending balance - YNAB after the upload vs. the statement.
-    #    The import is already done, so a failed check is a warning, not an error.
+    # STEP 4 output: ending balance - YNAB after the upload vs. the statement.
+    # The import is already done, so a failed check is a warning, not an error.
     print("\nSTEP 4: ENDING BALANCE")
-    try:
-        check = ending_balance_check(
-            rows, account_id, plan_id, ynab_before=ynab_before, source=source
-        )
-        print(("" if check["matches"] else "WARNING: ") + balance_check_message(check))
-    except ynab.ApiException as e:
+    if imported.ending_error:
+        e = imported.ending_error
         print(
             "WARNING: could not read the YNAB balance after the upload:"
             f" YNAB returned {e.status} {e.reason}"
         )
+    else:
+        check = imported.ending_check
+        print(("" if check["matches"] else "WARNING: ") + balance_check_message(check))
     return transactions
 
 

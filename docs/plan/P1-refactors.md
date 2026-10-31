@@ -1,6 +1,6 @@
 # P1. Refactors (no behavior change)
 
-Status: Not started · Estimate: about 2 days, 3 PRs · Needs: P0
+Status: In progress (PR 1) · Estimate: about 2 days, 3 PRs · Needs: P0
 
 ## Goal
 
@@ -32,18 +32,18 @@ Remove duplication **before** the new features copy it a third time, so each job
 
 ### PR 1: `refactor/import-statement`, "refactor: share one import function between the CLI and the web app"
 
-- [ ] **First, pin an import_id.** In `tests/test_transform.py`, add a test that `make_import_id("gcash", "1000000000002")` equals its exact current string. Run it once, then copy the value into the test. This must pass before and after every P1 PR (PR 2 moves it to `tests/test_ynab_format.py`).
-- [ ] In `statement_etl/pipeline.py`, add next to the other pipeline steps:
+- [x] **First, pin an import_id.** In `tests/test_transform.py`, add a test that `make_import_id("gcash", "1000000000002")` equals its exact current string. Run it once, then copy the value into the test. This must pass before and after every P1 PR (PR 2 moves it to `tests/test_ynab_format.py`).
+- [x] In `statement_etl/pipeline.py`, add next to the other pipeline steps:
   ```python
   @dataclass
   class ImportResult:
       """What import_statement() did, for the caller to show or record."""
-      new_account: dict | None   # from new_account_starting_balance(); None if not a new account
-      ynab_before: int           # YNAB account balance just before the upload (milliunits)
+      new_account: dict | None   # {"from", "to"} if a new account's Starting Balance was set
+      ynab_before: Decimal       # YNAB account balance just before the upload, in pesos
       created: list              # YNAB TransactionDetail objects that were created
-      skipped: int               # rows YNAB already had (duplicate import_ids)
-      ending_check: dict | None  # from ending_balance_check(); None if the check failed
-      ending_error: str | None   # why the ending check failed, if it did
+      skipped: int               # transactions YNAB already had (same import_id)
+      ending_check: dict | None  # from ending_balance_check(); None if it failed
+      ending_error: ynab.ApiException | None  # why the ending check failed, if it did
 
   def import_statement(rows, transactions, account_id, plan_id, access_token=None,
                        source=DEFAULT_SOURCE) -> ImportResult:
@@ -56,20 +56,22 @@ Remove duplication **before** the new features copy it a third time, so each job
 
   Errors:
   - A `ynab.ApiException` from steps 1–3 is **not caught**, so each caller reports it its own way.
-  - A failure in step 4 is caught and stored in `ending_error`, because the upload is already done.
+  - A failure in step 4 is caught and stored in `ending_error`, because the upload is already done. It's the exception itself, so each caller words it as before (the CLI: "YNAB returned 503 Unavailable"; the page: "YNAB returned 503: …").
 
   The docstring explains both, with a short example.
-- [ ] `web/app.py` → `api_upload()`:
+- [x] `web/app.py` → `api_upload()`:
   - Replace the three separate `_ynab_call(...)` blocks with one call: `_ynab_call(lambda token: import_statement(rows, transactions, account_id, plan_id, token, source=state["source"]))`.
   - Build the **same JSON** as today from the `ImportResult`.
   - Add a comment saying why a retry after a token refresh is safe: `import_id` dedupes the upload, and the starting-balance step does nothing once the balance matches.
-- [ ] `pipeline.run_pipeline()`:
+  - The page's wording for a YNAB error moves into `_api_error_message()`, used by `_ynab_call()` and for the ending-check error.
+- [x] `pipeline.run_pipeline()`:
   - Keep STEP 1 (parse) and STEP 2 (the starting-balance check and its printout).
   - Replace the new-account, upload and ending-check code with one `import_statement()` call inside the existing `try/except ynab.ApiException`.
   - Print STEP 3 and 4 from the result. **The printed text must stay identical.**
   - Watch one detail: today the CLI uses `new_account["to"]` as `ynab_before` for a new account. `import_statement()` reads the balance after setting it, which gives the same number. The output must not change.
-- [ ] Update the module docstring of `pipeline.py`. It currently says the web app calls the steps "directly"; change it to say both use `import_statement()`.
-- [ ] Update `docs/architecture.md`: the pipeline layer now has one entry point.
+  - One error message changes on purpose: if YNAB fails while setting a new account's Starting Balance, the CLI now prints "ERROR: Import failed: YNAB returned …" instead of "ERROR: Could not set the Starting Balance: …". `import_statement()` raises every YNAB error from steps 1–3 the same way, and nothing is uploaded in either case.
+- [x] Update the module docstring of `pipeline.py`. It currently says the web app calls the steps "directly"; change it to say both use `import_statement()`.
+- [x] Update `docs/architecture.md`: the pipeline layer now has one entry point.
 
 ### PR 2: `refactor/neutral-transaction`, "refactor: sources produce neutral transactions; YNAB formatting moves to ynab_api"
 

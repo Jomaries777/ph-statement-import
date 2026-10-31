@@ -60,6 +60,14 @@ class ImportIdTest(unittest.TestCase):
             transform.make_import_id("gcash", "1000000000002"),
         )
 
+    def test_pinned_value(self):
+        # Users' YNAB accounts already hold ids made this way. If this changes,
+        # re-importing a statement would duplicate every transaction.
+        self.assertEqual(
+            transform.make_import_id("gcash", "1000000000002"),
+            "ETLPH:707f7b0d95f2bb43995f608f704d67",
+        )
+
     def test_differs_by_source_and_id(self):
         ids = {
             transform.make_import_id("gcash", "1000000000002"),
