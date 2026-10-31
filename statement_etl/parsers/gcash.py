@@ -51,6 +51,7 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
@@ -637,6 +638,28 @@ def _to_transaction(row):
         memo="GCash Ref: " + reference,
         flagged=is_correction_row(row),
     )
+
+
+# =============================================================================
+# PDF PASSWORD - built from user inputs for Gmail auto-import (sources.py)
+# =============================================================================
+
+
+def build_password(inputs: Mapping[str, str] | str, mobile_last4: str | None = None) -> str:
+    """GCash PDF password: last name in lowercase (no spaces) + last 4 digits of mobile.
+
+    Accepts the `Source.build_password` input dict or `(last_name, mobile_last4)`:
+        {"last_name": "Dela Cruz", "mobile_last4": "1234"} -> "delacruz1234"
+        "Dela Cruz", "1234" -> "delacruz1234"
+    """
+    if isinstance(inputs, Mapping):
+        last_name = inputs["last_name"]
+        mobile_last4 = inputs["mobile_last4"]
+    else:
+        if mobile_last4 is None:
+            raise TypeError("build_password() missing required argument: 'mobile_last4'")
+        last_name = inputs
+    return last_name.lower().replace(" ", "") + mobile_last4
 
 
 # =============================================================================

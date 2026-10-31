@@ -179,6 +179,7 @@ Then add `MAYA_PDF_PASSWORD=` to `.env.example`.
 | `text_column` | no | Long text that should wrap (e.g. `Description`) |
 | `summary` | no | The line under the parsed rows |
 | `is_correction_row`, `balance_corrections`, `balance_warning` | no | Only if your parser adds balance-correction rows. See the GCash parser. |
+| `email_query`, `attachment_pattern`, `password_inputs`, `build_password` | no | Only if statement PDFs arrive by email and can be imported automatically. See [Auto-import from Gmail (optional)](#auto-import-from-gmail-optional). |
 
 ## 6. Add tests
 
@@ -251,6 +252,54 @@ Checklist:
 - [ ] The key (`maya`) is final.
 - [ ] `MAYA_PDF_PASSWORD=` is in `.env.example`, and Maya is in the README's "currently supports" line.
 - [ ] The PR says which statement type you tested with (e.g. "Maya Wallet transaction history, Oct 2026"), without attaching it.
+
+---
+
+## Auto-import from Gmail (optional)
+
+In hosted mode, `/auto-import` polls Gmail for new statement emails and imports each matching PDF attachment to the mapped YNAB account using the same `parse_statement()` and `import_statement()` pipeline as manual upload.
+
+A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `email_query` | `str \| None` | The Gmail search query that finds this source's statement emails. Sources with `email_query=None` (the default) work normally on the CLI and manual upload page, and simply don't appear on `/auto-import`. |
+| `attachment_pattern` | `str \| None` | Regex matched against attachment filenames to pick the right PDF when one email carries several attachments. Required whenever `email_query` is set. |
+| `password_inputs` | `tuple[str, ...]` | Input names the user enters once on `/auto-import` (stored encrypted) so background runs can open the encrypted PDF, e.g. `("last_name", "mobile_last4")`. Leave empty `()` if the PDF is not password-protected. |
+| `build_password` | `Callable \| None` | Function in the parser module taking the `dict` of `password_inputs` values (or positional inputs in unit tests) and returning the PDF password string. Required whenever `password_inputs` is non-empty. |
+
+**Example: GCash (`gcash`)**
+
+GCash statement emails explain the password rule (last name in lowercase without spaces + last 4 digits of the mobile number) without printing the digits, so the user enters those two inputs once:
+
+```python
+# statement_etl/parsers/gcash.py
+def build_password(inputs: Mapping[str, str] | str, mobile_last4: str | None = None) -> str:
+    """GCash PDF password: last name in lowercase (no spaces) + last 4 digits of mobile.
+
+    Accepts the `Source.build_password` input dict or `(last_name, mobile_last4)`:
+        {"last_name": "Dela Cruz", "mobile_last4": "1234"} -> "delacruz1234"
+        "Dela Cruz", "1234" -> "delacruz1234"
+    """
+    ...
+```
+
+```python
+# statement_etl/sources.py
+        Source(
+            key="gcash",
+            ...,
+            email_query=(
+                'from:noreply-transhistory@gcash.com subject:"Your GCash Transaction History" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"\.pdf$",
+            password_inputs=("last_name", "mobile_last4"),
+            build_password=gcash.build_password,
+        ),
+```
+
+`tests/test_sources.py` verifies automatically that every source with `email_query` also sets `attachment_pattern`, and every source with `password_inputs` also sets `build_password`.
 
 ---
 

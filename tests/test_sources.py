@@ -13,6 +13,7 @@ Adding an e-wallet / bank? Copy the GCash tests below for your source
 import dataclasses
 import io
 import os
+import re
 import unittest
 from datetime import date
 from decimal import Decimal
@@ -54,6 +55,19 @@ class RegistryTest(unittest.TestCase):
         for source in SOURCES.values():
             self.assertTrue(source.password_env.endswith("_PDF_PASSWORD"))
 
+    def test_every_source_with_email_query_has_attachment_pattern(self):
+        for source in SOURCES.values():
+            if source.email_query is not None:
+                with self.subTest(source=source.key):
+                    self.assertTrue(source.attachment_pattern)
+                    re.compile(source.attachment_pattern)
+
+    def test_every_source_with_password_inputs_has_build_password(self):
+        for source in SOURCES.values():
+            if source.password_inputs:
+                with self.subTest(source=source.key):
+                    self.assertTrue(callable(source.build_password))
+
     def test_unknown_source(self):
         with self.assertRaisesRegex(ValueError, "Known sources: gcash, gotyme"):
             get_source("nope")
@@ -84,6 +98,10 @@ class SourceDefaultsTest(unittest.TestCase):
         self.assertFalse(source.is_correction_row(row))
         self.assertEqual(source.balance_corrections([row]), [])
         self.assertIsNone(source.balance_warning([row]))
+        self.assertIsNone(source.email_query)
+        self.assertIsNone(source.attachment_pattern)
+        self.assertEqual(source.password_inputs, ())
+        self.assertIsNone(source.build_password)
 
     def test_sources_are_frozen(self):
         with self.assertRaises(dataclasses.FrozenInstanceError):
@@ -160,6 +178,23 @@ class GCashTest(unittest.TestCase):
         self.assertEqual(
             gcash.summary(GCASH_ROWS),
             "Total debit 250.50 · Total credit 1,000.00 · matches statement ✓",
+        )
+
+    def test_email_and_password_settings(self):
+        source = get_source("gcash")
+        self.assertEqual(
+            source.email_query,
+            'from:noreply-transhistory@gcash.com subject:"Your GCash Transaction History" '
+            "has:attachment filename:pdf",
+        )
+        self.assertEqual(source.attachment_pattern, r"\.pdf$")
+        self.assertIsNotNone(re.search(source.attachment_pattern, "statement.pdf"))
+        self.assertIsNone(re.search(source.attachment_pattern, "statement.txt"))
+        self.assertEqual(source.password_inputs, ("last_name", "mobile_last4"))
+        self.assertIs(source.build_password, gcash.build_password)
+        self.assertEqual(
+            source.build_password({"last_name": "Dela Cruz", "mobile_last4": "1234"}),
+            "delacruz1234",
         )
 
 
