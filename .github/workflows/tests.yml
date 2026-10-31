@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # 3.13: Playwright's greenlet dependency may not have wheels for newer Pythons yet
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -52,7 +52,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install ruff==0.17.3  # same version as requirements-dev.txt
