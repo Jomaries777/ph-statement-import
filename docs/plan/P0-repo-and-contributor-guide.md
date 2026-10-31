@@ -1,6 +1,6 @@
 # P0. Repo, contributor guide and design
 
-Status: In progress (Commit 1 partly done, not pushed) · Estimate: about 2 days, 4 PRs · Needs: nothing
+Status: Done · Estimate: about 2 days, 4 PRs · Needs: nothing
 
 ## Goal
 
@@ -65,16 +65,16 @@ Still to do, folded into the same commit with `--amend` because nothing has been
   ```bash
   git commit --amend --no-edit
   ```
-- [ ] Push:
+- [x] Push:
   ```bash
   gh repo create <you>/ph-statement-import --public --source . --push
   ```
   The README and `docs/getting-started.md` link to `github.com/<you>/ph-statement-import`; check the links work once it's pushed.
-- [ ] In GitHub → Settings:
+- [x] In GitHub → Settings:
   - **Code security:** turn on Dependabot alerts, secret scanning, push protection, and private vulnerability reporting.
   - **Actions → General:** set "Require approval for all outside collaborators" for workflows from forks.
   - **General → Pull Requests:** allow **squash merging** only, and turn on "Automatically delete head branches".
-- [ ] Protect `main` (Settings → Branches → Add rule for `main`):
+- [x] Protect `main` (Settings → Branches → Add rule for `main`):
   - require a pull request before merging
   - require the `test` status check
   - block force pushes and deletion
@@ -83,7 +83,7 @@ Still to do, folded into the same commit with `--amend` because nothing has been
 
 ### PR 1: `chore/tooling`, "chore: add ruff config, pin dependencies and Python version"
 
-- [ ] Add `pyproject.toml`. It holds tool settings only; the app isn't packaged.
+- [x] Add `pyproject.toml`. It holds tool settings only; the app isn't packaged.
   ```toml
   [tool.ruff]
   line-length = 100
@@ -92,32 +92,32 @@ Still to do, folded into the same commit with `--amend` because nothing has been
   [tool.ruff.lint]
   select = ["E", "F", "I", "B", "UP", "SIM"]
   ```
-- [ ] Add `ruff` to `requirements-dev.txt`, pinned to an exact version (`ruff==X.Y.Z`).
-- [ ] Pin exact versions in `requirements.txt` for every top-level package (`flask`, `pdfplumber`, `ynab`, `python-dotenv`, `keyring`):
+- [x] Add `ruff` to `requirements-dev.txt`, pinned to an exact version (`ruff==X.Y.Z`).
+- [x] Pin exact versions in `requirements.txt` for every top-level package (`flask`, `pdfplumber`, `ynab`, `python-dotenv`, `keyring`):
   ```bash
   pip freeze | grep -iE '^(flask|pdfplumber|ynab|python-dotenv|keyring)=='
   ```
   Keep the comments at the top of each requirements file.
-- [ ] Add `.python-version` containing `3.13`.
-- [ ] Add `.github/dependabot.yml` with weekly updates for `pip` (at `/`) and `github-actions` (at `/`).
-- [ ] Run `python -m unittest discover tests`; it should pass unchanged.
+- [x] Add `.python-version` containing `3.13`.
+- [x] Add `.github/dependabot.yml` with weekly updates for `pip` (at `/`) and `github-actions` (at `/`).
+- [x] Run `python -m unittest discover tests`; it should pass unchanged.
 
 ### PR 2: `style/ruff-format`, "style: apply ruff format and safe fixes"
 
 This PR only reformats. It contains no logic changes, so reviewers can skim it, and `git blame` can be told to skip it.
 
-- [ ] Reformat and apply the safe fixes:
+- [x] Reformat and apply the safe fixes:
   ```bash
   ruff format .
   ruff check --fix .
   ruff check .
   ```
   Fix anything `ruff check .` still reports **by hand only if the fix is purely mechanical**. Otherwise add a `# noqa: <rule>` with a reason, and note it in the PR.
-- [ ] Run `python -m unittest discover tests` and `REQUIRE_E2E=1 python -m unittest discover tests`; both should pass.
+- [x] Run `python -m unittest discover tests` and `REQUIRE_E2E=1 python -m unittest discover tests`; both should pass.
 
 ### PR 3: `ci/lint`, "ci: add lint job and ignore the format commit in blame"
 
-- [ ] Add a `lint` job to `.github/workflows/tests.yml`, next to the `test` job:
+- [x] Add a `lint` job to `.github/workflows/tests.yml`, next to the `test` job:
   ```yaml
   lint:
     runs-on: ubuntu-latest
@@ -131,12 +131,12 @@ This PR only reformats. It contains no logic changes, so reviewers can skim it, 
       - run: ruff format --check .
       - run: ruff check .
   ```
-- [ ] Add `.git-blame-ignore-revs` containing the hash of PR 2's squash commit **on `main`** (`git log --oneline main`), with a comment line above it saying what it is.
-- [ ] After merging, add `lint` as a required check in the `main` branch rule.
+- [x] Add `.git-blame-ignore-revs` containing the hash of PR 2's squash commit **on `main`** (`git log --oneline main`), with a comment line above it saying what it is.
+- [x] After merging, add `lint` as a required check in the `main` branch rule.
 
 ### PR 4: `docs/contributor-guide`, "docs: add contributor guide, architecture overview and GitHub templates"
 
-- [ ] `CONTRIBUTING.md`, with these sections:
+- [x] `CONTRIBUTING.md`, with these sections:
   1. **Set up in 5 commands:** clone, venv, install (`requirements.txt` and `requirements-dev.txt`), `cp .env.example .env`, run the tests. People who only want to use the app follow `docs/getting-started.md` instead; link it at the top.
   2. **Run the app and tests:** web app, CLI, `python -m unittest discover tests`, e2e with `REQUIRE_E2E=1`, `ruff format . && ruff check .`.
   3. **Code standards:**
@@ -161,16 +161,16 @@ This PR only reformats. It contains no logic changes, so reviewers can skim it, 
   6. **Reporting security issues:** a link to `SECURITY.md`.
   7. **License of contributions:** "By opening a pull request, you agree that your contribution is licensed under GPL-3.0-or-later, the same as the project." No CLA.
   8. **New dependencies** must have a GPLv3-compatible license (MIT, BSD, Apache-2.0, MPL-2.0, LGPL or GPL). Today's dependencies all are.
-- [ ] `docs/architecture.md`: one page covering:
+- [x] `docs/architecture.md`: one page covering:
   - the three parts: **Source** (parsers: PDF rows → neutral `Transaction`) → **Transaction** (`transaction.py`) → **YNAB** (`ynab_api/`: format, upload, balance checks), plus the pipeline entry point, web routes and the auto-import runner (from P5)
   - "Adding a wallet or bank" means writing a Source. "Adding another budgeting app" means writing a new destination next to `ynab_api/` that takes the same `Transaction`s; until a second one exists, there's deliberately no destination registry
   - which module owns what (a table)
   - links to `docs/design/` and `docs/plan/`
 
   Keep it to what exists today, and update it in each phase.
-- [ ] `SECURITY.md`: report through GitHub's "Report a vulnerability" (private), never in a public issue. In scope: anything exposing tokens, PDFs, passwords or another user's data.
-- [ ] `CODE_OF_CONDUCT.md`: Contributor Covenant 2.1, with your contact method.
-- [ ] `.github/pull_request_template.md`:
+- [x] `SECURITY.md`: report through GitHub's "Report a vulnerability" (private), never in a public issue. In scope: anything exposing tokens, PDFs, passwords or another user's data.
+- [x] `CODE_OF_CONDUCT.md`: Contributor Covenant 2.1, with your contact method.
+- [x] `.github/pull_request_template.md`:
   ```markdown
   ## What and why
   ## How I tested it
@@ -180,13 +180,13 @@ This PR only reformats. It contains no logic changes, so reviewers can skim it, 
   - [ ] No real statement data, tokens or passwords in code, tests or screenshots
   - [ ] No source key renamed
   ```
-- [ ] `.github/ISSUE_TEMPLATE/`:
+- [x] `.github/ISSUE_TEMPLATE/`:
   - `bug_report.md`: steps, expected vs actual, and in bold at the top: "Remove names, account numbers and amounts before posting. Never attach a statement."
   - `new_source.md`: e-wallet or bank name, column headers, one **made-up** example row, the PDF password rule, and how the statement email arrives. Says "Don't attach the PDF."
   - `feature_request.md`
   - `config.yml` with `blank_issues_enabled: false`.
-- [ ] `.github/CODEOWNERS`: `* @<you>`.
-- [ ] README: shorten the existing "Contributing" section to a few lines linking `CONTRIBUTING.md` and `docs/plan/`. The test commands it lists today move into `CONTRIBUTING.md`.
+- [x] `.github/CODEOWNERS`: `* @<you>`.
+- [x] README: shorten the existing "Contributing" section to a few lines linking `CONTRIBUTING.md` and `docs/plan/`. The test commands it lists today move into `CONTRIBUTING.md`.
 
 ### User guide: already written (Oct 31, 2026)
 
