@@ -12,9 +12,10 @@ Steps on the page:
     4. Upload to YNAB                               -> table of created transactions
                                                        and ending balance check vs. YNAB
 
-Parsing, the balance checks and uploading reuse pipeline.parse_statement(),
-starting_balance_check(), upload_transactions() and ending_balance_check();
-plans, accounts and the connection check reuse ynab_api/accounts.py.
+Parsing, the starting balance check and the upload reuse
+pipeline.parse_statement(), starting_balance_check() and import_statement(),
+the same functions as the command line; plans, accounts and the connection
+check reuse ynab_api/accounts.py.
 A balance mismatch is only a warning: the upload is always allowed. A newly
 created YNAB account gets its Starting Balance set to the statement's on upload.
 
@@ -57,18 +58,15 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 
 from statement_etl.parsers.common import StatementError
 from statement_etl.pipeline import (
-    ending_balance_check,
-    new_account_starting_balance,
+    import_statement,
     parse_statement,
     starting_balance_check,
-    upload_transactions,
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES
 from statement_etl.web import token_store
 from statement_etl.ynab_api.accounts import get_accounts, get_plans, get_user
 from statement_etl.ynab_api.balance import (
     balance_check_message,
-    get_account_balance,
     new_account_message,
 )
 
@@ -335,13 +333,21 @@ def _ynab_call(fn):
             return None, _error(
                 "Your YNAB session expired. Reconnect to YNAB.", 401, reconnect=True
             )
-        except ynab.exceptions.NotFoundException:
-            return None, _error("Plan or account not found.", 404)
-        except ynab.exceptions.BadRequestException as e:
-            return None, _error(f"YNAB: {_error_detail(e)}", 400)
         except ynab.exceptions.ApiException as e:
-            return None, _error(f"YNAB returned {e.status}: {_error_detail(e)}", 502)
+            return None, _error(*_api_error_message(e))
     return None, _error("YNAB request failed.", 502)
+
+
+def _api_error_message(e):
+    """The message and HTTP status the page shows for a YNAB SDK error other than 401.
+
+    NotFoundException -> ("Plan or account not found.", 404)
+    """
+    if isinstance(e, ynab.exceptions.NotFoundException):
+        return "Plan or account not found.", 404
+    if isinstance(e, ynab.exceptions.BadRequestException):
+        return f"YNAB: {_error_detail(e)}", 400
+    return f"YNAB returned {e.status}: {_error_detail(e)}", 502
 
 
 # =============================================================================
@@ -517,22 +523,13 @@ def api_upload():
 
     rows = state["rows"]
 
-    # New YNAB account: set its Starting Balance to the statement's first
-    new_account, err = _ynab_call(
-        lambda token: new_account_starting_balance(
-            rows, account_id, plan_id, token, source=state["source"]
+    # New account's Starting Balance, upload, ending balance check. After a
+    # token refresh _ynab_call() runs it again, which is safe: YNAB skips
+    # import_ids it already has, and the Starting Balance already matches.
+    imported, err = _ynab_call(
+        lambda token: import_statement(
+            rows, transactions, account_id, plan_id, token, source=state["source"]
         )
-    )
-    if err:
-        return err
-
-    # YNAB balance just before the upload, for the ending-balance message
-    ynab_before, err = _ynab_call(lambda token: get_account_balance(plan_id, account_id, token))
-    if err:
-        return err
-
-    result, err = _ynab_call(
-        lambda token: upload_transactions(transactions, account_id, plan_id, token)
     )
     if err:
         return err
@@ -547,31 +544,24 @@ def api_upload():
             # "red" on balance-correction rows, so the page can highlight them
             "flag": t.flag_color.value if t.flag_color else "",
         }
-        for t in result.transactions or []
+        for t in imported.created
     ]
 
-    # After the upload: YNAB account balance vs. the statement's ending balance.
-    # The upload is already done, so a failed check is reported, not an error.
-    ending_check, ending_error = None, None
-    check, err = _ynab_call(
-        lambda token: ending_balance_check(
-            rows, account_id, plan_id, token, ynab_before, source=state["source"]
-        )
-    )
-    if err:
-        ending_error = err[0].get_json()["error"]
-    else:
-        ending_check = _check_json(check)
+    # The upload is already done, so a failed ending check is reported, not an error
+    ending_check = _check_json(imported.ending_check) if imported.ending_check else None
+    ending_error = _api_error_message(imported.ending_error)[0] if imported.ending_error else None
 
     return jsonify(
         {
             "created": created,
-            "skipped": len(result.duplicate_import_ids or []),
+            "skipped": imported.skipped,
             "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
             "ending_check": ending_check,
             "ending_check_error": ending_error,
             # set when a new account's Starting Balance was set (or already matched)
-            "new_account_message": new_account_message(new_account) if new_account else None,
+            "new_account_message": (
+                new_account_message(imported.new_account) if imported.new_account else None
+            ),
         }
     )
 

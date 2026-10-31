@@ -20,9 +20,9 @@ statement_etl/sources.py      (statement_etl/transaction.py    (format, upload, 
 3. **YNAB (`statement_etl/ynab_api/`):** Formats transactions for YNAB's API (milliunits and deterministic `ETLPH:` `import_id`s), lists plans and accounts, checks starting and ending balances against YNAB, and uploads transactions in one batch.
 
 Entry points sit on top of the pipeline:
-- **Pipeline (`statement_etl/pipeline.py`):** Orchestrates parse → starting balance check → upload → ending balance check, and provides the CLI (`python -m statement_etl.pipeline`).
-- **Web app (`statement_etl/web/`):** Local Flask web UI (`python -m statement_etl.web`) that calls the pipeline functions and stores personal access tokens in the OS keyring (`token_store.py`).
-- **Auto-import runner (planned in P5):** Background polling for emailed statements using the same pipeline entry point.
+- **Pipeline (`statement_etl/pipeline.py`):** Three steps every caller uses: `parse_statement()`, `starting_balance_check()` (shown before the upload), and `import_statement()`, the one place that imports: it sets a new account's Starting Balance, uploads, and checks the ending balance, returning an `ImportResult`. Also the CLI (`python -m statement_etl.pipeline`).
+- **Web app (`statement_etl/web/`):** Local Flask web UI (`python -m statement_etl.web`) that calls the same three pipeline steps as the CLI and stores personal access tokens in the OS keyring (`token_store.py`).
+- **Auto-import runner (planned in P5):** Background polling for emailed statements, calling the same `parse_statement()` and `import_statement()`.
 
 ## Extending the app
 
@@ -37,7 +37,7 @@ Entry points sit on top of the pipeline:
 | `statement_etl/parsers/common.py` | Shared PDF helpers: `open_pdf()`, `group_lines()`, `to_decimal()` |
 | `statement_etl/parsers/gcash.py` | GCash Transaction History PDF parser, totals verification, and balance-correction rows |
 | `statement_etl/transform.py` | Converting parsed statement rows into YNAB transaction dicts and deterministic `ETLPH:` `import_id`s (split into `transaction.py` and `ynab_api/format.py` in P1) |
-| `statement_etl/pipeline.py` | Pipeline steps (`parse_statement`, `starting_balance_check`, `new_account_starting_balance`, `upload_transactions`, `ending_balance_check`) and the CLI |
+| `statement_etl/pipeline.py` | Pipeline steps (`parse_statement`, `starting_balance_check`, and `import_statement`, which runs `new_account_starting_balance`, `upload_transactions` and `ending_balance_check`) and the CLI |
 | `statement_etl/ynab_api/client.py` | YNAB SDK client setup, duplicate `import_id` lookup, batch transaction upload, and ending balance check |
 | `statement_etl/ynab_api/accounts.py` | Fetching YNAB user info, plans (budgets), and accounts |
 | `statement_etl/ynab_api/balance.py` | Comparing statement balances with YNAB account balances and setting `Starting Balance` on newly created YNAB accounts |
