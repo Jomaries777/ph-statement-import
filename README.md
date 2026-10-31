@@ -79,7 +79,7 @@ In hosted mode:
 - **Rate limits** per client IP: 10 statement parses and 20 YNAB login requests per minute.
 - **Nothing is kept for long.** The parsed statement is dropped after the upload, and everything about a browser (its YNAB connection too) after 30 minutes without a request.
 
-Both modes send security headers on every response, including a strict Content-Security-Policy.
+Both modes send security headers on every response, including a strict Content-Security-Policy. Both also serve `/privacy` and `/terms`, linked from the footer of every page. The privacy policy is the URL YNAB's OAuth app review asks for; set its contact email (`CONTACT_EMAIL` in `statement_etl/web/app.py`) before going live.
 
 | Variable | What it is |
 |---|---|

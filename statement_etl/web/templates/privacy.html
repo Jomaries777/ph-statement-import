@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Statement → YNAB Import</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<!-- Checked by YNAB's OAuth app review, and the privacy notice under the
+     Philippines Data Privacy Act (RA 10173). Keep it plain, and update
+     "Last updated" whenever it changes. -->
+<main class="legal">
+  <p><a href="/">← Back to the app</a></p>
+  <h1>Privacy</h1>
+  <p class="muted">Last updated: {{ last_updated }}</p>
+
+  {%- if not hosted %}
+  <p class="msg info">You're running the local version on your own computer. It doesn't run
+    on Google Cloud: your statement and token stay on this computer and only go to YNAB.</p>
+  {%- endif %}
+
+  <p>Statement → YNAB Import (ph-statement-import) reads the e-wallet or bank statement PDF you
+    upload and creates its transactions in your YNAB budget. It uses your data for that one job,
+    which you start yourself, and for nothing else.</p>
+
+  <h2>Your statement PDF and its password</h2>
+  <ul>
+    <li>The PDF is held in the app's memory for your session only. It is never written to disk.</li>
+    <li>The parsed transactions are dropped as soon as they are uploaded to YNAB, or after
+      30 minutes without activity, whichever comes first.</li>
+    <li>The PDF password only unlocks the file. It isn't a bank or e-wallet login, and it isn't
+      stored: it is used once, to open the PDF.</li>
+  </ul>
+
+  <h2>Your YNAB connection</h2>
+  <ul>
+    <li>You connect with your YNAB login, on YNAB's own page. The app never asks for your YNAB
+      password or a personal access token.</li>
+    <li>YNAB then gives the app an access token. It is kept in memory only, never in your
+      browser, and dropped when you disconnect or after 30 minutes without activity.</li>
+    <li>You can also remove the app's access at any time in your YNAB account settings.</li>
+  </ul>
+
+  <h2>What is sent where</h2>
+  <ul>
+    <li>Your transactions go only to YNAB's API, into the plan and account you choose.</li>
+    <li>There are no analytics, no ads, and no other third parties. Your data is never sold or
+      shared.</li>
+    <li>Google Cloud hosts the app as a processor: it runs the app, and doesn't use your data
+      for anything else.</li>
+  </ul>
+
+  <h2>Where it runs, and how it's secured</h2>
+  <ul>
+    <li>The app runs on Google Cloud in <code>us-west1</code> (United States). Nothing from a
+      manual upload is stored there.</li>
+    <li>All traffic uses HTTPS. Your browser's cookie only holds a random session id; your
+      statement and YNAB token never go into it.</li>
+    <li>The app's server logs never contain your PDF, its password, your transactions or your
+      YNAB token.</li>
+  </ul>
+
+  <h2>Your rights</h2>
+  <p>You can ask what data the app holds about you, ask for it to be corrected or deleted, or
+    object to how it is used. Because nothing is kept after your session, there is usually nothing
+    left to delete; disconnecting from YNAB, or closing the page for 30 minutes, removes it all.</p>
+  <p>To ask about or delete your data, email <strong>{{ contact_email }}</strong>. You can
+    also complain to the Philippines' National Privacy Commission
+    (<a href="https://privacy.gov.ph" target="_blank" rel="noopener">privacy.gov.ph</a>).</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version is posted here with a new "Last updated" date.</p>
+</main>
+{% include "footer.html" %}
+</body>
+</html>

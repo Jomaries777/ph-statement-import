@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms · Statement → YNAB Import</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="legal">
+  <p><a href="/">← Back to the app</a></p>
+  <h1>Terms</h1>
+  <p class="muted">Last updated: {{ last_updated }}</p>
+
+  <h2>Provided as is</h2>
+  <p>Statement → YNAB Import is free, open-source software, provided as is, with no warranty of
+    any kind. It may misread a statement, or stop working when a bank or e-wallet changes its PDF
+    format. You use it at your own risk.</p>
+
+  <h2>Review what it creates</h2>
+  <p>Transactions are created in YNAB <strong>unapproved</strong>, so you can review each one
+    before approving it. Rows the app added to make the balance add up are flagged red. Check them
+    against your statement: you are responsible for what ends up in your budget.</p>
+
+  <h2>YNAB</h2>
+  <p>YNAB is a trademark of YNAB LLC. This app isn't affiliated with, or endorsed by, YNAB. It
+    only uses YNAB's public API, with the access you give it.</p>
+
+  <h2>License</h2>
+  <p>The source code is available under the GNU General Public License, version 3 or later. See
+    the <a href="https://github.com/Jomaries777/ph-statement-import" target="_blank"
+    rel="noopener">source code</a>.</p>
+
+  <p>See also the <a href="/privacy">privacy policy</a>.</p>
+</main>
+{% include "footer.html" %}
+</body>
+</html>

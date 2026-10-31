@@ -65,4 +65,12 @@ td.desc { white-space: normal; overflow-wrap: anywhere; min-width: 260px; max-wi
 .muted { color: var(--muted); font-size: 14px; }
 a { color: var(--accent); }
 .spaced { margin-top: 12px; }
+/* Footer on every page (templates/footer.html) */
+.site-footer { max-width: 1400px; margin: 0 auto; padding: 0 16px 32px; display: flex;
+               flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; }
+/* Privacy and terms pages */
+main.legal { max-width: 760px; }
+main.legal h2 { font-size: 17px; margin: 28px 0 8px; }
+main.legal li { margin-bottom: 6px; }
+main.legal code { font-size: 13px; }
 @media (max-width: 560px) { .row { grid-template-columns: 1fr; gap: 4px; } }

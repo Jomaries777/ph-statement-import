@@ -138,6 +138,8 @@ class RoutesTest(unittest.TestCase):
                 ("/oauth/callback", "GET"),
                 ("/oauth/logout", "POST"),
                 ("/static/<path:filename>", "GET"),
+                ("/privacy", "GET"),
+                ("/terms", "GET"),
             },
         )
 
@@ -981,6 +983,31 @@ class MainTest(WebTest):
 
 
 # =============================================================================
+# PRIVACY AND TERMS
+# =============================================================================
+
+FOOTER_LINKS = [b'href="/privacy"', b'href="/terms"', b"github.com/Jomaries777/ph-statement-import"]
+
+
+class PagesTest(WebTest):
+    def test_pages(self):
+        for path, text in (("/privacy", b"Last updated: "), ("/terms", b"provided as is")):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(text, response.data)
+
+    def test_footer_on_every_page(self):
+        for path in ("/", "/privacy", "/terms"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertIn(b"Your PDF is processed in memory and never stored.", response.data)
+                for link in FOOTER_LINKS:
+                    self.assertIn(link, response.data)
+
+    def test_privacy_says_this_is_the_local_version(self):
+        self.assertIn(b"running the local version", self.client.get("/privacy").data)
+
+
+# =============================================================================
 # SECURITY - headers in both modes; nothing is ever logged that shouldn't be
 # =============================================================================
 
@@ -1114,6 +1141,21 @@ class HostedTest(Hosted, WebTest):
         self.assertIn(b'id="connect-btn"', page)
         for element in (b'id="ynab-token"', b'id="token-btn"', b'id="remember-row"'):
             self.assertNotIn(element, page)
+
+    def test_privacy_and_terms(self):
+        for path in ("/privacy", "/terms"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+                for link in FOOTER_LINKS:
+                    self.assertIn(link, response.data)
+        privacy = self.client.get("/privacy").data
+        self.assertIn(b"us-west1", privacy)
+        self.assertNotIn(b"running the local version", privacy)
+
+    def test_privacy_link_next_to_the_ynab_login(self):
+        page = self.client.get("/").data.decode()
+        button = page.index('id="connect-btn"')
+        self.assertIn('<a href="/privacy">Privacy</a>', page[button : page.index("</div>", button)])
 
     def test_oauth_redirect_uri(self):
         location = self.client.get("/oauth/login").headers["Location"]
