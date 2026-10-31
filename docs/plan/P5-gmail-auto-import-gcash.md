@@ -248,6 +248,12 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
   - the Firestore doc and its runs are gone (`gcloud firestore` console)
   - Google Account → Security → Third-party access no longer lists the app
 
+## As built
+
+Where the setup differs from the steps above, and why:
+
+- **`ALLOWED_GOOGLE_EMAILS` lives in the `app-config` secret, not in a GitHub variable.** The repo is public, so anyone can read its Actions logs, and the deploy step would print the list there. Keeping it in `app-config` keeps family email addresses out of those logs. It also avoids a second problem: `--set-env-vars` splits values on commas, and the list is comma-separated. So in step A, add `ALLOWED_GOOGLE_EMAILS` to `app-config` together with `GOOGLE_CLIENT_SECRET` and `ENCRYPTION_KEYS`. `deploy.yml` passes only `GOOGLE_CLIENT_ID`.
+
 ## Tests
 
 ```bash
