@@ -571,7 +571,12 @@ class ParseTest(WebTest):
     def test_parse_errors(self):
         cases = [
             (ValueError("Incorrect PDF password."), "Incorrect PDF password."),
-            (RuntimeError("not a PDF"), "Could not read the PDF: not a PDF"),
+            (ValueError("Total Credit doesn't match"), "Total Credit doesn't match"),
+            # other errors never reach the page: they can carry internal details
+            (
+                RuntimeError("/internal/path/x.py"),
+                "Could not read the PDF. Is it the statement PDF?",
+            ),
         ]
         for error, message in cases:
             with (
@@ -581,6 +586,18 @@ class ParseTest(WebTest):
                 response = self.post(self.pdf())
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.get_json()["error"], message)
+
+    def test_unexpected_parse_error_logs_only_its_type(self):
+        error = RuntimeError("/internal/path/x.py")
+        with (
+            mock.patch.object(web, "parse_statement", side_effect=error),
+            self.assertLogs(web.app.logger, level="WARNING") as logs,
+        ):
+            self.post(self.pdf())
+        self.assertEqual(
+            logs.output,
+            [f"WARNING:{web.app.logger.name}:Could not read the uploaded PDF: RuntimeError"],
+        )
 
     def test_parsed_statement(self):
         with mock.patch.object(web, "parse_statement", return_value=(ROWS, TRANSACTIONS)) as parse:
