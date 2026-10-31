@@ -38,6 +38,8 @@ from statement_etl.web.state import error_response, session_state
 from statement_etl.ynab_api.accounts import get_user
 
 YNAB_AUTHORIZE_URL = "https://app.ynab.com/oauth/authorize"
+# Pages /oauth/login?next=... is allowed to return to (no open redirects)
+NEXT_PAGES = {"/": "/", "/auto-import": "/auto-import"}
 
 blueprint = Blueprint("ynab_auth", __name__)
 
@@ -106,6 +108,7 @@ def oauth_login():
             "Create an OAuth application in YNAB Developer Settings first.",
             500,
         )
+    session["oauth_next"] = NEXT_PAGES.get(request.args.get("next", "/"), "/")
     session["oauth_state"] = secrets.token_urlsafe(16)
     query = urllib.parse.urlencode(
         {
@@ -122,20 +125,21 @@ def oauth_login():
 @limiter.limit(OAUTH_LIMIT)
 def oauth_callback():
     """YNAB redirects here with ?code=...; swap it for an access token."""
+    next_page = NEXT_PAGES.get(session.pop("oauth_next", "/"), "/")
     if request.args.get("error"):
-        return redirect("/?oauth_error=" + urllib.parse.quote(request.args["error"]))
+        return redirect(f"{next_page}?oauth_error=" + urllib.parse.quote(request.args["error"]))
     if not request.args.get("state") or request.args.get("state") != session.pop(
         "oauth_state", None
     ):
-        return redirect("/?oauth_error=state_mismatch")
+        return redirect(f"{next_page}?oauth_error=state_mismatch")
     try:
         token = ynab_oauth.exchange_token(
             grant_type="authorization_code", code=request.args.get("code", "")
         )
     except (urllib.error.URLError, ValueError):
-        return redirect("/?oauth_error=token_exchange_failed")
+        return redirect(f"{next_page}?oauth_error=token_exchange_failed")
     _store_tokens(session_state(), token)
-    return redirect("/")
+    return redirect(next_page)
 
 
 @blueprint.post("/oauth/logout")

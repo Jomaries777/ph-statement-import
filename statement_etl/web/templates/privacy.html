@@ -29,17 +29,48 @@
     <li>The PDF is held in the app's memory for your session only. It is never written to disk.</li>
     <li>The parsed transactions are dropped as soon as they are uploaded to YNAB, or after
       30 minutes without activity, whichever comes first.</li>
-    <li>The PDF password only unlocks the file. It isn't a bank or e-wallet login, and it isn't
-      stored: it is used once, to open the PDF.</li>
+    <li>The PDF password only unlocks the file. It isn't a bank or e-wallet login. For a manual
+      upload it isn't stored: it is used once, to open the PDF.</li>
   </ul>
 
   <h2>Your YNAB connection</h2>
   <ul>
     <li>You connect with your YNAB login, on YNAB's own page. The app never asks for your YNAB
       password or a personal access token.</li>
-    <li>YNAB then gives the app an access token. It is kept in memory only, never in your
-      browser, and dropped when you disconnect or after 30 minutes without activity.</li>
+    <li>For a manual upload, YNAB gives the app an access token that is kept in memory only, never
+      in your browser, and dropped when you disconnect or after 30 minutes without activity.</li>
     <li>You can also remove the app's access at any time in your YNAB account settings.</li>
+  </ul>
+
+  <h2>Optional: Auto-import from Gmail</h2>
+  <p>Auto-import is off unless an invited user turns it on at <code>/auto-import</code> in the
+    hosted app. Visitors who only upload statement PDFs by hand never connect Google and have
+    nothing stored.</p>
+  <ul>
+    <li><strong>What emails are read:</strong> Auto-import asks for read-only Gmail access
+      (<code>gmail.readonly</code>) and searches only for emails matching each enabled source's
+      statement search (for example, GCash Transaction History emails with a PDF attachment).
+      Other emails are never opened. Each matching PDF attachment is read in memory only, parsed,
+      imported to YNAB unapproved, and discarded. No email body, PDF or statement transaction is
+      stored — only a run-log entry (message ID, timestamps, source, YNAB account ID, status, and
+      created / skipped counts) so an email is never imported twice.</li>
+    <li><strong>What is stored, and for how long:</strong> Because background checks run every
+      15 minutes without your browser open, turning on auto-import stores one record for your
+      Google account in Google Cloud Firestore (<code>us-west1</code>): your Google account ID and
+      email address, your chosen YNAB plan and e-wallet-to-account mappings, and — encrypted in
+      the app before being written to Firestore — your Gmail refresh token, your YNAB refresh
+      token, and the PDF password inputs you enter once (such as your last name and the last
+      4 digits of your mobile number). They are kept until you turn auto-import off.</li>
+    <li><strong>Turn off and delete:</strong> Clicking <strong>Turn off and delete my data</strong>
+      on <code>/auto-import</code> deletes your Firestore record and all of its run-log entries at
+      once, revokes the app's Google token with Google, and signs you out of Google on this app.
+      You can also remove access at any time in your Google Account
+      (<strong>Security → Third-party access</strong>) and in your YNAB account settings.</li>
+    <li><strong>Google API Services User Data Policy (Limited Use):</strong> Statement → YNAB
+      Import's use and transfer to any other app of information received from Google APIs will
+      adhere to the
+      <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+      including the Limited Use requirements.</li>
   </ul>
 
   <h2>What is sent where</h2>
@@ -63,8 +94,10 @@
 
   <h2>Your rights</h2>
   <p>You can ask what data the app holds about you, ask for it to be corrected or deleted, or
-    object to how it is used. Because nothing is kept after your session, there is usually nothing
-    left to delete; disconnecting from YNAB, or closing the page for 30 minutes, removes it all.</p>
+    object to how it is used. For manual uploads nothing is kept after your session: disconnecting
+    from YNAB, or closing the page for 30 minutes, removes it all. If you turned on auto-import,
+    <strong>Turn off and delete my data</strong> on <code>/auto-import</code> deletes your stored
+    settings and run log immediately.</p>
   <p>To ask about or delete your data, email <strong>{{ contact_email }}</strong>. You can
     also complain to the Philippines' National Privacy Commission
     (<a href="https://privacy.gov.ph" target="_blank" rel="noopener">privacy.gov.ph</a>).</p>

@@ -178,7 +178,7 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
 
 #### PR 5: `feat/autoimport-page`, "feat: auto-import settings page, Google sign-in and scheduler task"
 
-- [ ] `statement_etl/web/auto_import.py` (Blueprint), registered in `web/app.py` **only when `HOSTED` and `GOOGLE_CLIENT_ID` are set**:
+- [x] `statement_etl/web/auto_import.py` (Blueprint), registered in `web/app.py` **only when `HOSTED` and `GOOGLE_CLIENT_ID` are set**:
   - `GET /auto-import`: the page (W2 when off, W3 when on), with the last 20 runs.
   - `GET /google/login` → Google; `GET /google/callback`:
     - checks the OAuth `state`
@@ -196,19 +196,19 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
     - Anything else → **403 before any work**.
     - Then `runner.poll_all()`.
   - Add the `/google/*` and `/api/auto-import*` routes to the rate limits.
-- [ ] `templates/auto_import.html` and `static/auto_import.js`, following wireframes W2 and W3:
+- [x] `templates/auto_import.html` and `static/auto_import.js`, following wireframes W2 and W3:
   - the steps: ① Gmail, ② YNAB, ③ YNAB plan, ④ "Map e-wallets to YNAB accounts"
   - one row per source with `email_query`: an account dropdown, "Don't import", that source's password inputs, and a Test button
   - an info box: emails arrive when you request a statement in the e-wallet app; settings are stored encrypted until you turn this off
   - the run log; "Turn off and delete"
-- [ ] A link to Auto-import in the main page header (hosted mode only).
-- [ ] Privacy page additions:
+- [x] A link to Auto-import in the main page header (hosted mode only).
+- [x] Privacy page additions:
   - The Google API Services User Data Policy **Limited Use** statement.
   - What auto-import stores (encrypted tokens, mapping, password inputs) and for how long (until you turn it off).
   - That only emails matching the statement search are read, and no email content beyond the run log is stored.
   - How "Turn off and delete" works.
-- [ ] `deploy.yml`: add `GOOGLE_CLIENT_ID` and `ALLOWED_GOOGLE_EMAILS` to `--set-env-vars`.
-- [ ] Tests:
+- [x] `deploy.yml`: add `GOOGLE_CLIENT_ID` and `ALLOWED_GOOGLE_EMAILS` to `--set-env-vars`.
+- [x] Tests:
   - `/tasks/poll-gmail` without a valid OIDC token → 403, and the runner isn't called
   - a non-allowlisted Google email can't turn the feature on
   - saving two sources with the same account → 400
