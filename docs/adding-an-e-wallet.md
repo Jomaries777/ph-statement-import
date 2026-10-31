@@ -299,6 +299,43 @@ def build_password(inputs: Mapping[str, str] | str, mobile_last4: str | None = N
         ),
 ```
 
+**Example: GoTyme (`gotyme`)**
+
+One GoTyme statement email (from `no-reply@gotyme.com.ph`, subject "GoTyme Bank Statement of Account as of DD Mon YYYY") carries **two** PDFs:
+
+- `GoTymeStatementForEverydayDepositAccount_YYYYMMDD_HHMMSS.pdf`: the Everyday account, which `gotyme` parses
+- `GoTyme_BankStatement_SavingsAccounts_YYYYMMDD_HHMMSS.pdf`: savings (GoalSave), a different layout that isn't supported yet
+
+So `attachment_pattern` matches the Everyday file name exactly, rather than any `.pdf`. The savings PDF is never downloaded. The password is the date of birth as `MMDDYYYY`, which the email doesn't contain, so the user enters the date once:
+
+```python
+# statement_etl/parsers/gotyme.py
+def build_password(inputs: Mapping[str, str]) -> str:
+    """GoTyme PDF password: date of birth as MMDDYYYY.
+
+    ...
+        {"birth_date": "1990-01-31"} -> "01311990"
+    """
+    return date.fromisoformat(inputs["birth_date"]).strftime("%m%d%Y")
+```
+
+```python
+# statement_etl/sources.py
+        Source(
+            key="gotyme",
+            ...,
+            email_query=(
+                'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",
+            password_inputs=("birth_date",),
+            build_password=gotyme.build_password,
+        ),
+```
+
+`/auto-import` builds each source's row from these fields, so adding a source needs no page or runner change. The one exception is a new input name. Give it an entry in `INPUT_FIELDS` in `statement_etl/web/auto_import.py`, with its label, field type and format check. For example, `birth_date` is a date field labelled "Date of birth". A name without an entry still works, but shows as a plain password field. The first line of `build_password`'s docstring is shown under the inputs as the password rule.
+
 `tests/test_sources.py` verifies automatically that every source with `email_query` also sets `attachment_pattern`, and every source with `password_inputs` also sets `build_password`.
 
 ---

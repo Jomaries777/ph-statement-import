@@ -4,14 +4,17 @@ imports them once into the mapped YNAB account, and records a run.
 
 Run from the project folder:  python -m unittest discover tests
 
-Gmail is FakeGmail below, a made-up inbox whose PDFs come from
-tests/e2e/make_pdf.py, so the real GCash parser reads them. The store is
+Gmail is FakeGmail below, a made-up inbox whose GCash PDFs come from
+tests/e2e/make_pdf.py, so the real GCash parser reads them. The GoTyme tests
+use a stand-in parser instead (make_pdf only makes GCash statements): they
+check which of an email's PDFs is parsed, with which password. The store is
 FakeStore (tests/fakes.py). YNAB is faked at the edges: ynab_oauth.refresh()
 and pipeline.import_statement(). All values here are made up.
 """
 
 import dataclasses
 import os
+import re
 import tempfile
 import unittest
 import urllib.error
@@ -38,6 +41,12 @@ PASSWORD = "delacruz1234"  # what gcash.build_password() makes of INPUTS
 OTHER_ACCOUNT_ID = "33333333-3333-3333-3333-333333333333"
 
 GCASH_QUERY = sources.SOURCES["gcash"].email_query
+GOTYME_QUERY = sources.SOURCES["gotyme"].email_query
+GOTYME_INPUTS = {"birth_date": "1990-01-31"}
+GOTYME_PASSWORD = "01311990"  # what gotyme.build_password() makes of GOTYME_INPUTS
+# One GoTyme email carries both PDFs; only the Everyday one is the gotyme source
+EVERYDAY_PDF = ("GoTymeStatementForEverydayDepositAccount_20261031_101500.pdf", b"%PDF everyday")
+SAVINGS_PDF = ("GoTyme_BankStatement_SavingsAccounts_20261031_101500.pdf", b"%PDF savings")
 LAST_CHECKED = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
 NEW = LAST_CHECKED + timedelta(minutes=10)  # an email received after the last check
 
@@ -75,19 +84,32 @@ class FakeGmail:
 
         gmail.add("msg-1", received=NEW)          # a GCash statement email with PDF
         gmail.add("msg-2", attachment=None)       # an email without a PDF
-    searches lists every (query, after) the runner asked for.
+        gmail.add("msg-3", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+    searches lists every (query, after) the runner asked for; downloads every
+    attachment filename it got.
     """
 
     GmailError = gmail.GmailError
 
     def __init__(self):
-        self.emails = []  # oldest first: {"id", "query", "received", "attachment"}
+        self.emails = []  # oldest first: {"id", "query", "received", "attachments"}
         self.searches = []
+        self.downloads = []
         self.attachment_error = None  # raised by get_pdf_attachment() when set
 
-    def add(self, msg_id, received=NEW, query=GCASH_QUERY, attachment=("statement.pdf", PDF)):
+    def add(
+        self,
+        msg_id,
+        received=NEW,
+        query=GCASH_QUERY,
+        attachment=("statement.pdf", PDF),
+        attachments=None,
+    ):
+        """`attachment` is one (filename, bytes) or None; `attachments` a list of them."""
+        if attachments is None:
+            attachments = [attachment] if attachment else []
         self.emails.append(
-            {"id": msg_id, "query": query, "received": received, "attachment": attachment}
+            {"id": msg_id, "query": query, "received": received, "attachments": attachments}
         )
 
     def refresh_access_token(self, refresh_token):
@@ -109,9 +131,15 @@ class FakeGmail:
         return {"id": msg_id, "internalDate": str(int(email["received"].timestamp() * 1000))}
 
     def get_pdf_attachment(self, access_token, msg_id, pattern):
+        """The first attachment whose filename matches, like gmail.get_pdf_attachment()."""
         if self.attachment_error:
             raise self.attachment_error
-        return self._email(msg_id)["attachment"]
+        regex = re.compile(pattern, re.IGNORECASE)
+        for filename, pdf_bytes in self._email(msg_id)["attachments"]:
+            if regex.search(filename):
+                self.downloads.append(filename)
+                return filename, pdf_bytes
+        return None
 
     def _email(self, msg_id):
         return next(e for e in self.emails if e["id"] == msg_id)
@@ -148,8 +176,11 @@ class RunnerTest(unittest.TestCase):
         self.ynab_refresh_tokens.add(new_token)
         return {"access_token": f"ynab-access-{self.ynab_logins}", "refresh_token": new_token}
 
-    def add_user(self, sub=SUB, mappings=None, last_checked=LAST_CHECKED):
-        """A user with auto-import on; GCash goes to ACCOUNT_ID unless `mappings` says otherwise."""
+    def add_user(self, sub=SUB, mappings=None, last_checked=LAST_CHECKED, password_inputs=None):
+        """A user with auto-import on; GCash goes to ACCOUNT_ID unless `mappings` says otherwise.
+
+        Every mapped source gets the GCash INPUTS unless `password_inputs` says otherwise.
+        """
         ynab_refresh_token = f"ynab-refresh-start-{sub}"
         self.ynab_refresh_tokens.add(ynab_refresh_token)
         self.store.save_user(
@@ -163,7 +194,8 @@ class RunnerTest(unittest.TestCase):
             plan_name="Test Plan",
             mappings=mappings
             or {"gcash": {"account_id": ACCOUNT_ID, "account_name": "GCash", "enabled": True}},
-            password_inputs={key: INPUTS for key in (mappings or {"gcash": None})},
+            password_inputs=password_inputs
+            or {key: INPUTS for key in (mappings or {"gcash": None})},
         )
 
     def runs(self, sub=SUB):
@@ -259,6 +291,86 @@ class PollTest(RunnerTest):
         self.assertEqual((counts["users"], counts["deferred"]), (1, 1))
         self.assertGreater(self.store.get_user(SUB)["last_checked"], LAST_CHECKED)
         self.assertEqual(self.store.get_user(OTHER_SUB)["last_checked"], LAST_CHECKED)
+
+
+# =============================================================================
+# GOTYME - a second real source: one email with two PDFs, its own account
+# =============================================================================
+
+
+class GoTymeTest(RunnerTest):
+    """GoTyme's real Source settings, with a stand-in parser that records its input."""
+
+    ROWS = [
+        {
+            "Date": "05 Oct 2026",
+            "Details": "Card payment at SHOPEE PH, Card •••• 1234",
+            "Credits": "0.00",
+            "Debits": "249.00",
+            "Running Balance": "4751.00",
+        }
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.parsed = []  # (pdf bytes, password) for every PDF the parser was given
+        gotyme = dataclasses.replace(sources.SOURCES["gotyme"], parse=self.parse)
+        self.enterContext(mock.patch.dict(sources.SOURCES, gotyme=gotyme))
+
+    def parse(self, pdf, password):
+        self.parsed.append((pdf.read(), password))
+        return [dict(row) for row in self.ROWS]
+
+    def add_gotyme_user(self):
+        """GCash goes to ACCOUNT_ID and GoTyme to OTHER_ACCOUNT_ID, each with its own inputs."""
+        self.add_user(
+            mappings={
+                "gcash": {"account_id": ACCOUNT_ID, "account_name": "GCash", "enabled": True},
+                "gotyme": {
+                    "account_id": OTHER_ACCOUNT_ID,
+                    "account_name": "GoTyme",
+                    "enabled": True,
+                },
+            },
+            password_inputs={"gcash": INPUTS, "gotyme": GOTYME_INPUTS},
+        )
+
+    def test_only_the_everyday_pdf_is_downloaded_and_parsed(self):
+        self.add_gotyme_user()
+        # The savings PDF comes first, so taking any PDF would pick the wrong one
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(self.gmail.downloads, [EVERYDAY_PDF[0]])
+        self.assertEqual(self.parsed, [(EVERYDAY_PDF[1], GOTYME_PASSWORD)])
+        run = self.runs()["msg-g:gotyme"]
+        self.assertEqual((run["status"], run["account_id"]), (runner.OK, OTHER_ACCOUNT_ID))
+
+    def test_an_email_with_only_the_savings_pdf_imports_nothing(self):
+        self.add_gotyme_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(self.runs()["msg-g:gotyme"]["status"], runner.NO_ATTACHMENT)
+        self.assertEqual(self.parsed, [])
+        self.import_statement.assert_not_called()
+
+    def test_gcash_and_gotyme_emails_go_to_their_own_accounts(self):
+        self.add_gotyme_user()
+        self.gmail.add("msg-c")  # a GCash email, read by the real GCash parser
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+
+        runner.poll_all()
+
+        accounts = {c.kwargs["source"]: c.args[2] for c in self.import_statement.call_args_list}
+        self.assertEqual(accounts, {"gcash": ACCOUNT_ID, "gotyme": OTHER_ACCOUNT_ID})
+        self.assertEqual(
+            [query for query, _after in self.gmail.searches], [GCASH_QUERY, GOTYME_QUERY]
+        )
+        self.assertEqual(sorted(self.runs()), ["msg-c:gcash", "msg-g:gotyme"])
+        self.assertEqual(self.parsed, [(EVERYDAY_PDF[1], GOTYME_PASSWORD)])  # only GoTyme's
 
 
 # =============================================================================

@@ -11,6 +11,7 @@ Output fields per transaction (same columns as the PDF table, amounts without co
     Running Balance  - amount text without commas, e.g. "4751.00"
 
 to_transactions() turns these rows into neutral Transactions (transaction.py).
+build_password() makes the PDF password from a date of birth, for Gmail auto-import.
 
 How it works:
     1. Open      - open the PDF with its password                (open_pdf)
@@ -42,7 +43,8 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import date, datetime
 from decimal import Decimal
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
@@ -473,6 +475,22 @@ def to_transactions(rows: list[dict[str, str]]) -> list[Transaction]:
             )
         )
     return transactions
+
+
+# =============================================================================
+# PDF PASSWORD - built from user inputs for Gmail auto-import (sources.py)
+# =============================================================================
+
+
+def build_password(inputs: Mapping[str, str]) -> str:
+    """GoTyme PDF password: date of birth as MMDDYYYY.
+
+    Takes the `Source.build_password` input dict, with the date as the page's
+    date field sends it (YYYY-MM-DD):
+        {"birth_date": "1990-01-31"} -> "01311990"
+    Raises ValueError for a date that doesn't exist.
+    """
+    return date.fromisoformat(inputs["birth_date"]).strftime("%m%d%Y")
 
 
 # =============================================================================

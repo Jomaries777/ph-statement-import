@@ -91,6 +91,11 @@ SECOND_SOURCE = dataclasses.replace(
     build_password=lambda inputs: inputs["birth_date"].replace("-", ""),
 )
 
+# A source without email_query: it works for manual upload but isn't on /auto-import
+NO_EMAIL_SOURCE = dataclasses.replace(
+    sources.SOURCES["gcash"], key="nomail", name="NoMailBank", email_query=None
+)
+
 
 def valid_settings_payload(
     *,
@@ -116,6 +121,18 @@ def valid_settings_payload(
             }
         },
     }
+
+
+def gcash_and_gotyme_payload(*, gotyme_account_id=OTHER_ACCOUNT_ID):
+    """Settings with GCash on ACCOUNT_ID and GoTyme on `gotyme_account_id`."""
+    payload = valid_settings_payload()
+    payload["mappings"]["gotyme"] = {
+        "account_id": gotyme_account_id,
+        "account_name": "GoTyme Everyday",
+        "enabled": True,
+    }
+    payload["password_inputs"]["gotyme"] = {"birth_date": "1990-05-15"}
+    return payload
 
 
 # =============================================================================
@@ -304,17 +321,17 @@ class PageViewTest(AutoImportWebTest):
             self.assertEqual(js_resp.status_code, 200)
 
     def test_lists_only_sources_with_email_query_and_renders_generic_inputs(self):
-        # GoTyme has no email_query yet (P6), so it must not appear; patching in
-        # a second Source with email_query renders automatically with no GCash
-        # special cases.
-        self.patch_dict(sources.SOURCES, {"samplebank": SECOND_SOURCE})
+        # A Source without email_query must not appear; any Source with one,
+        # like the patched-in SampleBank, renders with no source special cases.
+        self.patch_dict(sources.SOURCES, {"samplebank": SECOND_SOURCE, "nomail": NO_EMAIL_SOURCE})
         self.sign_in_google()
         html = self.client.get("/auto-import").data.decode()
 
         self.assertIn('data-source="gcash"', html)
+        self.assertIn('data-source="gotyme"', html)
         self.assertIn('data-source="samplebank"', html)
-        self.assertNotIn('data-source="gotyme"', html)
-        self.assertNotIn("GoTyme", html)
+        self.assertNotIn('data-source="nomail"', html)
+        self.assertNotIn("NoMailBank", html)
 
         # Generic inputs from each Source.password_inputs, with family_name prefilled
         self.assertIn('data-input="last_name"', html)
@@ -322,6 +339,16 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn("from Google · edit", html)
         self.assertIn('data-input="mobile_last4"', html)
         self.assertIn('data-input="birth_date"', html)
+
+    def test_gotyme_row_asks_for_the_date_of_birth_in_a_date_field(self):
+        self.sign_in_google()
+        html = self.client.get("/auto-import").data.decode()
+        row = html.split('<tr data-source="gotyme"', 1)[1].split("</tr>", 1)[0]
+
+        self.assertRegex(row, r'type="date"\s+data-input="birth_date"\s+aria-label="Date of birth"')
+        self.assertIn('autocomplete="bday"', row)
+        self.assertIn("Asked once. GoTyme PDF password: date of birth as MMDDYYYY.", row)
+        self.assertNotIn('data-input="last_name"', row)  # GCash's inputs stay on GCash's row
 
     def test_active_view_shows_newest_20_runs_and_status_badges(self):
         self.sign_in_google(
@@ -584,31 +611,43 @@ class SaveSettingsTest(AutoImportWebTest):
         self.assertTrue(no_ynab.get_json()["reconnect"])
 
     def test_rejects_two_enabled_sources_mapped_to_same_account(self):
-        self.patch_dict(sources.SOURCES, {"samplebank": SECOND_SOURCE})
         self.sign_in_google()
         self.connect_ynab_oauth()
 
-        payload = {
-            "plan_id": PLAN_ID,
-            "plan_name": "Test Plan",
-            "mappings": {
-                "gcash": {"account_id": ACCOUNT_ID, "account_name": "Shared", "enabled": True},
-                "samplebank": {
-                    "account_id": ACCOUNT_ID,
-                    "account_name": "Shared",
-                    "enabled": True,
-                },
-            },
-            "password_inputs": {
-                "gcash": {"last_name": "Dela Cruz", "mobile_last4": "1234"},
-                "samplebank": {"birth_date": "1990-05-15"},
-            },
-        }
         with mock.patch.object(ynab_oauth, "refresh") as refresh:
-            response = self.post(payload)
+            response = self.post(gcash_and_gotyme_payload(gotyme_account_id=ACCOUNT_ID))
         self.assertEqual(response.status_code, 400)
         self.assertIn("same YNAB account", response.get_json()["error"])
         refresh.assert_not_called()  # validated before rotating the YNAB token
+
+    def test_saves_gcash_and_gotyme_to_their_own_accounts(self):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+            response = self.post(gcash_and_gotyme_payload())
+
+        self.assertEqual(response.status_code, 200)
+        saved = self.store.get_user(SUB)
+        accounts = {key: m["account_id"] for key, m in saved["mappings"].items()}
+        self.assertEqual(accounts, {"gcash": ACCOUNT_ID, "gotyme": OTHER_ACCOUNT_ID})
+        self.assertEqual(
+            json.loads(self.store.decrypt(saved["password_inputs"]["gotyme"])),
+            {"birth_date": "1990-05-15"},
+        )
+
+    def test_rejects_a_date_of_birth_that_is_not_a_date(self):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+
+        for bad_date in ("05151990", "1990-02-30", ""):  # MMDDYYYY typed in; no Feb 30; blank
+            payload = gcash_and_gotyme_payload()
+            payload["password_inputs"]["gotyme"] = {"birth_date": bad_date}
+            with self.subTest(birth_date=bad_date):
+                response = self.post(payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertNotIn("mappings", self.store.users[SUB])  # nothing saved
 
     def test_rejects_missing_or_invalid_password_inputs(self):
         self.sign_in_google()
@@ -630,7 +669,8 @@ class SaveSettingsTest(AutoImportWebTest):
         self.sign_in_google()
         self.connect_ynab_oauth()
 
-        for bad_key in ("unknown_wallet", "gotyme"):  # gotyme has no email_query
+        self.patch_dict(sources.SOURCES, {"nomail": NO_EMAIL_SOURCE})
+        for bad_key in ("unknown_wallet", "nomail"):  # nomail has no email_query
             payload = {
                 "plan_id": PLAN_ID,
                 "plan_name": "Test Plan",
@@ -746,7 +786,7 @@ class TestPasswordRouteTest(AutoImportWebTest):
             self.client.post(
                 "/api/auto-import/test", json={"source": "gotyme", "inputs": {}}
             ).status_code,
-            400,
+            400,  # no birth_date
         )
         self.assertEqual(
             self.client.post(
