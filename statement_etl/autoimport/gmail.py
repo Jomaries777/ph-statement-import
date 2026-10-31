@@ -26,6 +26,7 @@ Tests:
 """
 
 import base64
+import http.client
 import json
 import os
 import re
@@ -39,6 +40,7 @@ GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
 GOOGLE_SCOPES = (
     "openid",
     "email",
@@ -103,12 +105,17 @@ def _request(
     except urllib.error.HTTPError as e:
         try:
             raw_body = e.read()
+        except (TimeoutError, http.client.HTTPException, OSError):
+            raw_body = b""
         finally:
             e.close()
         detail = _error_detail(raw_body, e.reason or f"HTTP {e.code}")
         raise GmailError(f"Google API returned HTTP {e.code}: {detail}", status=e.code) from None
     except urllib.error.URLError as e:
         raise GmailError(f"Could not reach Google API: {e.reason}") from e
+    except (TimeoutError, http.client.HTTPException) as e:
+        detail = str(e) or type(e).__name__
+        raise GmailError(f"Could not reach Google API: {detail}") from e
 
 
 def _parse_json(raw: bytes) -> dict:
@@ -197,7 +204,7 @@ def exchange_code(code: str) -> dict:
 
 
 def decode_id_token(id_token: str) -> dict:
-    """Decode `sub`, `email` and `family_name` from an `id_token` returned by `exchange_code()`.
+    """Decode and check `iss` / `aud` on an `id_token` returned by `exchange_code()`.
 
     Only for ID tokens just fetched over HTTPS from `GOOGLE_TOKEN_URL`; verify
     caller-supplied OIDC tokens with `google.oauth2.id_token.verify_oauth2_token`.
@@ -207,7 +214,13 @@ def decode_id_token(id_token: str) -> dict:
     parts = id_token.split(".")
     if len(parts) != 3 or not parts[1]:
         raise GmailError("Invalid Google id_token format.")
-    return _parse_json(_b64url_decode(parts[1]))
+    claims = _parse_json(_b64url_decode(parts[1]))
+    if claims.get("iss") not in GOOGLE_ISSUERS:
+        raise GmailError("Invalid Google id_token issuer.")
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    if not client_id or claims.get("aud") != client_id:
+        raise GmailError("Google id_token audience does not match GOOGLE_CLIENT_ID.")
+    return claims
 
 
 def refresh_access_token(refresh_token: str) -> str:

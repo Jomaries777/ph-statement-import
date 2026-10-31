@@ -10,6 +10,7 @@ the test. All values here are made up.
 """
 
 import base64
+import http.client
 import io
 import json
 import os
@@ -158,7 +159,13 @@ class OAuthTest(GmailTestCase):
         self.assertEqual(self.http.calls, [])
 
     def test_exchange_code_and_decode_id_token(self) -> None:
-        claims = {"sub": "109876543210", "email": "alex@example.test", "family_name": "Dela Cruz"}
+        claims = {
+            "iss": "https://accounts.google.com",
+            "aud": CLIENT_ID,
+            "sub": "109876543210",
+            "email": "alex@example.test",
+            "family_name": "Dela Cruz",
+        }
         payload = {
             "access_token": ACCESS_TOKEN,
             "refresh_token": REFRESH_TOKEN,
@@ -169,6 +176,8 @@ class OAuthTest(GmailTestCase):
         tokens = gmail.exchange_code("auth-code-xyz")
         self.assertEqual(tokens, payload)
         self.assertEqual(gmail.decode_id_token(tokens["id_token"]), claims)
+        alt_iss = {**claims, "iss": "accounts.google.com"}
+        self.assertEqual(gmail.decode_id_token(fake_id_token(alt_iss)), alt_iss)
         [call] = self.http.calls
         self.assertEqual((call["method"], call["url"]), ("POST", gmail.GOOGLE_TOKEN_URL))
         self.assertEqual(
@@ -182,10 +191,21 @@ class OAuthTest(GmailTestCase):
             },
         )
 
-    def test_decode_id_token_rejects_malformed_tokens(self) -> None:
+    def test_decode_id_token_rejects_malformed_or_wrong_aud_or_iss(self) -> None:
         for bad in ("not-a-jwt", "a..c", "a.!!!.c", f"a.{b64url(b'[]')}.c"):
             with self.subTest(bad=bad), self.assertRaises(GmailError):
                 gmail.decode_id_token(bad)
+
+        valid = {"iss": "https://accounts.google.com", "aud": CLIENT_ID, "sub": "123"}
+        bad_claims = [
+            ("wrong aud", {**valid, "aud": "other-client-id"}, "audience"),
+            ("missing aud", {"iss": "https://accounts.google.com", "sub": "123"}, "audience"),
+            ("wrong iss", {**valid, "iss": "https://evil.example.test"}, "issuer"),
+            ("missing iss", {"aud": CLIENT_ID, "sub": "123"}, "issuer"),
+        ]
+        for label, claims, expected in bad_claims:
+            with self.subTest(label), self.assertRaisesRegex(GmailError, expected):
+                gmail.decode_id_token(fake_id_token(claims))
 
     def test_refresh_access_token_success(self) -> None:
         self.http.enqueue_json({"access_token": "fresh-access-token", "expires_in": 3599})
@@ -208,7 +228,17 @@ class OAuthTest(GmailTestCase):
                 "invalid_grant (Token revoked.)",
             ),
             (http_error(503, b"Unavailable", reason="Service Unavailable"), 503, "HTTP 503"),
-            (urllib.error.URLError("DNS failure"), None, "DNS failure"),
+            (urllib.error.URLError("DNS failure"), None, "Could not reach Google API: DNS failure"),
+            (
+                TimeoutError("read timed out"),
+                None,
+                "Could not reach Google API: read timed out",
+            ),
+            (
+                http.client.RemoteDisconnected("Remote end closed connection"),
+                None,
+                "Could not reach Google API: Remote end closed connection",
+            ),
         ]
         for failure, expected_status, expected_text in cases:
             with self.subTest(expected_text):
