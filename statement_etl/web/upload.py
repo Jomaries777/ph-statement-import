@@ -27,6 +27,7 @@ from statement_etl.pipeline import (
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES
 from statement_etl.web import token_store
+from statement_etl.web.config import HOSTED
 from statement_etl.web.state import error_response, session_state
 from statement_etl.web.ynab_auth import api_error_message, get_token, ynab_call
 from statement_etl.web.ynab_oauth import oauth_configured
@@ -41,7 +42,13 @@ blueprint = Blueprint("upload", __name__)
 
 @blueprint.get("/")
 def index():
-    return render_template("index.html", sources=SOURCES.values(), default_source=DEFAULT_SOURCE)
+    return render_template(
+        "index.html",
+        sources=SOURCES.values(),
+        default_source=DEFAULT_SOURCE,
+        # hosted mode: no personal access token field, only "Connect with YNAB login"
+        token_allowed=not HOSTED,
+    )
 
 
 @blueprint.get("/api/status")
@@ -62,9 +69,12 @@ def api_status():
             "connect_error": connect_error,
             "token_kind": state.get("token_kind") if connected else None,
             "oauth_configured": oauth_configured(),
-            # show "Remember this token on this computer" only with a secure store
-            "remember_available": token_store.available(),
-            "store_name": token_store.store_name(),
+            # personal access tokens: local mode only (hosted mode is OAuth only)
+            "token_allowed": not HOSTED,
+            # show "Remember this token on this computer" only with a secure store,
+            # and never in hosted mode (the server's store would be shared)
+            "remember_available": not HOSTED and token_store.available(),
+            "store_name": None if HOSTED else token_store.store_name(),
             "parsed": state.get("parsed"),
         }
     )

@@ -15,6 +15,10 @@ Used by upload.py for every YNAB call:
 The token is kept server-side in STORE (state.py), never in the cookie. A
 token typed with "Remember this token on this computer" is also saved in the
 OS secure store (token_store.py). The OAuth HTTP calls are in ynab_oauth.py.
+
+In hosted mode (config.HOSTED) only OAuth connects: /api/token answers 403
+and the OS secure store is never read or written, since one token saved on
+the server would connect every visitor.
 """
 
 import json
@@ -28,7 +32,7 @@ import ynab
 from flask import Blueprint, jsonify, redirect, request, session
 
 from statement_etl.web import token_store, ynab_oauth
-from statement_etl.web.config import REDIRECT_URI
+from statement_etl.web.config import HOSTED, REDIRECT_URI
 from statement_etl.web.state import error_response, session_state
 from statement_etl.ynab_api.accounts import get_user
 
@@ -71,8 +75,8 @@ def _refresh(state):
 def get_token(state):
     """This session's token: the personal access token typed on the page, the
     token saved in the OS secure store, or the OAuth token (refreshed if it
-    expires within 60 s). None if not connected."""
-    if not state.get("access_token") and not state.get("skip_saved"):
+    expires within 60 s). None if not connected. Hosted mode has no saved token."""
+    if not HOSTED and not state.get("access_token") and not state.get("skip_saved"):
         saved = token_store.load_token()  # remembered from an earlier run
         if saved:
             state["access_token"] = saved
@@ -138,7 +142,7 @@ def oauth_logout():
     state = session_state()
     _clear_tokens(state)
     state["skip_saved"] = True  # don't reconnect from the saved token right away
-    if (request.get_json(silent=True) or {}).get("forget"):
+    if not HOSTED and (request.get_json(silent=True) or {}).get("forget"):
         token_store.delete_token()
     return jsonify({"connected": False})
 
@@ -155,7 +159,16 @@ def api_token():
     Checked with UserApi.get_user() first; only a working token is kept, in
     STORE for this browser session. With {"remember": true} it is also saved in
     the OS secure store (token_store.py) for later runs.
+
+    Not in hosted mode: YNAB's API terms don't allow asking other people for
+    their personal access tokens.
     """
+    if HOSTED:
+        return error_response(
+            "Personal access tokens are only supported in the local version. "
+            "Use Connect with YNAB login.",
+            403,
+        )
     body = request.get_json(silent=True) or {}
     token = (body.get("token") or "").strip()
     if not token:

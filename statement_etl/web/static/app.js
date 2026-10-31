@@ -191,7 +191,8 @@ $("parse-form").addEventListener("submit", async (e) => {
 
 // ---- ② YNAB ----------------------------------------------------------------
 
-// Personal access token typed on the page: the server checks it with YNAB first
+// Personal access token typed on the page (local mode only): the server checks
+// it with YNAB first
 $("ynab-off").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("token-btn").disabled = true;
@@ -420,11 +421,14 @@ $("upload-btn").addEventListener("click", async () => {
   try {
     const status = await api("/api/status");
     show($("connect-btn"), status.oauth_configured);
-    // "Remember" only when this computer has a secure store (Keychain, ...)
-    show($("remember-row"), status.remember_available);
-    if (status.remember_available) {
-      $("token-note").textContent = `Ticked, it is saved in your ${status.store_name}, ` +
-        "never in this folder or the browser.";
+    // Hosted mode (token_allowed false) has no token field: YNAB login only
+    if (status.token_allowed) {
+      // "Remember" only when this computer has a secure store (Keychain, ...)
+      show($("remember-row"), status.remember_available);
+      if (status.remember_available) {
+        $("token-note").textContent = `Ticked, it is saved in your ${status.store_name}, ` +
+          "never in this folder or the browser.";
+      }
     }
     if (status.token_kind) setTokenKind(status.token_kind);
     if (status.parsed) showParsed(status.parsed);
