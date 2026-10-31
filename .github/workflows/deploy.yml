@@ -55,12 +55,17 @@ jobs:
           docker push "$IMAGE"
 
       # The flags keep the bill at $0; see "Cost check" in P4 before changing one.
+      # No --allow-unauthenticated: the deployer isn't allowed to change who may
+      # call the service. The owner made it public once (P4 step B), and that
+      # setting stays across deploys.
+      # --no-session-affinity: with one instance it adds nothing, only Google's
+      # GAESA cookie, which has no Secure or HttpOnly flag.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy ph-statement-import --region=us-west1 \
             --image="$IMAGE" \
             --service-account=app-runtime@$PROJECT.iam.gserviceaccount.com \
-            --allow-unauthenticated --min-instances=0 --max-instances=1 --concurrency=8 \
-            --cpu=1 --memory=512Mi --timeout=60 --session-affinity \
+            --min-instances=0 --max-instances=1 --concurrency=8 \
+            --cpu=1 --memory=512Mi --timeout=60 --no-session-affinity \
             --set-secrets=APP_CONFIG=app-config:latest \
             --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }}

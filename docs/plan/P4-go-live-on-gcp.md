@@ -105,7 +105,7 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
     --role=roles/iam.workloadIdentityUser \
     --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/attribute.repository/<you>/ph-statement-import"
   ```
-  Don't give the deployer any Secret Manager or owner roles.
+  Don't give the deployer any Secret Manager or owner roles. `roles/run.developer` also can't change who may call the service, so you make it public yourself, once, after the first deploy (step B).
 - [ ] In GitHub → Settings → Environments, create a `production` environment with **you as a required reviewer**, limited to the `main` branch. Add these environment **variables** (not secrets; none of them is sensitive):
   - `GCP_PROJECT_ID`
   - `GCP_WIF_PROVIDER` = `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github`
@@ -130,14 +130,20 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
        gcloud run deploy ph-statement-import --region=us-west1 \
          --image=us-west1-docker.pkg.dev/$PROJECT/app/ph-statement-import:${{ github.sha }} \
          --service-account=app-runtime@$PROJECT.iam.gserviceaccount.com \
-         --allow-unauthenticated --min-instances=0 --max-instances=1 --concurrency=8 \
-         --cpu=1 --memory=512Mi --timeout=60 --session-affinity \
+         --min-instances=0 --max-instances=1 --concurrency=8 \
+         --cpu=1 --memory=512Mi --timeout=60 --no-session-affinity \
          --set-secrets=APP_CONFIG=app-config:latest \
          --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }}
        ```
   - Pin each action to a full version tag, and let Dependabot update them.
 - [ ] README: add a "Deploy" section linking to this file.
 - [ ] Merge, approve the `production` deployment in GitHub, and watch it finish.
+- [ ] Make the service public, once. Until then every request gets a 403. The setting stays across deploys.
+  ```bash
+  gcloud run services add-iam-policy-binding ph-statement-import --region=us-west1 \
+    --member=allUsers --role=roles/run.invoker
+  ```
+  If this fails with an organization policy error, your project is in a Google Workspace or Cloud organization whose "Domain restricted sharing" policy (`iam.allowedPolicyMemberDomains`) blocks `allUsers`. Allow it for this project, then run the command again.
 - [ ] Check the URL matches `PUBLIC_URL`:
   ```bash
   gcloud run services describe ph-statement-import --region=us-west1 --format='value(status.url)'
