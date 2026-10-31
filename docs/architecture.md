@@ -44,6 +44,13 @@ One setting, `PUBLIC_URL`, picks the mode. Empty (the default) is **local mode**
 
 In both modes, every response gets a strict Content-Security-Policy (`default-src 'self'`, no inline code), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff` (`app.py` `SECURITY_HEADERS`).
 
+## Deployment
+
+In hosted mode on Google Cloud (`us-west1`, sized to stay inside the monthly free tier; see [docs/plan/P4-go-live-on-gcp.md](plan/P4-go-live-on-gcp.md)), one container image in Artifact Registry runs two Cloud Run services under separate service accounts:
+
+- **`ph-statement-import` (`statement_etl.web.app:app`):** Public web service (`min-instances=0`, `max-instances=1`) for YNAB OAuth login and in-memory statement uploads. Its runtime service account can read only one Secret Manager JSON secret, `app-config` (`FLASK_SECRET_KEY` and `YNAB_CLIENT_SECRET`), passed as `APP_CONFIG`.
+- **`budget-guard` (`statement_etl.ops.budget_guard:app`):** Private kill-switch service invoked by a Pub/Sub push subscription on `budget-alerts`. If a Cloud Billing Budget notification reports `costAmount > budgetAmount`, it unlinks billing from the project via the Cloud Billing API (`BUDGET_GUARD_DRY_RUN=1` logs `"would disable billing"` without unlinking).
+
 ## Extending the app
 
 - **Adding an e-wallet or bank** means writing a parser in `statement_etl/parsers/` and registering a `Source` in `statement_etl/sources.py`. No YNAB or HTML code changes are needed. See [Adding an e-wallet or bank](adding-an-e-wallet.md).
