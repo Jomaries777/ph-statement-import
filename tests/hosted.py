@@ -17,7 +17,7 @@ import json
 import os
 from unittest import mock
 
-from statement_etl.web import app, config, upload, ynab_auth, ynab_oauth
+from statement_etl.web import app, config, limits, state, upload, ynab_auth, ynab_oauth
 
 PUBLIC_URL = "https://example.test"
 SECRETS = {"FLASK_SECRET_KEY": "test-secret-key", "YNAB_CLIENT_SECRET": "test-client-secret"}
@@ -27,9 +27,10 @@ HOSTED_ENV = {
     "YNAB_CLIENT_ID": "test-client-id",
 }
 
-# In import order: each one reads the ones before it. state.py and
-# token_store.py don't depend on the mode, so STORE survives the reload.
-WEB_MODULES = (config, ynab_oauth, ynab_auth, upload, app)
+# In import order: each one reads the ones before it. Reloading state.py
+# starts an empty STORE; limits.py, a new limiter with no counts.
+# token_store.py doesn't depend on the mode.
+WEB_MODULES = (config, state, limits, ynab_oauth, ynab_auth, upload, app)
 
 
 def reload_web():

@@ -981,12 +981,86 @@ class MainTest(WebTest):
 
 
 # =============================================================================
+# SECURITY - headers in both modes; nothing is ever logged that shouldn't be
+# =============================================================================
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self' https://app.ynab.com"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+class SecurityHeadersTest(WebTest):
+    def test_every_response_has_them(self):
+        for path in ("/", "/api/status", "/static/app.js", "/no-such-page"):
+            with self.subTest(path), self.client.get(path) as response:
+                for name, value in SECURITY_HEADERS.items():
+                    self.assertEqual(response.headers[name], value)
+
+
+class LocalModeTest(WebTest):
+    """What hosted mode adds stays off on your own computer."""
+
+    def test_no_rate_limit(self):
+        for _ in range(15):
+            self.assertEqual(self.client.post("/api/parse").status_code, 400)
+
+    def test_cookie_is_not_https_only(self):
+        cookie = self.client.get("/api/status").headers["Set-Cookie"]
+        self.assertNotIn("Secure", cookie)
+
+    def test_idle_browsers_are_kept(self):
+        self.set_state(rows=ROWS)
+        with mock.patch.object(web_state.time, "time", return_value=time.time() + 24 * 3600):
+            self.client.get("/api/status")
+        self.assertEqual(self.state()["rows"], ROWS)
+
+
+class LoggingTest(WebTest):
+    """The log never gets the PDF, its password, a token or a statement row."""
+
+    def test_parse_and_upload(self):
+        self.set_state(access_token="log-test-token", token_kind="personal")
+        secrets = ["log-test-password", "log-test-token", "%PDF-log-test"]
+        secrets += [row["Description"] for row in ROWS] + [row["Reference No."] for row in ROWS]
+        imported = SimpleNamespace(
+            created=[ynab_txn(memo="GCash Ref: 1000000000001")],
+            skipped=0,
+            ending_check=None,
+            ending_error=None,
+            new_account=None,
+        )
+        form = {
+            "password": "log-test-password",
+            "pdf": (io.BytesIO(b"%PDF-log-test"), "statement.pdf"),
+        }
+        with self.assertLogs(level="DEBUG") as logs:
+            # A PDF that can't be read: the one request that logs (the error type)
+            with mock.patch.object(upload, "parse_statement", side_effect=ValueError(ROWS[0])):
+                self.client.post("/api/parse", data=dict(form), content_type="multipart/form-data")
+            form["pdf"] = (io.BytesIO(b"%PDF-log-test"), "statement.pdf")
+            with mock.patch.object(upload, "parse_statement", return_value=(ROWS, TRANSACTIONS)):
+                self.client.post("/api/parse", data=form, content_type="multipart/form-data")
+            with mock.patch.object(upload, "import_statement", return_value=imported):
+                self.assertEqual(self.client.post("/api/upload", json=TARGET).status_code, 200)
+        log = "\n".join(logs.output)
+        self.assertIn("ValueError", log)
+        for secret in secrets:
+            self.assertNotIn(secret, log)
+
+
+# =============================================================================
 # HOSTED MODE - PUBLIC_URL set: YNAB OAuth only, never the OS secure store
 # =============================================================================
 
 
-class HostedTest(WebTest):
-    """The app as it runs on the server, for other people."""
+class Hosted:
+    """Mixin for a WebTest: the app as it runs on the server, for other people."""
 
     def setUp(self):
         super().setUp()
@@ -998,6 +1072,14 @@ class HostedTest(WebTest):
                 f"hosted mode called token_store.{name}()"
             )
 
+    def set_state(self, **state):
+        # As session_state() stamps it on every request; without it, the entry
+        # counts as idle and is dropped
+        state.setdefault("last_seen", time.time())
+        return super().set_state(**state)
+
+
+class HostedTest(Hosted, WebTest):
     def test_mode(self):
         self.assertTrue(config.HOSTED)
         self.assertEqual(config.REDIRECT_URI, f"{PUBLIC_URL}/oauth/callback")
@@ -1062,6 +1144,91 @@ class HostedTest(WebTest):
         self.assertIn(f"Hosted mode: YNAB OAuth login only (redirect URI: {PUBLIC_URL}", out)
         self.assertNotIn("personal access token", out)
         self.assertNotIn("FLASK_SECRET_KEY", out)
+
+    def test_session_cookie_is_https_only(self):
+        cookie = self.client.get("/api/status").headers["Set-Cookie"]
+        self.assertIn("Secure", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+
+    def test_security_headers(self):
+        response = self.client.get("/")
+        for name, value in SECURITY_HEADERS.items():
+            self.assertEqual(response.headers[name], value)
+
+    def test_idle_browsers_are_dropped(self):
+        now = time.time()
+        web_state.STORE.update(
+            {
+                "idle": {"rows": ROWS, "last_seen": now - web_state.IDLE_SECONDS - 1},
+                "active": {"rows": ROWS, "last_seen": now - web_state.IDLE_SECONDS + 60},
+            }
+        )
+        with mock.patch.object(web_state.time, "time", return_value=now):
+            self.client.get("/api/status")
+        self.assertNotIn("idle", web_state.STORE)
+        self.assertIn("active", web_state.STORE)
+
+    def test_each_request_counts_as_activity(self):
+        self.client.get("/api/status")
+        later = time.time() + web_state.IDLE_SECONDS - 60
+        with mock.patch.object(web_state.time, "time", return_value=later):
+            self.client.get("/api/status")
+        self.assertEqual(self.state()["last_seen"], later)
+        with mock.patch.object(web_state.time, "time", return_value=later + 120):
+            self.client.get("/api/status")  # still there: idle 2 minutes only
+        self.assertEqual(self.state()["last_seen"], later + 120)
+
+    def test_parse_is_rate_limited(self):
+        for _ in range(10):
+            self.assertEqual(self.client.post("/api/parse").status_code, 400)
+        with mock.patch.object(upload, "parse_statement") as parse:
+            response = self.client.post(
+                "/api/parse",
+                data={"pdf": (io.BytesIO(b"%PDF-test"), "statement.pdf")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.get_json(), {"error": "Too many requests. Wait a minute, then try again."}
+        )
+        parse.assert_not_called()  # blocked before any parsing work
+
+    def test_rate_limit_is_per_client_ip(self):
+        # ProxyFix: the client's IP is the one Cloud Run puts in X-Forwarded-For
+        def parse(ip):
+            return self.client.post("/api/parse", headers={"X-Forwarded-For": ip}).status_code
+
+        for _ in range(10):
+            self.assertEqual(parse("203.0.113.1"), 400)
+        self.assertEqual(parse("203.0.113.1"), 429)
+        self.assertEqual(parse("203.0.113.2"), 400)
+
+    def test_oauth_is_rate_limited(self):
+        for _ in range(20):
+            self.assertEqual(self.client.get("/oauth/login").status_code, 302)
+        self.assertEqual(self.client.get("/oauth/login").status_code, 429)
+        self.assertEqual(self.client.post("/oauth/logout").status_code, 200)  # its own count
+
+
+class HostedUploadTest(Hosted, UploadTest):
+    """Every upload test again in hosted mode, and the statement is dropped after it."""
+
+    def test_statement_is_dropped_after_the_upload(self):
+        self.parsed(parsed={"filename": "statement.pdf"})
+        self.assertEqual(self.post().status_code, 200)
+        state = self.state()
+        for key in ("source", "rows", "transactions", "parsed"):
+            self.assertNotIn(key, state)
+        self.assertEqual(state["access_token"], "test-token")  # still connected
+        with mock.patch.object(upload, "get_user"):
+            self.assertIsNone(self.client.get("/api/status").get_json()["parsed"])
+
+    def test_statement_is_kept_when_the_upload_fails(self):
+        self.parsed()
+        self.upload.side_effect = exceptions.BadRequestException(status=400, reason="Bad Request")
+        self.assertEqual(self.post().status_code, 400)
+        self.assertEqual(self.state()["rows"], ROWS)  # so the user can try again
 
 
 class HostedStartupTest(unittest.TestCase):

@@ -75,6 +75,11 @@ To run the app on a server for other people, set `PUBLIC_URL`. Leave it empty on
 In hosted mode:
 - **YNAB login (OAuth) only.** The token field is gone and `/api/token` is refused, because YNAB's API terms don't allow asking other people for their personal access tokens.
 - **No OS secure store.** A token saved on the server would connect every visitor, so the app never reads or writes it.
+- **HTTPS-only cookies** (`Secure`, `HttpOnly`, `SameSite=Lax`), and the app trusts the one proxy hop Cloud Run adds for the client's IP and HTTPS.
+- **Rate limits** per client IP: 10 statement parses and 20 YNAB login requests per minute.
+- **Nothing is kept for long.** The parsed statement is dropped after the upload, and everything about a browser (its YNAB connection too) after 30 minutes without a request.
+
+Both modes send security headers on every response, including a strict Content-Security-Policy.
 
 | Variable | What it is |
 |---|---|

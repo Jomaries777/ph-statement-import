@@ -239,6 +239,8 @@ class WebFlowTest(BrowserTest):
         self.assertEqual(self.ynab.balance(account), 1_250_000)
         self.assertFalse(any(t.approved for t in created))
         self.assertEqual([t.amount for t in created], [500_000, -150_250, 250_000, -349_750])
+        # Nothing on the page was blocked by the Content-Security-Policy
+        self.assertEqual(self.console_errors, [])
 
     def test_reupload_skips_what_is_already_in_ynab(self):
         page = self.page

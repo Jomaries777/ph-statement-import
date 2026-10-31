@@ -33,6 +33,7 @@ from flask import Blueprint, jsonify, redirect, request, session
 
 from statement_etl.web import token_store, ynab_oauth
 from statement_etl.web.config import HOSTED, REDIRECT_URI
+from statement_etl.web.limits import OAUTH_LIMIT, limiter
 from statement_etl.web.state import error_response, session_state
 from statement_etl.ynab_api.accounts import get_user
 
@@ -96,6 +97,7 @@ def get_token(state):
 
 
 @blueprint.get("/oauth/login")
+@limiter.limit(OAUTH_LIMIT)
 def oauth_login():
     """Send the browser to YNAB's authorize page."""
     if not ynab_oauth.oauth_configured():
@@ -117,6 +119,7 @@ def oauth_login():
 
 
 @blueprint.get("/oauth/callback")
+@limiter.limit(OAUTH_LIMIT)
 def oauth_callback():
     """YNAB redirects here with ?code=...; swap it for an access token."""
     if request.args.get("error"):
@@ -136,6 +139,7 @@ def oauth_callback():
 
 
 @blueprint.post("/oauth/logout")
+@limiter.limit(OAUTH_LIMIT)
 def oauth_logout():
     """Disconnect this session. With {"forget": true}, also remove the token saved
     in the OS secure store ("Forget saved token")."""
