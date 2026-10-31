@@ -6,17 +6,17 @@ Decimal, e.g. from parsers.gcash.statement_balances()) and the YNAB plan /
 account. Nothing here is GCash-specific.
 
 How it works:
-    1. Read      - get the account's current balance from YNAB    (get_account_balance)
+    1. Read      - get the account's current balance from YNAB  (get_account_balance)
     2. New?      - a newly created account has only one
                    transaction: payee "Starting Balance",
-                   category "Inflow: Ready to Assign"              (find_new_account_starting_balance)
+                   category "Inflow: Ready to Assign"            (find_new_account_starting_balance)
     3. Compare   - before the upload, the YNAB balance should
-                   equal the statement's starting balance          (check_starting_balance)
+                   equal the statement's starting balance        (check_starting_balance)
     4. Set       - on a new account, set that Starting Balance
                    transaction to the statement's starting
-                   balance, just before the upload                 (set_new_account_starting_balance)
-    5. Message   - text for a match, a mismatch or a new account   (balance_check_message,
-                                                                    new_account_message)
+                   balance, just before the upload               (set_new_account_starting_balance)
+    5. Message   - text for a match, a mismatch or a new account (balance_check_message,
+                                                                  new_account_message)
 
 A mismatch is only a warning: the upload can still go ahead. It usually means
 YNAB already has transactions after the statement period, or is missing some
@@ -37,6 +37,7 @@ from datetime import date
 from decimal import Decimal
 
 import ynab
+
 from statement_etl.ynab_api.client import ynab_client
 
 # What YNAB puts on the one transaction of a newly created account
@@ -64,11 +65,7 @@ def get_account_balance(plan_id, account_id, access_token=None):
     Raises ynab.ApiException (or a subclass) if YNAB rejects the request.
     """
     with ynab_client(access_token) as api_client:
-        account = (
-            ynab.AccountsApi(api_client)
-            .get_account_by_id(plan_id, account_id)
-            .data.account
-        )
+        account = ynab.AccountsApi(api_client).get_account_by_id(plan_id, account_id).data.account
     return Decimal(account.balance) / 1000
 
 
@@ -202,9 +199,7 @@ def check_starting_balance(
 # =============================================================================
 
 
-def set_new_account_starting_balance(
-    starting_balance, account_id, plan_id, access_token=None
-):
+def set_new_account_starting_balance(starting_balance, account_id, plan_id, access_token=None):
     """If the account is newly created, set its Starting Balance transaction to
     the statement's starting balance (TransactionsApi.update_transaction).
 
@@ -225,9 +220,7 @@ def set_new_account_starting_balance(
             transaction=ynab.ExistingTransaction(amount=int(starting_balance * 1000))
         )
         with ynab_client(access_token) as api_client:
-            ynab.TransactionsApi(api_client).update_transaction(
-                plan_id, starting_txn.id, update
-            )
+            ynab.TransactionsApi(api_client).update_transaction(plan_id, starting_txn.id, update)
     return {"from": current, "to": starting_balance}
 
 
@@ -269,8 +262,7 @@ def balance_check_message(check):
     lines = []
     if already:
         lines.append(
-            f"{already} transactions already in YNAB. "
-            f"Only {check['to_upload']} will be uploaded."
+            f"{already} transactions already in YNAB. Only {check['to_upload']} will be uploaded."
         )
     if check["matches"]:
         lines.append("Starting balance matches YNAB.")
@@ -278,8 +270,7 @@ def balance_check_message(check):
         lines.append("Starting balance does not match YNAB. You can still import.")
     else:
         lines.append(
-            "Ending balance does not match YNAB. Make any adjustment in YNAB "
-            "as you see fit."
+            "Ending balance does not match YNAB. Make any adjustment in YNAB as you see fit."
         )
     lines.append(f"Statement {kind} balance: {check['statement']:,.2f}")
     if check["ynab_before"] is not None:

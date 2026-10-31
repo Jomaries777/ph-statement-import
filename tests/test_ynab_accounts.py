@@ -39,27 +39,48 @@ class AccountsTest(unittest.TestCase):
 
     def test_get_plans(self):
         currency = SimpleNamespace(to_dict=lambda: {"iso_code": "PHP", "currency_symbol": "₱"})
-        self.api("PlansApi").get_plans.return_value = response(plans=[
-            SimpleNamespace(id=uuid.UUID(PLAN_ID), name="Test Plan", currency_format=currency),
-            SimpleNamespace(id="plan-2", name="No Format", currency_format=None),
-        ])
-        self.assertEqual(accounts.get_plans("token"), [
-            {"id": PLAN_ID, "name": "Test Plan", "currency_format": {"iso_code": "PHP", "currency_symbol": "₱"}},
-            {"id": "plan-2", "name": "No Format", "currency_format": None},
-        ])
+        self.api("PlansApi").get_plans.return_value = response(
+            plans=[
+                SimpleNamespace(id=uuid.UUID(PLAN_ID), name="Test Plan", currency_format=currency),
+                SimpleNamespace(id="plan-2", name="No Format", currency_format=None),
+            ]
+        )
+        self.assertEqual(
+            accounts.get_plans("token"),
+            [
+                {
+                    "id": PLAN_ID,
+                    "name": "Test Plan",
+                    "currency_format": {"iso_code": "PHP", "currency_symbol": "₱"},
+                },
+                {"id": "plan-2", "name": "No Format", "currency_format": None},
+            ],
+        )
 
     def test_get_accounts_lists_open_accounts(self):
         api = self.api("AccountsApi")
-        api.get_accounts.return_value = response(accounts=[
-            ynab_account(id=uuid.UUID(ACCOUNT_ID), name="Test Wallet", balance_formatted="₱1,249.50"),
-            ynab_account(id="account-2", name="No Type", type=None),
-            ynab_account(id="account-3", name="Deleted", deleted=True),
-            ynab_account(id="account-4", name="Closed", closed=True),
-        ])
-        self.assertEqual(accounts.get_accounts(PLAN_ID, "token"), [
-            {"id": ACCOUNT_ID, "name": "Test Wallet", "type": "checking", "balance": "₱1,249.50"},
-            {"id": "account-2", "name": "No Type", "type": "", "balance": "₱0.00"},
-        ])
+        api.get_accounts.return_value = response(
+            accounts=[
+                ynab_account(
+                    id=uuid.UUID(ACCOUNT_ID), name="Test Wallet", balance_formatted="₱1,249.50"
+                ),
+                ynab_account(id="account-2", name="No Type", type=None),
+                ynab_account(id="account-3", name="Deleted", deleted=True),
+                ynab_account(id="account-4", name="Closed", closed=True),
+            ]
+        )
+        self.assertEqual(
+            accounts.get_accounts(PLAN_ID, "token"),
+            [
+                {
+                    "id": ACCOUNT_ID,
+                    "name": "Test Wallet",
+                    "type": "checking",
+                    "balance": "₱1,249.50",
+                },
+                {"id": "account-2", "name": "No Type", "type": "", "balance": "₱0.00"},
+            ],
+        )
         api.get_accounts.assert_called_once_with(PLAN_ID)
         self.ynab_client.assert_called_once_with("token")
 
@@ -67,19 +88,26 @@ class AccountsTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def test_lists_plans_and_accounts(self):
         plans = [{"id": "plan-1", "name": "Test Plan", "currency_format": None}]
-        wallet = [{"id": "account-1", "name": "Test Wallet", "type": "checking", "balance": "₱0.00"}]
+        wallet = [
+            {"id": "account-1", "name": "Test Wallet", "type": "checking", "balance": "₱0.00"}
+        ]
         stdout = io.StringIO()
-        with mock.patch.object(accounts, "get_plans", return_value=plans), \
-             mock.patch.object(accounts, "get_accounts", return_value=wallet) as get_accounts, \
-             contextlib.redirect_stdout(stdout):
+        with (
+            mock.patch.object(accounts, "get_plans", return_value=plans),
+            mock.patch.object(accounts, "get_accounts", return_value=wallet) as get_accounts,
+            contextlib.redirect_stdout(stdout),
+        ):
             accounts.main()
         get_accounts.assert_called_once_with("plan-1")
-        self.assertEqual(stdout.getvalue(), (
-            "PLAN  Test Plan\n"
-            "      --plan-id plan-1\n"
-            "      ACCOUNT  " + "Test Wallet".ljust(30) + " account-1\n"
-            "\n"
-        ))
+        self.assertEqual(
+            stdout.getvalue(),
+            (
+                "PLAN  Test Plan\n"
+                "      --plan-id plan-1\n"
+                "      ACCOUNT  " + "Test Wallet".ljust(30) + " account-1\n"
+                "\n"
+            ),
+        )
 
 
 if __name__ == "__main__":

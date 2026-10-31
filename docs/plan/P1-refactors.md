@@ -81,11 +81,12 @@ parsers/<source>.py           statement_etl/transaction.py   statement_etl/ynab_
   @dataclass(frozen=True)
   class Transaction:
       """One statement transaction, in no particular tracker's format."""
-      source: str          # source key, e.g. "gcash"; part of every tracker's duplicate check
-      key: str             # stable id within the source, e.g. GCash Reference No.
-      date: date           # a datetime is fine when the statement has times
+
+      source: str  # source key, e.g. "gcash"; part of every tracker's duplicate check
+      key: str  # stable id within the source, e.g. GCash Reference No.
+      date: date  # a datetime is fine when the statement has times
       payee: str
-      amount: Decimal      # pesos; inflow positive, outflow negative
+      amount: Decimal  # pesos; inflow positive, outflow negative
       memo: str | None = None
       flagged: bool = False  # a row the parser added (balance correction): show it for review
   ```

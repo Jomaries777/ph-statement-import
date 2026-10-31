@@ -84,7 +84,7 @@ def delete_token():
     """Remove the saved token; nothing happens if there isn't one."""
     if not available():
         return
-    try:
+    try:  # noqa: SIM105  # explicit try/except avoids importing contextlib
         keyring.delete_password(SERVICE, USERNAME)
     except (PasswordDeleteError, KeyringError):
         pass

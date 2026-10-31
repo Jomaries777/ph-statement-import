@@ -103,10 +103,22 @@ def gcash_row(date_time, description, reference, debit, credit, balance):
 
 
 GCASH_ROWS = [
-    gcash_row("2026-10-01 09:00 AM", "Received GCash from Test Sender", "1000000000001",
-              "", "1,000.00", "1,500.00"),
-    gcash_row("2026-10-02 06:50 PM", "Payment to Test Shop, Merchant Transaction Number: X1",
-              "1000000000002", "250.50", "", "1,249.50"),
+    gcash_row(
+        "2026-10-01 09:00 AM",
+        "Received GCash from Test Sender",
+        "1000000000001",
+        "",
+        "1,000.00",
+        "1,500.00",
+    ),
+    gcash_row(
+        "2026-10-02 06:50 PM",
+        "Payment to Test Shop, Merchant Transaction Number: X1",
+        "1000000000002",
+        "250.50",
+        "",
+        "1,249.50",
+    ),
 ]
 
 
@@ -135,7 +147,9 @@ class GCashTest(unittest.TestCase):
 
     def test_correction_rows(self):
         self.assertFalse(gcash.is_correction_row(GCASH_ROWS[0]))
-        self.assertTrue(gcash.is_correction_row({**GCASH_ROWS[0], "Reference No.": "R1000000000001"}))
+        self.assertTrue(
+            gcash.is_correction_row({**GCASH_ROWS[0], "Reference No.": "R1000000000001"})
+        )
         self.assertIsNone(gcash.balance_warning(GCASH_ROWS))
 
     def test_summary(self):
@@ -152,7 +166,12 @@ class GCashTest(unittest.TestCase):
 
 FAKE_ROWS = [
     {"Date": "01/10/2026", "Details": "Cash in", "Amount": "+200.00", "Running Balance": "300.00"},
-    {"Date": "02/10/2026", "Details": "Bills payment", "Amount": "-50.00", "Running Balance": "250.00"},
+    {
+        "Date": "02/10/2026",
+        "Details": "Bills payment",
+        "Amount": "-50.00",
+        "Running Balance": "250.00",
+    },
 ]
 
 
@@ -187,8 +206,10 @@ class OtherColumnsTest(unittest.TestCase):
         self.assertEqual([t["amount"] for t in transactions], [200000, -50000])
 
     def test_balance_check_uses_the_source(self):
-        with mock.patch.object(pipeline, "find_already_imported", return_value=set()), \
-             mock.patch.object(pipeline, "check_starting_balance") as check:
+        with (
+            mock.patch.object(pipeline, "find_already_imported", return_value=set()),
+            mock.patch.object(pipeline, "check_starting_balance") as check,
+        ):
             pipeline.starting_balance_check(FAKE_ROWS, [], "account", "plan", source="fake")
         self.assertEqual(check.call_args.args[0], Decimal("100.00"))
 

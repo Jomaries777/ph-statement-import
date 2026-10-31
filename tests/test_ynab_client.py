@@ -19,10 +19,22 @@ from statement_etl.ynab_api import client
 from tests.fakes import ACCOUNT_ID, PLAN_ID, fake_client, response, ynab_account, ynab_txn
 
 TRANSACTIONS = [
-    {"date": "2026-10-03", "payee_name": "Test Shop", "import_id": "ETLPH:aaa", "amount": -250500,
-     "memo": "GCash Ref: 1000000000002", "flag_color": None},
-    {"date": "2026-10-01", "payee_name": "Refund from Test Shop", "import_id": "ETLPH:bbb", "amount": 50000,
-     "memo": "GCash Ref: R1000000000002", "flag_color": "red"},
+    {
+        "date": "2026-10-03",
+        "payee_name": "Test Shop",
+        "import_id": "ETLPH:aaa",
+        "amount": -250500,
+        "memo": "GCash Ref: 1000000000002",
+        "flag_color": None,
+    },
+    {
+        "date": "2026-10-01",
+        "payee_name": "Refund from Test Shop",
+        "import_id": "ETLPH:bbb",
+        "amount": 50000,
+        "memo": "GCash Ref: R1000000000002",
+        "flag_color": "red",
+    },
 ]
 
 
@@ -65,23 +77,33 @@ class FindAlreadyImportedTest(MockedYnabTest):
         self.ynab_client.assert_not_called()
 
     def test_finds_our_import_ids(self):
-        self.api.get_transactions_by_account.return_value = response(transactions=[
-            ynab_txn(import_id="ETLPH:aaa"),
-            ynab_txn(import_id="ETLPH:bbb", deleted=True),  # deleted in YNAB: will be added again
-            ynab_txn(import_id="ETLPH:other"),               # from another statement
-            ynab_txn(import_id=None),                        # entered by hand
-        ])
-        self.assertEqual(client.find_already_imported(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"), {"ETLPH:aaa"})
+        self.api.get_transactions_by_account.return_value = response(
+            transactions=[
+                ynab_txn(import_id="ETLPH:aaa"),
+                ynab_txn(
+                    import_id="ETLPH:bbb", deleted=True
+                ),  # deleted in YNAB: will be added again
+                ynab_txn(import_id="ETLPH:other"),  # from another statement
+                ynab_txn(import_id=None),  # entered by hand
+            ]
+        )
+        self.assertEqual(
+            client.find_already_imported(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"), {"ETLPH:aaa"}
+        )
         self.ynab_client.assert_called_once_with("token")
         # from the earliest date in the batch
-        self.api.get_transactions_by_account.assert_called_once_with(PLAN_ID, ACCOUNT_ID, since_date=date(2026, 10, 1))
+        self.api.get_transactions_by_account.assert_called_once_with(
+            PLAN_ID, ACCOUNT_ID, since_date=date(2026, 10, 1)
+        )
 
 
 class ImportTransactionsTest(MockedYnabTest):
     API = "TransactionsApi"
 
     def test_creates_unapproved_cleared_transactions(self):
-        self.api.create_transaction.return_value = response(transactions=["created"], duplicate_import_ids=[])
+        self.api.create_transaction.return_value = response(
+            transactions=["created"], duplicate_import_ids=[]
+        )
         long_payee = {**TRANSACTIONS[0], "payee_name": "P" * 250}
         no_optional = {k: v for k, v in TRANSACTIONS[1].items() if k not in ("memo", "flag_color")}
 
@@ -117,18 +139,23 @@ class CheckEndingBalanceTest(MockedYnabTest):
 
     def check(self, balance, ending="1249.50", ynab_before=Decimal("500.00")):
         self.api.get_account_by_id.return_value = response(account=ynab_account(balance=balance))
-        return client.check_ending_balance(Decimal(ending), ACCOUNT_ID, PLAN_ID, "token", ynab_before)
+        return client.check_ending_balance(
+            Decimal(ending), ACCOUNT_ID, PLAN_ID, "token", ynab_before
+        )
 
     def test_matches(self):
-        self.assertEqual(self.check(1249500), {
-            "kind": "ending",
-            "statement": Decimal("1249.50"),
-            "ynab_before": Decimal("500.00"),
-            "ynab_after": Decimal("1249.5"),
-            "difference": Decimal("0"),
-            "matches": True,
-            "new_account": None,
-        })
+        self.assertEqual(
+            self.check(1249500),
+            {
+                "kind": "ending",
+                "statement": Decimal("1249.50"),
+                "ynab_before": Decimal("500.00"),
+                "ynab_after": Decimal("1249.5"),
+                "difference": Decimal("0"),
+                "matches": True,
+                "new_account": None,
+            },
+        )
         self.api.get_account_by_id.assert_called_once_with(PLAN_ID, ACCOUNT_ID)
         self.ynab_client.assert_called_once_with("token")
 

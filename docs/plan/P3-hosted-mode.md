@@ -59,8 +59,9 @@ A strict Content-Security-Policy (`default-src 'self'`) blocks inline `<script>`
 - [ ] `requirements.txt`: add `Flask-Limiter==X.Y.Z` (pinned).
 - [ ] `web/app.py`, when `HOSTED`:
   ```python
-  app.config.update(SESSION_COOKIE_SECURE=True, SESSION_COOKIE_HTTPONLY=True,
-                    SESSION_COOKIE_SAMESITE="Lax")
+  app.config.update(
+      SESSION_COOKIE_SECURE=True, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax"
+  )
   app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)  # Cloud Run terminates HTTPS
   ```
 - [ ] Add an `after_request` hook, in both modes, that sets security headers:

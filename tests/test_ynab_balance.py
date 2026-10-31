@@ -16,7 +16,9 @@ import ynab
 from statement_etl.ynab_api import balance
 from tests.fakes import ACCOUNT_ID, PLAN_ID, fake_client, response, ynab_account, ynab_txn
 
-STARTING_TXN = ynab_txn(id="start-1", payee_name="Starting Balance", category_name="Inflow: Ready to Assign", amount=0)
+STARTING_TXN = ynab_txn(
+    id="start-1", payee_name="Starting Balance", category_name="Inflow: Ready to Assign", amount=0
+)
 OTHER_TXN = ynab_txn(id="other-1", payee_name="Test Shop", category_name="Groceries", amount=-1000)
 
 
@@ -44,8 +46,12 @@ class MockedYnabTest(unittest.TestCase):
 
 class GetAccountBalanceTest(MockedYnabTest):
     def test_milliunits_to_decimal(self):
-        self.accounts.get_account_by_id.return_value = response(account=ynab_account(balance=5924560))
-        self.assertEqual(balance.get_account_balance(PLAN_ID, ACCOUNT_ID, "token"), Decimal("5924.56"))
+        self.accounts.get_account_by_id.return_value = response(
+            account=ynab_account(balance=5924560)
+        )
+        self.assertEqual(
+            balance.get_account_balance(PLAN_ID, ACCOUNT_ID, "token"), Decimal("5924.56")
+        )
         self.accounts.get_account_by_id.assert_called_once_with(PLAN_ID, ACCOUNT_ID)
         self.ynab_client.assert_called_once_with("token")
 
@@ -57,7 +63,11 @@ class FindNewAccountTest(MockedYnabTest):
     def test_is_starting_balance(self):
         self.assertTrue(balance._is_starting_balance(STARTING_TXN))
         self.assertFalse(balance._is_starting_balance(OTHER_TXN))
-        self.assertFalse(balance._is_starting_balance(ynab_txn(payee_name="Starting Balance", category_name="Groceries")))
+        self.assertFalse(
+            balance._is_starting_balance(
+                ynab_txn(payee_name="Starting Balance", category_name="Groceries")
+            )
+        )
 
     def test_new_account(self):
         self.account_history([STARTING_TXN])
@@ -93,17 +103,20 @@ class FindNewAccountTest(MockedYnabTest):
 class CompareBalanceTest(unittest.TestCase):
     def test_starting_compares_the_balance_before(self):
         check = balance.compare_balance("starting", Decimal("500"), Decimal("400"), Decimal("900"))
-        self.assertEqual(check, {
-            "kind": "starting",
-            "statement": Decimal("500"),
-            "ynab_before": Decimal("400"),
-            "ynab_after": Decimal("900"),
-            "difference": Decimal("-100"),
-            "matches": False,
-            "new_account": None,
-            "already_in_ynab": 0,
-            "to_upload": None,
-        })
+        self.assertEqual(
+            check,
+            {
+                "kind": "starting",
+                "statement": Decimal("500"),
+                "ynab_before": Decimal("400"),
+                "ynab_after": Decimal("900"),
+                "difference": Decimal("-100"),
+                "matches": False,
+                "new_account": None,
+                "already_in_ynab": 0,
+                "to_upload": None,
+            },
+        )
 
     def test_ending_compares_the_balance_after(self):
         check = balance.compare_balance("ending", Decimal("900"), Decimal("400"), Decimal("900"))
@@ -111,18 +124,36 @@ class CompareBalanceTest(unittest.TestCase):
         self.assertTrue(check["matches"])
 
     def test_new_account_always_matches(self):
-        check = balance.compare_balance("starting", Decimal("500"), Decimal("0"), Decimal("900"),
-                                        {"current": Decimal("0")}, 3, 22)
+        check = balance.compare_balance(
+            "starting",
+            Decimal("500"),
+            Decimal("0"),
+            Decimal("900"),
+            {"current": Decimal("0")},
+            3,
+            22,
+        )
         self.assertTrue(check["matches"])
         self.assertEqual((check["already_in_ynab"], check["to_upload"]), (3, 22))
 
 
 class CheckStartingBalanceTest(unittest.TestCase):
     def check(self, starting_txn):
-        with mock.patch.object(balance, "get_account_balance", return_value=Decimal("100")) as get, \
-             mock.patch.object(balance, "find_new_account_starting_balance", return_value=starting_txn) as find:
-            check = balance.check_starting_balance(Decimal("500"), Decimal("749.50"), ACCOUNT_ID, PLAN_ID,
-                                                   "token", already_in_ynab=1, to_upload=2)
+        with (
+            mock.patch.object(balance, "get_account_balance", return_value=Decimal("100")) as get,
+            mock.patch.object(
+                balance, "find_new_account_starting_balance", return_value=starting_txn
+            ) as find,
+        ):
+            check = balance.check_starting_balance(
+                Decimal("500"),
+                Decimal("749.50"),
+                ACCOUNT_ID,
+                PLAN_ID,
+                "token",
+                already_in_ynab=1,
+                to_upload=2,
+            )
         get.assert_called_once_with(PLAN_ID, ACCOUNT_ID, "token")
         find.assert_called_once_with(PLAN_ID, ACCOUNT_ID, "token")
         return check
@@ -145,8 +176,12 @@ class CheckStartingBalanceTest(unittest.TestCase):
 
 class SetNewAccountStartingBalanceTest(MockedYnabTest):
     def set_balance(self, starting_txn, starting="500.25"):
-        with mock.patch.object(balance, "find_new_account_starting_balance", return_value=starting_txn) as find:
-            result = balance.set_new_account_starting_balance(Decimal(starting), ACCOUNT_ID, PLAN_ID, "token")
+        with mock.patch.object(
+            balance, "find_new_account_starting_balance", return_value=starting_txn
+        ) as find:
+            result = balance.set_new_account_starting_balance(
+                Decimal(starting), ACCOUNT_ID, PLAN_ID, "token"
+            )
         find.assert_called_once_with(PLAN_ID, ACCOUNT_ID, "token")
         return result
 
@@ -171,68 +206,104 @@ class SetNewAccountStartingBalanceTest(MockedYnabTest):
 
 class MessagesTest(unittest.TestCase):
     def starting(self, statement, before, after, new_account=None, already=0, to_upload=None):
-        return balance.compare_balance("starting", Decimal(statement), Decimal(before), Decimal(after),
-                                       new_account, already, to_upload)
+        return balance.compare_balance(
+            "starting",
+            Decimal(statement),
+            Decimal(before),
+            Decimal(after),
+            new_account,
+            already,
+            to_upload,
+        )
 
     def test_new_account_already_equal(self):
         check = self.starting("500", "500", "900", {"current": Decimal("500")})
         self.assertEqual(
             balance.balance_check_message(check),
-            "New YNAB account: its Starting Balance already equals the statement starting balance (500.00).",
+            "New YNAB account: its Starting Balance already equals"
+            " the statement starting balance (500.00).",
         )
 
     def test_new_account_to_be_set(self):
         check = self.starting("1500", "0", "900", {"current": Decimal("0")})
         self.assertEqual(
             balance.balance_check_message(check),
-            "New YNAB account: its Starting Balance (0.00) will be set to the statement starting balance "
-            "(1,500.00) when you upload.",
+            "New YNAB account: its Starting Balance (0.00) will be set to the statement"
+            " starting balance (1,500.00) when you upload.",
         )
 
     def test_match(self):
-        self.assertEqual(balance.balance_check_message(self.starting("500", "500", "900")),
-                         "Starting balance matches YNAB: 500.00")
+        self.assertEqual(
+            balance.balance_check_message(self.starting("500", "500", "900")),
+            "Starting balance matches YNAB: 500.00",
+        )
         ending = balance.compare_balance("ending", Decimal("1249.5"), None, Decimal("1249.5"))
-        self.assertEqual(balance.balance_check_message(ending), "Ending balance matches YNAB: 1,249.50")
+        self.assertEqual(
+            balance.balance_check_message(ending), "Ending balance matches YNAB: 1,249.50"
+        )
 
     def test_match_with_transactions_already_in_ynab(self):
         check = self.starting("500", "500", "1000", already=3, to_upload=22)
-        self.assertEqual(balance.balance_check_message(check), "\n".join([
-            "3 transactions already in YNAB. Only 22 will be uploaded.",
-            "Starting balance matches YNAB.",
-            "Statement starting balance: 500.00",
-            "YNAB balance BEFORE upload: 500.00",
-            "YNAB balance AFTER upload: 1,000.00",
-        ]))
+        self.assertEqual(
+            balance.balance_check_message(check),
+            "\n".join(
+                [
+                    "3 transactions already in YNAB. Only 22 will be uploaded.",
+                    "Starting balance matches YNAB.",
+                    "Statement starting balance: 500.00",
+                    "YNAB balance BEFORE upload: 500.00",
+                    "YNAB balance AFTER upload: 1,000.00",
+                ]
+            ),
+        )
 
     def test_starting_mismatch(self):
         check = self.starting("7873.54", "-2598.98", "-5197.96")
-        self.assertEqual(balance.balance_check_message(check), "\n".join([
-            "Starting balance does not match YNAB. You can still import.",
-            "Statement starting balance: 7,873.54",
-            "YNAB balance BEFORE upload: -2,598.98",
-            "YNAB balance AFTER upload: -5,197.96",
-        ]))
+        self.assertEqual(
+            balance.balance_check_message(check),
+            "\n".join(
+                [
+                    "Starting balance does not match YNAB. You can still import.",
+                    "Statement starting balance: 7,873.54",
+                    "YNAB balance BEFORE upload: -2,598.98",
+                    "YNAB balance AFTER upload: -5,197.96",
+                ]
+            ),
+        )
 
     def test_ending_mismatch_without_balance_before(self):
         # same shape as ynab_api.client.check_ending_balance(): no already_in_ynab key
-        check = {"kind": "ending", "statement": Decimal("1249.5"), "ynab_before": None,
-                 "ynab_after": Decimal("1300"), "difference": Decimal("50.5"), "matches": False,
-                 "new_account": None}
-        self.assertEqual(balance.balance_check_message(check), "\n".join([
-            "Ending balance does not match YNAB. Make any adjustment in YNAB as you see fit.",
-            "Statement ending balance: 1,249.50",
-            "YNAB balance AFTER upload: 1,300.00",
-        ]))
+        check = {
+            "kind": "ending",
+            "statement": Decimal("1249.5"),
+            "ynab_before": None,
+            "ynab_after": Decimal("1300"),
+            "difference": Decimal("50.5"),
+            "matches": False,
+            "new_account": None,
+        }
+        self.assertEqual(
+            balance.balance_check_message(check),
+            "\n".join(
+                [
+                    "Ending balance does not match YNAB."
+                    " Make any adjustment in YNAB as you see fit.",
+                    "Statement ending balance: 1,249.50",
+                    "YNAB balance AFTER upload: 1,300.00",
+                ]
+            ),
+        )
 
     def test_new_account_message(self):
         self.assertEqual(
             balance.new_account_message({"from": Decimal("500"), "to": Decimal("500")}),
-            "New YNAB account: its Starting Balance already equals the statement starting balance (500.00).",
+            "New YNAB account: its Starting Balance already equals"
+            " the statement starting balance (500.00).",
         )
         self.assertEqual(
             balance.new_account_message({"from": Decimal("0"), "to": Decimal("1500")}),
-            "New YNAB account: Starting Balance set from 0.00 to 1,500.00 (the statement starting balance).",
+            "New YNAB account: Starting Balance set from 0.00 to 1,500.00"
+            " (the statement starting balance).",
         )
 
 

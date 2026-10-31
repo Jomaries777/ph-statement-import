@@ -91,18 +91,37 @@ class FakeYnab:
             NEW_ACCOUNT_ID: {"name": NEW_ACCOUNT_NAME, "transactions": []},
         }
         # Existing account: two transactions, older than a year, 1,000.00 in total
-        self._add(EXISTING_ACCOUNT_ID, date(2024, 1, 1), STARTING_BALANCE_PAYEE,
-                  400000, category_name=STARTING_BALANCE_CATEGORY)
+        self._add(
+            EXISTING_ACCOUNT_ID,
+            date(2024, 1, 1),
+            STARTING_BALANCE_PAYEE,
+            400000,
+            category_name=STARTING_BALANCE_CATEGORY,
+        )
         self._add(EXISTING_ACCOUNT_ID, date(2024, 6, 1), "Sample Transfer In", 600000)
         # New account: only the Starting Balance YNAB makes when it's created
-        self._add(NEW_ACCOUNT_ID, today, STARTING_BALANCE_PAYEE, 250000,
-                  category_name=STARTING_BALANCE_CATEGORY)
+        self._add(
+            NEW_ACCOUNT_ID,
+            today,
+            STARTING_BALANCE_PAYEE,
+            250000,
+            category_name=STARTING_BALANCE_CATEGORY,
+        )
         self.calls = []  # (method, args) of every API call, for assertions
 
     # ---- state helpers (also used by the tests) -----------------------------
 
-    def _add(self, account_id, var_date, payee_name, amount, category_name=None,
-             memo=None, import_id=None, flag_color=None):
+    def _add(
+        self,
+        account_id,
+        var_date,
+        payee_name,
+        amount,
+        category_name=None,
+        memo=None,
+        import_id=None,
+        flag_color=None,
+    ):
         transaction = SimpleNamespace(
             id=str(uuid.uuid4()),
             account_id=account_id,
@@ -220,12 +239,12 @@ class _AccountsApi(_Api):
 class _TransactionsApi(_Api):
     def get_transactions_by_account(self, plan_id, account_id, since_date=None, **kwargs):
         """Like YNAB: without since_date, only the last year."""
-        self.ynab._check(self.api_client, "get_transactions_by_account", plan_id, account_id, since_date)
+        self.ynab._check(
+            self.api_client, "get_transactions_by_account", plan_id, account_id, since_date
+        )
         account = self.ynab._account(plan_id, account_id)
         since = since_date or date.today() - timedelta(days=365)
-        return _response(
-            transactions=[t for t in account["transactions"] if t.var_date >= since]
-        )
+        return _response(transactions=[t for t in account["transactions"] if t.var_date >= since])
 
     def create_transaction(self, plan_id, data):
         """Create data.transactions (a PostTransactionsWrapper). Like YNAB, an

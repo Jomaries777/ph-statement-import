@@ -84,8 +84,7 @@ class RealPdfTest(unittest.TestCase):
         # Correction rows sit next to the statement row they belong to
         self.assertEqual(
             [r["Reference No."] for r in rows][:5],
-            ["S9990000000011", "9990000000011", "9990000000012",
-             "R9990000000013", "9990000000013"],
+            ["S9990000000011", "9990000000011", "9990000000012", "R9990000000013", "9990000000013"],
         )
         self.assertEqual(sum(not gcash.is_correction_row(r) for r in rows), 4)
 
@@ -108,10 +107,10 @@ class RealPdfTest(unittest.TestCase):
         path = os.path.join(self.tmp.name, "unreadable_row.pdf")
         rows = list(make_pdf.BALANCED_ROWS)
         rows[2] = rows[2]._replace(reference="")
-        make_pdf.make_statement(
-            path, rows, make_pdf.BALANCED_STARTING, make_pdf.BALANCED_ENDING
-        )
-        with self.assertRaisesRegex(ValueError, "parsed total credit 500.00 != statement total 750.00"):
+        make_pdf.make_statement(path, rows, make_pdf.BALANCED_STARTING, make_pdf.BALANCED_ENDING)
+        with self.assertRaisesRegex(
+            ValueError, "parsed total credit 500.00 != statement total 750.00"
+        ):
             gcash.parse_transactions(path)
 
 

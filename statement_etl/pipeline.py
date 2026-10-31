@@ -57,9 +57,9 @@ Environment:
     YNAB_PLAN_ID          - YNAB plan (budget) id (or pass --plan-id)
 
 Usage:
-    python -m statement_etl.pipeline statement.pdf --dry-run                 # parse only, nothing sent
+    python -m statement_etl.pipeline statement.pdf --dry-run                 # parse only
     python -m statement_etl.pipeline statement.pdf                           # parse and import
-    python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick the e-wallet / bank
+    python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick the source
 
 Output:
     1. The parsed rows, with the same columns as the PDF, and whether parsing succeeded
@@ -76,7 +76,7 @@ from decimal import Decimal
 
 import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
-from statement_etl.ynab_api.client import check_ending_balance, find_already_imported, import_transactions
+
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
 from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import (
@@ -84,6 +84,11 @@ from statement_etl.ynab_api.balance import (
     check_starting_balance,
     new_account_message,
     set_new_account_starting_balance,
+)
+from statement_etl.ynab_api.client import (
+    check_ending_balance,
+    find_already_imported,
+    import_transactions,
 )
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
@@ -266,8 +271,7 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         print(summary)
     balances = src.statement_balances(rows)
     print(
-        f"Statement balance: starting {balances['starting']:,.2f}, "
-        f"ending {balances['ending']:,.2f}"
+        f"Statement balance: starting {balances['starting']:,.2f}, ending {balances['ending']:,.2f}"
     )
 
     # 2. Checking: running balance didn't add up -> warn, keep going
@@ -287,7 +291,9 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
     try:
         check = starting_balance_check(rows, transactions, account_id, plan_id, source=source)
     except ynab.ApiException as e:
-        _fail(f"Could not read the YNAB balance: YNAB returned {e.status} {e.reason}\n{e.body or ''}")
+        _fail(
+            f"Could not read the YNAB balance: YNAB returned {e.status} {e.reason}\n{e.body or ''}"
+        )
     ynab_before = check["ynab_before"]  # for the STEP 4 message
 
     if check["new_account"]:
@@ -295,16 +301,25 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         try:
             new_account = new_account_starting_balance(rows, account_id, plan_id, source=source)
         except ynab.ApiException as e:
-            _fail(f"Could not set the Starting Balance: YNAB returned {e.status} {e.reason}\n{e.body or ''}")
+            _fail(
+                f"Could not set the Starting Balance: YNAB returned {e.status} {e.reason}\n"
+                f"{e.body or ''}"
+            )
         if new_account:
             print(new_account_message(new_account))
             ynab_before = new_account["to"]
         else:
             # Got other transactions since the check: compare as a normal account
             check = {**check, "new_account": None, "matches": check["difference"] == 0}
-            print(("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ") + balance_check_message(check))
+            print(
+                ("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ")
+                + balance_check_message(check)
+            )
     else:
-        print(("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ") + balance_check_message(check))
+        print(
+            ("" if check["matches"] and not check["already_in_ynab"] else "WARNING: ")
+            + balance_check_message(check)
+        )
 
     # 5. Importing into YNAB: one API call for all transactions
     try:
@@ -330,9 +345,7 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         ],
         right_aligned=("Amount",),
     )
-    print(
-        f"Import successful: {len(created)} transactions created in YNAB (unapproved)"
-    )
+    print(f"Import successful: {len(created)} transactions created in YNAB (unapproved)")
 
     # Rows whose import_id (hashed from Reference No.) YNAB already had are skipped, not duplicated
     if result.duplicate_import_ids:
@@ -349,7 +362,10 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         )
         print(("" if check["matches"] else "WARNING: ") + balance_check_message(check))
     except ynab.ApiException as e:
-        print(f"WARNING: could not read the YNAB balance after the upload: YNAB returned {e.status} {e.reason}")
+        print(
+            "WARNING: could not read the YNAB balance after the upload:"
+            f" YNAB returned {e.status} {e.reason}"
+        )
     return transactions
 
 
@@ -390,7 +406,7 @@ def _print_table(headers, rows, right_aligned=(), max_width=40):
     def fmt(cols):
         return "  ".join(
             c.rjust(w) if h in right_aligned else c.ljust(w)
-            for c, w, h in zip(cols, widths, headers)
+            for c, w, h in zip(cols, widths, headers)  # noqa: B905  # same length as headers
         )
 
     print()
@@ -410,9 +426,7 @@ def main():
     """Command-line entry point: read settings, check they're present, run
     ph-statement-import."""
     # Command-line options; account and plan ids fall back to environment variables
-    ap = argparse.ArgumentParser(
-        description="Import an e-wallet / bank statement PDF into YNAB."
-    )
+    ap = argparse.ArgumentParser(description="Import an e-wallet / bank statement PDF into YNAB.")
     ap.add_argument("pdf", help="Path to the encrypted statement PDF")
     ap.add_argument(
         "--source",
@@ -453,9 +467,7 @@ def main():
     if not password:
         ap.error(f"{password_env} environment variable is not set")
 
-    run_pipeline(
-        args.pdf, password, args.account_id, args.plan_id, args.dry_run, args.source
-    )
+    run_pipeline(args.pdf, password, args.account_id, args.plan_id, args.dry_run, args.source)
 
 
 if __name__ == "__main__":

@@ -19,10 +19,20 @@ from unittest import mock
 from statement_etl import transform
 from tests.fakes import gcash_row
 
-PAYMENT = gcash_row("2026-10-20 06:50 AM", "Payment to Test Shop, Merchant Transaction Number: X1",
-                    "1000000000002", debit="599.00", balance="4,407.56")
-RECEIVED = gcash_row("2026-10-01 09:00 PM", "Received GCash from Test Sender", "1000000000001",
-                     credit="1,000.00", balance="5,006.56")
+PAYMENT = gcash_row(
+    "2026-10-20 06:50 AM",
+    "Payment to Test Shop, Merchant Transaction Number: X1",
+    "1000000000002",
+    debit="599.00",
+    balance="4,407.56",
+)
+RECEIVED = gcash_row(
+    "2026-10-01 09:00 PM",
+    "Received GCash from Test Sender",
+    "1000000000001",
+    credit="1,000.00",
+    balance="5,006.56",
+)
 
 
 class AmountsTest(unittest.TestCase):
@@ -42,7 +52,7 @@ class ImportIdTest(unittest.TestCase):
         import_id = transform.make_import_id("gcash", "1000000000002")
         self.assertTrue(import_id.startswith("ETLPH:"))
         self.assertEqual(len(import_id), 36)  # YNAB's limit
-        self.assertRegex(import_id[len("ETLPH:"):], r"^[0-9a-f]{30}$")
+        self.assertRegex(import_id[len("ETLPH:") :], r"^[0-9a-f]{30}$")
 
     def test_stable(self):
         self.assertEqual(
@@ -62,10 +72,22 @@ class ImportIdTest(unittest.TestCase):
 class YnabTransactionTest(unittest.TestCase):
     def test_shape(self):
         self.assertEqual(
-            transform.ynab_transaction(datetime(2026, 10, 2, 18, 50), "Test Shop", Decimal("-12.34"), "ID",
-                                       memo="note", flag_color="red"),
-            {"date": "2026-10-02", "payee_name": "Test Shop", "import_id": "ID", "amount": -12340,
-             "memo": "note", "flag_color": "red"},
+            transform.ynab_transaction(
+                datetime(2026, 10, 2, 18, 50),
+                "Test Shop",
+                Decimal("-12.34"),
+                "ID",
+                memo="note",
+                flag_color="red",
+            ),
+            {
+                "date": "2026-10-02",
+                "payee_name": "Test Shop",
+                "import_id": "ID",
+                "amount": -12340,
+                "memo": "note",
+                "flag_color": "red",
+            },
         )
 
     def test_defaults_and_plain_date(self):
@@ -77,14 +99,17 @@ class YnabTransactionTest(unittest.TestCase):
 
 class GCashToYnabTest(unittest.TestCase):
     def test_money_out(self):
-        self.assertEqual(transform.gcash_to_ynab(PAYMENT), {
-            "date": "2026-10-20",
-            "payee_name": "Test Shop",
-            "import_id": transform.make_import_id("gcash", "1000000000002"),
-            "amount": -599000,
-            "memo": "GCash Ref: 1000000000002",
-            "flag_color": None,
-        })
+        self.assertEqual(
+            transform.gcash_to_ynab(PAYMENT),
+            {
+                "date": "2026-10-20",
+                "payee_name": "Test Shop",
+                "import_id": transform.make_import_id("gcash", "1000000000002"),
+                "amount": -599000,
+                "memo": "GCash Ref: 1000000000002",
+                "flag_color": None,
+            },
+        )
 
     def test_money_in(self):
         t = transform.gcash_to_ynab(RECEIVED)
@@ -93,15 +118,25 @@ class GCashToYnabTest(unittest.TestCase):
         self.assertEqual(t["date"], "2026-10-01")
 
     def test_correction_rows_are_flagged_red(self):
-        row = gcash_row("2026-10-02 10:00 AM", "Refund from Test Shop", "R1000000000002", credit="50.00")
+        row = gcash_row(
+            "2026-10-02 10:00 AM", "Refund from Test Shop", "R1000000000002", credit="50.00"
+        )
         t = transform.gcash_to_ynab(row)
         self.assertEqual(t["flag_color"], "red")
         self.assertEqual(t["memo"], "GCash Ref: R1000000000002")
         self.assertEqual(t["import_id"], transform.make_import_id("gcash", "R1000000000002"))
 
     def test_import_id_only_depends_on_the_reference(self):
-        changed = {**PAYMENT, "Debit": "600.00", "Description": "Payment to Other Shop", "Date and Time": "2026-10-21 07:00 AM"}
-        self.assertEqual(transform.gcash_to_ynab(changed)["import_id"], transform.gcash_to_ynab(PAYMENT)["import_id"])
+        changed = {
+            **PAYMENT,
+            "Debit": "600.00",
+            "Description": "Payment to Other Shop",
+            "Date and Time": "2026-10-21 07:00 AM",
+        }
+        self.assertEqual(
+            transform.gcash_to_ynab(changed)["import_id"],
+            transform.gcash_to_ynab(PAYMENT)["import_id"],
+        )
 
 
 class TransformTest(unittest.TestCase):
@@ -120,8 +155,11 @@ class TransformTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def run_main(self, *args):
         stdout, stderr = io.StringIO(), io.StringIO()
-        with mock.patch("sys.argv", ["transform", *args]), \
-             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        with (
+            mock.patch("sys.argv", ["transform", *args]),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
             transform.main()
         return stdout.getvalue(), stderr.getvalue()
 
