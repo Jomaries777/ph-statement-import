@@ -1,6 +1,6 @@
 # P2. GoTyme parser (manual upload and CLI)
 
-Status: Not started · Estimate: about 2–3 days, 2 PRs · Needs: P1 · Can run at the same time as P3
+Status: Done (PRs #21 and #22) · Estimate: about 2–3 days, 2 PRs · Needs: P1 · Can run at the same time as P3
 
 ## Goal
 
