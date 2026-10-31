@@ -307,17 +307,23 @@ class AutoImportStartupTest(unittest.TestCase):
 
     GOOGLE_ENV = {"GOOGLE_CLIENT_ID": "made-up-google-client-id", "GOOGLE_CLIENT_SECRET": ""}
 
+    # Empty, so a value in the shell or .env can't make a test pass
+    NO_AUTO_IMPORT_KEYS = {"ENCRYPTION_KEYS": "", "ALLOWED_GOOGLE_EMAILS": ""}
+
     def start(self, **env):
-        # ENCRYPTION_KEYS="" so a key in the shell or .env can't make a test pass
         with (
             self.assertRaises(SystemExit) as caught,
-            hosted_mode({**HOSTED_ENV, "ENCRYPTION_KEYS": "", **env}),
+            hosted_mode({**HOSTED_ENV, **self.NO_AUTO_IMPORT_KEYS, **env}),
         ):
             pass
         return str(caught.exception)
 
     def test_missing_key_is_named_and_no_value_printed(self):
-        app_config = {**SECRETS, "GOOGLE_CLIENT_SECRET": "do-not-print-this"}
+        app_config = {
+            **SECRETS,
+            "GOOGLE_CLIENT_SECRET": "do-not-print-this",
+            "ALLOWED_GOOGLE_EMAILS": "juan@example.test",
+        }
         message = self.start(**self.GOOGLE_ENV, APP_CONFIG=json.dumps(app_config))
         self.assertEqual(
             message,
@@ -327,7 +333,21 @@ class AutoImportStartupTest(unittest.TestCase):
 
     def test_every_missing_key_is_named(self):
         message = self.start(**self.GOOGLE_ENV)
-        self.assertIn("needs GOOGLE_CLIENT_SECRET, ENCRYPTION_KEYS", message)
+        self.assertIn("needs GOOGLE_CLIENT_SECRET, ENCRYPTION_KEYS, ALLOWED_GOOGLE_EMAILS", message)
+
+    def test_empty_invite_list_stops_the_app(self):
+        # Without this check the page would turn every Google account away
+        app_config = {
+            **SECRETS,
+            "GOOGLE_CLIENT_SECRET": "made-up",
+            "ENCRYPTION_KEYS": ENCRYPTION_KEY,
+        }
+        message = self.start(**self.GOOGLE_ENV, APP_CONFIG=json.dumps(app_config))
+        self.assertEqual(
+            message,
+            "Auto-import (GOOGLE_CLIENT_ID is set) needs ALLOWED_GOOGLE_EMAILS"
+            " in APP_CONFIG or the environment.",
+        )
 
     def test_starts_without_google_settings(self):
         # Today's deploy: hosted mode, no GOOGLE_CLIENT_ID, no auto-import keys
@@ -335,13 +355,18 @@ class AutoImportStartupTest(unittest.TestCase):
             **HOSTED_ENV,
             "GOOGLE_CLIENT_ID": "",
             "GOOGLE_CLIENT_SECRET": "",
-            "ENCRYPTION_KEYS": "",
+            **self.NO_AUTO_IMPORT_KEYS,
         }
         with hosted_mode(env):
             self.assertTrue(config.HOSTED)
 
     def test_starts_with_every_google_setting(self):
-        secrets = {**SECRETS, "GOOGLE_CLIENT_SECRET": "made-up", "ENCRYPTION_KEYS": ENCRYPTION_KEY}
+        secrets = {
+            **SECRETS,
+            "GOOGLE_CLIENT_SECRET": "made-up",
+            "ENCRYPTION_KEYS": ENCRYPTION_KEY,
+            "ALLOWED_GOOGLE_EMAILS": "juan@example.test",
+        }
         with hosted_mode({**HOSTED_ENV, **self.GOOGLE_ENV, "APP_CONFIG": json.dumps(secrets)}):
             self.assertTrue(config.HOSTED)
 
