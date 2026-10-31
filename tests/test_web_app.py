@@ -22,10 +22,11 @@ from unittest import mock
 from ynab import exceptions
 
 from statement_etl import pipeline
+from statement_etl.convert import rows_to_transactions
 from statement_etl.parsers.common import StatementError
-from statement_etl.transform import transform
 from statement_etl.web import app as web
 from statement_etl.ynab_api.balance import compare_balance
+from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
 
 ROWS = [
@@ -51,7 +52,7 @@ ROWS = [
         balance="1,299.50",
     ),
 ]
-TRANSACTIONS = transform(ROWS, "gcash")
+TRANSACTIONS = [to_ynab(t) for t in rows_to_transactions(ROWS, "gcash")]
 TARGET = {"plan_id": PLAN_ID, "account_id": ACCOUNT_ID}
 
 

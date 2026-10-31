@@ -4,10 +4,9 @@ ph-statement-import - the e-wallets and banks it can import.
 Every statement looks different, so there is no common row format: a parser
 returns each row with the statement's own column names. A Source tells the
 rest of the pipeline (command line and web app) what it needs to know about
-those columns, and which parser functions to call.
-
-The transformer that turns a row into a YNAB transaction is registered
-separately, in transform.TRANSFORMERS, under the same key.
+those columns, and which parser functions to call, including
+to_transactions, which turns the rows into neutral Transactions
+(transaction.py). Nothing here knows about YNAB.
 
 To add another e-wallet / bank, see docs/adding-an-e-wallet.md.
 """
@@ -39,8 +38,8 @@ class Source:
     """One e-wallet or bank statement format.
 
     Identity:
-        key          - "gcash": the --source value, the key in
-                       transform.TRANSFORMERS and part of every YNAB import_id.
+        key          - "gcash": the --source value and part of every YNAB
+                       import_id (via Transaction.source).
                        Never rename it once released: YNAB would see every
                        transaction as new and import duplicates.
         name         - "GCash": shown on the page and in the command-line output
@@ -59,6 +58,8 @@ class Source:
                              one key per column. pdf is a path or a file object.
         statement_balances - rows -> {"starting": Decimal, "ending": Decimal},
                              for the YNAB balance checks before / after upload
+        to_transactions    - rows -> list of Transactions (transaction.py), one
+                             per row, with Transaction.source set to this key
         summary            - rows -> one line shown under the parsed rows, or None
 
     Optional, for parsers that add balance-correction rows (GCash does):
@@ -74,6 +75,7 @@ class Source:
     columns: tuple
     parse: Callable
     statement_balances: Callable
+    to_transactions: Callable
     amount_columns: tuple = ()
     money_in_columns: tuple = ()
     money_out_columns: tuple = ()
@@ -102,6 +104,7 @@ SOURCES = {
             text_column="Description",
             parse=gcash.parse_transactions,
             statement_balances=gcash.statement_balances,
+            to_transactions=gcash.to_transactions,
             summary=gcash.summary,
             is_correction_row=gcash.is_correction_row,
             balance_corrections=gcash.balance_corrections,

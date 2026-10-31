@@ -1,7 +1,7 @@
 """
-ph-statement-import - send transformed transactions to YNAB.
+ph-statement-import - send converted transactions to YNAB.
 
-Reusable for every e-wallet / bank, after parsing and transforming:
+Reusable for every e-wallet / bank, after parsing and converting:
     find_already_imported() - before the upload, find the transactions YNAB
                               already has (same import_id on the account);
                               YNAB skips them, so only the rest are added
@@ -50,7 +50,7 @@ def find_already_imported(transactions, account_id, plan_id, access_token=None):
     Looks at the account's transactions from the earliest date in the batch
     (TransactionsApi.get_transactions_by_account).
 
-    transactions - list of dicts from transform.transform()
+    transactions - list of dicts from ynab_api.format.to_ynab()
 
     Returns the set of import_ids already in the account (empty if none).
     Raises ynab.ApiException if YNAB rejects the request.
@@ -71,7 +71,7 @@ def find_already_imported(transactions, account_id, plan_id, access_token=None):
 def import_transactions(transactions, account_id, plan_id, access_token=None):
     """Create transactions in YNAB.
 
-    transactions - list of dicts from transform.transform()
+    transactions - list of dicts from ynab_api.format.to_ynab()
                    (date, payee_name, import_id, amount, memo)
     account_id   - the YNAB account to add them to (your GCash account)
     plan_id      - YNAB plan (budget) id that contains that account

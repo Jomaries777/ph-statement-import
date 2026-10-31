@@ -62,7 +62,7 @@ ruff format . && ruff check .
 - **Single responsibility:** One job per function and one obvious place per job. Extract repeated logic rather than copying it. Split functions longer than ~50 lines or nested more than 3 levels.
 - **Naming:** Names say what something is. Spell words out; domain terms (YNAB, PDF, OAuth, `import_id`, milliunits) are fine.
 - **Type hints:** Add type hints on public functions and dataclasses in new or touched code.
-- **Money:** Money is `Decimal`, never `float`. Inflow is positive, outflow negative. Convert to milliunits only in `ynab_api/format.py` (currently `transform.py` until P1).
+- **Money:** Money is `Decimal`, never `float`. Inflow is positive, outflow negative. Convert to milliunits only in `ynab_api/format.py`.
 - **Boundary between sources and YNAB:** Sources never import YNAB code: they return neutral `Transaction`s, and `ynab_api/` turns them into YNAB's format.
 - **Source keys are permanent:** Never rename a source key (`gcash`, `gotyme`). It's part of every `import_id`, so renaming it creates duplicates in YNAB.
 - **No personal data:** Never log or commit personal data: no tokens, passwords, PDF bytes or parsed rows in logs, and no real statements anywhere in the repo, issues or PRs. Tests use made-up rows (`tests/e2e/make_pdf.py`). Keep real PDFs in `statements/` (gitignored).
