@@ -29,6 +29,7 @@ New here? Read [CONTRIBUTING.md](../../CONTRIBUTING.md) first (added in P0), the
 | P3 | [P3-hosted-mode.md](P3-hosted-mode.md) | App safe to run for other people | Hosted tests pass; Docker shows the OAuth-only page |
 | P4 | [P4-go-live-on-gcp.md](P4-go-live-on-gcp.md) | Manual upload on Cloud Run, at $0 | You, then one family member, upload successfully |
 | P5 | [P5-gmail-auto-import-gcash.md](P5-gmail-auto-import-gcash.md) | GCash statements import on their own | A real GCash email imports once; "Turn off and delete" works |
+| P5b | [P5b-gmail-push.md](P5b-gmail-push.md) | Statements import seconds after the email arrives | A real GCash email imports within a minute; the 15-minute poll still runs |
 | P6 | [P6-gotyme-auto-import.md](P6-gotyme-auto-import.md) | GoTyme in the auto-import mapping table | A real GoTyme email imports only its Everyday account PDF |
 | P7 | [P7-public-release.md](P7-public-release.md) | Open to all YNAB users | YNAB review approved |
 
@@ -44,6 +45,7 @@ P0 ──► P1 ──┬──► P2 ──────────────
   - P2: `parsers/gotyme.py`, `sources.py` and the docs
   - P3: `web/*`, the `Dockerfile` and `requirements.txt`
 - P6 needs both P2 (the parser) and P5 (auto-import).
+- P5b (Gmail push) needs P5 only, and can go before or after P6.
 
 ## Design files
 

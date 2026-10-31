@@ -1,25 +1,36 @@
 """
 ph-statement-import - auto-import: find new statement emails in Gmail and import them.
 
-Cloud Scheduler asks the app to run this every 15 minutes (POST /tasks/poll-gmail,
-web/auto_import.py). There's no browser, so everything comes from the user's
-stored settings (store.py):
+Two things start a run (web/auto_import.py), and there's no browser, so
+everything comes from the user's stored settings (store.py):
+    - Gmail push: Gmail tells a Pub/Sub topic when a user's inbox changes, and
+      Pub/Sub posts that to POST /tasks/gmail-push within seconds -> process_push()
+    - Cloud Scheduler, every 15 minutes: POST /tasks/poll-gmail -> poll_all().
+      It catches anything a push missed and keeps each user's push going.
 
     poll_all()                - every user with auto-import on. Never raises.
-      process_user(user)        1. decrypt the stored refresh tokens
-                                2. a fresh Gmail access token
-                                3. a fresh YNAB access token; save YNAB's new refresh token
-                                4. process_source() for each source mapped to an account
+    process_push(email)       - the one user whose inbox changed. Never raises.
+      process_user(user)        1. a fresh Gmail access token
+                                2. renew Gmail push if it ends within a day
+                                3. find_new_emails() for each source mapped to an account
+                                4. only if there are any: a fresh YNAB access token (save
+                                   YNAB's new refresh token), then process_message() each
                                 5. remember when Gmail was checked
-        process_source(...)     - search Gmail for the source's statement emails since
+        find_new_emails(...)    - search Gmail for the source's statement emails since
                                   the last check, oldest first, skipping emails
                                   already in the run log
-          process_message(...)  1. the PDF attachment, in memory only
+        process_message(...)    1. the PDF attachment, in memory only
                                 2. the PDF password, built from the user's inputs
                                 3. parse it (pipeline.parse_statement)
                                 4. import it, unapproved (pipeline.import_statement)
                                 5. record the run, with its status
+    start_watch(user)         - start Gmail push now, when auto-import is turned on
     test_password(...)        - steps 1-3 on the newest email, for the page's Test button
+
+Why YNAB waits until step 4: Gmail pushes on every inbox change (each email,
+each one read), so most runs find nothing. YNAB replaces its refresh token on
+every refresh, so refreshing only when there's something to import keeps that
+to once per statement.
 
 What happens when something fails:
     - A problem with one email (wrong password, a statement that won't parse,
@@ -30,6 +41,7 @@ What happens when something fails:
       import_statement() is safe to repeat: YNAB skips what it already has.
     - A problem with one user (e.g. they revoked Gmail access) is logged and
       skipped; the other users still run.
+    - A push that fails is only logged: the next poll tries again.
 
 Logs: one line per run and per failed user, with a hash of the user's Google
 ID, the source and the status. Never the email address, a password, a token
@@ -40,6 +52,8 @@ import hashlib
 import io
 import json
 import logging
+import os
+import threading
 import time
 import urllib.error
 from datetime import UTC, datetime, timedelta
@@ -49,7 +63,7 @@ import ynab
 from statement_etl import pipeline
 from statement_etl.autoimport import gmail, store
 from statement_etl.parsers.common import PasswordError, StatementError
-from statement_etl.sources import SOURCES, get_source
+from statement_etl.sources import SOURCES, Source, get_source
 from statement_etl.web import ynab_oauth
 
 log = logging.getLogger(__name__)
@@ -69,6 +83,22 @@ SEARCH_OVERLAP = timedelta(hours=1)
 # Cloud Run ends the request after 60 seconds. Users not reached in time are
 # checked first in the next poll (poll_all() starts with the longest-unchecked).
 TIME_BUDGET_SECONDS = 40
+
+# One run at a time: a push and a poll can arrive together, and two YNAB
+# refreshes with the same single-use refresh token would fail one of them.
+# Cloud Run runs a single instance (deploy.yml), so a lock in memory is enough.
+_lock = threading.Lock()
+LOCK_WAIT_SECONDS = 20
+
+# Gmail push lasts about 7 days. Renew it once less than this is left; the
+# 15-minute poll gets there long before it ends.
+WATCH_RENEW_BEFORE = timedelta(days=1)
+
+# What process_push() did, for the route's reply to Pub/Sub
+PUSH_DONE = "done"
+PUSH_IGNORED = "ignored"  # no user with auto-import on has this address
+PUSH_BUSY = "busy"  # another run held the lock: Pub/Sub sends the push again
+PUSH_FAILED = "failed"  # logged; the next poll tries again
 
 _NEVER = datetime.min.replace(tzinfo=UTC)
 
@@ -107,6 +137,17 @@ def poll_all() -> dict:
     error (logged); deferred: users left for the next poll (time budget).
     """
     counts = {"users": 0, "runs": 0, "failed": 0, "deferred": 0}
+    if not _lock.acquire(timeout=LOCK_WAIT_SECONDS):
+        log.warning("Auto-import poll skipped: another run is still going.")
+        return counts
+    try:
+        return _poll_all(counts)
+    finally:
+        _lock.release()
+
+
+def _poll_all(counts: dict) -> dict:
+    """poll_all(), with the lock held."""
     started = time.monotonic()
     try:
         users = store.list_enabled_users()
@@ -129,6 +170,38 @@ def poll_all() -> dict:
     return counts
 
 
+def process_push(email_address: str) -> str:
+    """Import new statement emails for the user whose inbox just changed. Never raises.
+
+    process_push("Juan@Example.com") -> "done"
+    Returns PUSH_DONE, PUSH_IGNORED, PUSH_BUSY or PUSH_FAILED (see above).
+    """
+    wanted = email_address.strip().casefold()
+    if not wanted:
+        return PUSH_IGNORED
+    if not _lock.acquire(timeout=LOCK_WAIT_SECONDS):
+        return PUSH_BUSY
+    try:
+        try:
+            # A few reads: only the users with auto-import on
+            users = store.list_enabled_users()
+        except Exception as e:
+            log.error("Auto-import push: couldn't read the users (%s).", _reason(e))
+            return PUSH_FAILED
+        user = next((u for u in users if (u.get("email") or "").strip().casefold() == wanted), None)
+        if user is None:
+            return PUSH_IGNORED
+        try:
+            runs = process_user(user)
+        except Exception as e:  # the next poll tries again
+            log.warning("Auto-import push for user %s failed: %s.", user_id(user), _reason(e))
+            return PUSH_FAILED
+        log.info("Auto-import push: user %s, %s runs.", user_id(user), runs)
+        return PUSH_DONE
+    finally:
+        _lock.release()
+
+
 def process_user(user: dict) -> int:
     """Import new statement emails for one user; returns how many runs it recorded.
 
@@ -136,55 +209,57 @@ def process_user(user: dict) -> int:
     """
     checked_at = datetime.now(UTC)
 
-    # 1. Decrypt the stored refresh tokens
-    gmail_refresh_token = store.decrypt(user["gmail_refresh_token"])
-    ynab_refresh_token = store.decrypt(user["ynab_refresh_token"])
+    # 1. A fresh Gmail access token
+    gmail_token = gmail.refresh_access_token(store.decrypt(user["gmail_refresh_token"]))
 
-    # 2. A fresh Gmail access token
-    gmail_token = gmail.refresh_access_token(gmail_refresh_token)
+    # 2. Keep Gmail push going
+    _renew_watch(user, gmail_token)
 
-    # 3. A fresh YNAB access token. YNAB rotates refresh tokens, and the old one
-    #    stops working, so the new one is saved before anything else can fail.
-    ynab_tokens = ynab_oauth.refresh(ynab_refresh_token)
-    store.save_ynab_tokens(user["sub"], ynab_tokens)
-
-    # 4. Each source mapped to a YNAB account ("Don't import" ones are off)
-    runs = 0
+    # 3. New emails for each source mapped to a YNAB account ("Don't import" ones are off)
+    new_emails = []  # (source, mapping, Gmail message ID), oldest first per source
     for source_key, mapping in user.get("mappings", {}).items():
         if mapping.get("enabled"):
-            runs += process_source(
-                user, source_key, mapping, gmail_token, ynab_tokens["access_token"]
-            )
+            source, msg_ids = find_new_emails(user, source_key, gmail_token)
+            new_emails += [(source, mapping, msg_id) for msg_id in msg_ids]
+
+    # 4. Only now a fresh YNAB access token. YNAB rotates refresh tokens, and the
+    #    old one stops working, so the new one is saved before anything else can fail.
+    if new_emails:
+        ynab_tokens = ynab_oauth.refresh(store.decrypt(user["ynab_refresh_token"]))
+        store.save_ynab_tokens(user["sub"], ynab_tokens)
+        for source, mapping, msg_id in new_emails:
+            process_message(user, msg_id, source, mapping, gmail_token, ynab_tokens["access_token"])
 
     # 5. Next time, search from here. Not reached if anything above raised, so
     #    the emails since the last check are searched again.
     store.set_last_checked(user["sub"], checked_at)
-    return runs
+    return len(new_emails)
 
 
-def process_source(
-    user: dict, source_key: str, mapping: dict, gmail_token: str, ynab_token: str
-) -> int:
-    """Import this source's new statement emails into its mapped account; returns the run count."""
+def find_new_emails(
+    user: dict, source_key: str, gmail_token: str
+) -> tuple[Source | None, list[str]]:
+    """This source's statement emails that aren't in the run log yet, oldest first.
+
+    find_new_emails(user, "gcash", "token") -> (<the gcash Source>, ["18c2f0a1b2"])
+    """
     source = SOURCES.get(source_key)
     if source is None or not source.email_query:
         log.warning("Auto-import user %s: no email settings for %s.", user_id(user), source_key)
-        return 0
+        return source, []
 
     # The page sets last_checked when auto-import is turned on, so older emails
     # are never imported; without it, only the last SEARCH_OVERLAP is searched.
     since = (user.get("last_checked") or datetime.now(UTC)) - SEARCH_OVERLAP
     messages = gmail.list_messages(gmail_token, source.email_query, after=since)
 
-    runs = 0
     # Gmail lists the newest first. Oldest first keeps statements in order, so
     # each one's ending balance check sees the ones before it.
-    for message in reversed(messages):
-        if store.run_exists(user["sub"], message["id"], source_key):
-            continue
-        process_message(user, message["id"], source, mapping, gmail_token, ynab_token)
-        runs += 1
-    return runs
+    return source, [
+        m["id"]
+        for m in reversed(messages)
+        if not store.run_exists(user["sub"], m["id"], source_key)
+    ]
 
 
 def process_message(
@@ -268,6 +343,43 @@ def _received_at(gmail_token: str, msg_id: str) -> datetime | None:
     if not internal_date:
         return None
     return datetime.fromtimestamp(int(internal_date) / 1000, UTC)
+
+
+def _renew_watch(user: dict, gmail_token: str) -> None:
+    """Start or renew Gmail push for this user if it ends within a day.
+
+    A Gmail error is logged, not raised: importing works without push.
+    Does nothing when GMAIL_PUSH_TOPIC isn't set: then only the poll runs.
+    """
+    topic = os.environ.get("GMAIL_PUSH_TOPIC", "").strip()
+    expires = user.get("gmail_watch_expires")
+    if not topic or (expires and expires - datetime.now(UTC) > WATCH_RENEW_BEFORE):
+        return
+    try:
+        expires = gmail.watch(gmail_token, topic)
+    except gmail.GmailError as e:  # the next poll tries again; importing still works
+        log.warning(
+            "Auto-import user %s: couldn't start Gmail push: %s.", user_id(user), _reason(e)
+        )
+        return
+    store.save_user(user["sub"], gmail_watch_expires=expires)
+
+
+def start_watch(user: dict) -> None:
+    """Start Gmail push right away, when auto-import is turned on. Never raises.
+
+    Otherwise the first statement would wait for the next poll to start it.
+    """
+    if not os.environ.get("GMAIL_PUSH_TOPIC", "").strip():
+        return
+    try:
+        gmail_token = gmail.refresh_access_token(store.decrypt(user["gmail_refresh_token"]))
+    except (gmail.GmailError, store.DecryptError) as e:
+        log.warning(
+            "Auto-import user %s: couldn't start Gmail push: %s.", user_id(user), _reason(e)
+        )
+        return
+    _renew_watch({**user, "gmail_watch_expires": None}, gmail_token)
 
 
 def pdf_password(user: dict, source, inputs: dict | None = None) -> str:

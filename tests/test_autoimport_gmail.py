@@ -1,7 +1,7 @@
 """
 Tests for autoimport/gmail.py: Google OAuth URLs, token exchange / refresh /
-revocation, paginated Gmail search (`after:<epoch>`), and in-memory PDF
-attachment selection.
+revocation, paginated Gmail search (`after:<epoch>`), in-memory PDF
+attachment selection, and inbox notifications (watch / stop).
 
 Run from the project folder:  python -m unittest discover tests
 
@@ -94,6 +94,7 @@ class FakeHTTP:
                 "url": f"{parsed.scheme}://{parsed.netloc}{parsed.path}",
                 "query": urllib.parse.parse_qs(parsed.query, keep_blank_values=True),
                 "form": urllib.parse.parse_qs(raw_body, keep_blank_values=True) if raw_body else {},
+                "body": raw_body,
                 "headers": {k.lower(): v for k, v in req.header_items()},
                 "timeout": timeout,
             }
@@ -413,6 +414,51 @@ class GetPdfAttachmentTest(GmailTestCase):
         with self.assertRaisesRegex(GmailError, "did not include data"):
             gmail.get_pdf_attachment(ACCESS_TOKEN, "m1", r"\.pdf$")
         self.assertTrue(self.http.calls[-1]["url"].endswith("/attachments/att%2F1"))
+
+
+# =============================================================================
+# PUSH - watch / stop
+# =============================================================================
+
+
+class WatchTest(GmailTestCase):
+    TOPIC = "projects/example-project/topics/gmail-push"
+
+    def test_watch_asks_for_inbox_changes_and_returns_the_expiration(self) -> None:
+        self.http.enqueue_json({"historyId": "12345", "expiration": "1793462400000"})
+        expires = gmail.watch(ACCESS_TOKEN, self.TOPIC)
+
+        self.assertEqual(expires, datetime(2026, 10, 31, 16, 0, tzinfo=UTC))
+        [call] = self.http.calls
+        self.assertEqual((call["method"], call["url"]), ("POST", f"{gmail.GMAIL_API_BASE}/watch"))
+        self.assertEqual(call["headers"]["authorization"], f"Bearer {ACCESS_TOKEN}")
+        self.assertEqual(call["headers"]["content-type"], "application/json")
+        self.assertEqual(
+            json.loads(call["body"]),
+            {"topicName": self.TOPIC, "labelIds": ["INBOX"], "labelFilterBehavior": "INCLUDE"},
+        )
+
+    def test_watch_without_an_expiration_or_refused_raises_gmail_error(self) -> None:
+        for payload in ({"historyId": "1"}, {"expiration": "soon"}, {"expiration": None}):
+            with self.subTest(payload=payload):
+                self.http.enqueue_json(payload)
+                with self.assertRaisesRegex(GmailError, "did not include an expiration"):
+                    gmail.watch(ACCESS_TOKEN, self.TOPIC)
+
+        self.http.enqueue_error(
+            http_error(403, {"error": {"code": 403, "message": "User not authorized to publish."}})
+        )
+        with self.assertRaises(GmailError) as ctx:
+            gmail.watch(ACCESS_TOKEN, self.TOPIC)
+        self.assertEqual(ctx.exception.status, 403)
+        self.assertNotIn(ACCESS_TOKEN, str(ctx.exception))
+
+    def test_stop_posts_to_stop(self) -> None:
+        self.http.enqueue_bytes(b"")  # Gmail returns an empty 204 body
+        gmail.stop(ACCESS_TOKEN)
+        [call] = self.http.calls
+        self.assertEqual((call["method"], call["url"]), ("POST", f"{gmail.GMAIL_API_BASE}/stop"))
+        self.assertEqual(call["headers"]["authorization"], f"Bearer {ACCESS_TOKEN}")
 
 
 class SafetyNetIntegrationTest(unittest.TestCase):

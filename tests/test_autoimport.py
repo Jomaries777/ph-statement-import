@@ -237,10 +237,12 @@ class PollTest(RunnerTest):
 
     def test_the_rotated_ynab_refresh_token_is_saved(self):
         self.add_user()
+        self.gmail.add("msg-1")
         runner.poll_all()
         saved = self.store.get_user(SUB)["ynab_refresh_token"]
         self.assertEqual(self.store.decrypt(saved), "ynab-refresh-1")
-        # The old token no longer works, so the next poll succeeds only with the saved one
+        # The old token no longer works, so the next import succeeds only with the saved one
+        self.gmail.add("msg-2", received=datetime.now(UTC))  # after the first poll
         self.assertEqual(runner.poll_all()["failed"], 0)
         self.assertEqual(self.ynab_logins, 2)
 
