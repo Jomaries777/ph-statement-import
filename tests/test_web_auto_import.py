@@ -1193,8 +1193,14 @@ class AutoImportBrowserTest(unittest.TestCase):
         }
         with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
             expect(page.locator("#save-btn")).to_be_enabled()
-            page.click("#save-btn")
-            page.wait_for_load_state("networkidle")
+            # Wait for the save's response before the mock is undone. A click
+            # doesn't navigate, so waiting for "networkidle" returned at once,
+            # and the POST could reach the real refresh() and fail.
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/auto-import") and r.request.method == "POST"
+            ) as save:
+                page.click("#save-btn")
+            self.assertEqual(save.value.status, 200)
 
         expect(page.locator("#auto-on-view")).to_be_visible()
         expect(page.locator("#card-active")).to_contain_text("On")
