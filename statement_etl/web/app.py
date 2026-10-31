@@ -63,6 +63,7 @@ Usage:
     python -m statement_etl.web  # then open http://localhost:5050
 """
 
+import logging
 import os
 import secrets
 import sys
@@ -94,6 +95,16 @@ LEGAL_LAST_UPDATED = "31 October 2026"
 CONTACT_EMAIL = "froze.settle-1p@icloud.com"
 
 AUTO_IMPORT = HOSTED and bool(os.environ.get("GOOGLE_CLIENT_ID"))
+
+# The app's own log lines, INFO and up, go to stderr, which Cloud Run keeps;
+# e.g. "INFO statement_etl.autoimport.runner: Auto-import poll: {...}".
+# Only the statement_etl loggers: libraries' INFO lines stay off.
+# Flask's app.logger is one of them, so it uses this handler too.
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+_log = logging.getLogger("statement_etl")
+_log.handlers = [_handler]  # one handler, even if this module is loaded again
+_log.setLevel(logging.INFO)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit

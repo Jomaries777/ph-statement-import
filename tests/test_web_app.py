@@ -10,6 +10,7 @@ YNAB, OAuth and the OS secure store are mocked. All data here is made up.
 import contextlib
 import io
 import json
+import logging
 import os
 import runpy
 import time
@@ -1079,6 +1080,22 @@ class LoggingTest(WebTest):
         self.assertIn("ValueError", log)
         for secret in secrets:
             self.assertNotIn(secret, log)
+
+    def test_app_log_lines_reach_stderr(self):
+        """Cloud Run keeps stderr: auto-import's INFO lines must get there, once each."""
+        runner_log = logging.getLogger("statement_etl.autoimport.runner")
+        self.assertTrue(runner_log.isEnabledFor(logging.INFO))
+        self.assertFalse(logging.getLogger("urllib3").isEnabledFor(logging.INFO))
+
+        handlers = logging.getLogger("statement_etl").handlers
+        self.assertEqual(len(handlers), 1)
+        stderr = io.StringIO()
+        with mock.patch.object(handlers[0], "stream", stderr):
+            runner_log.info("Auto-import poll: %s", {"users": 0})
+        self.assertEqual(
+            stderr.getvalue(),
+            "INFO statement_etl.autoimport.runner: Auto-import poll: {'users': 0}\n",
+        )
 
 
 # =============================================================================
