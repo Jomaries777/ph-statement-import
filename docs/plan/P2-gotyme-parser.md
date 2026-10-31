@@ -35,7 +35,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
 
 ### PR 1: `feat/gotyme-parser`, "feat: parse GoTyme Everyday Deposit statements"
 
-- [ ] Create `statement_etl/parsers/gotyme.py`. Use the same layout and comment style as `parsers/gcash.py`: a module docstring with usage, `# ===` sections and numbered step comments. Reuse `parsers/common.py`: `open_pdf()` (a wrong password raises `ValueError`), `group_lines()` and `to_decimal()`.
+- [ ] Create `statement_etl/parsers/gotyme.py`. Use the same layout and comment style as `parsers/gcash.py`: a module docstring with usage, `# ===` sections and numbered step comments. Reuse `parsers/common.py`: `open_pdf()` (a wrong password raises `StatementError`), `group_lines()` and `to_decimal()`.
   - `COLUMNS = ("Date", "Details", "Credits", "Debits", "Running Balance")`
   - `parse_transactions(pdf, password) -> list[dict]`: one dict per row, with keys equal to `COLUMNS`.
     - Amounts are plain text without commas (`"249.00"`), like GCash's output. Wrapped Details lines are joined with one space.
@@ -45,7 +45,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
       3. `_anchor_rows(lines, columns)`: one row per date line. Details words between this date's band and the next date's band belong to this row, which covers text both above and below the amounts.
       4. `_to_output_row(...)`
       5. `_check_totals(rows, summary)`
-  - `_check_totals` raises `ValueError` with an actionable message when any of these fails:
+  - `_check_totals` raises `StatementError` with an actionable message when any of these fails:
     - Σ Credits = Total Credit
     - Σ Debits = Total Debit
     - Opening + Σ Credits − Σ Debits = Closing
@@ -58,8 +58,8 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
   - a wrapped Details row, with the first line above and the second below the amounts
   - the header repeated on page 2, and the footer ignored
   - a page with no table ignored
-  - each of the four checks failing → `ValueError` naming the check
-  - a wrong password → `ValueError`
+  - each of the four checks failing → `StatementError` naming the check
+  - a wrong password → `StatementError`
   - `statement_balances` and `summary` on made-up rows
 - [ ] Check locally against your real statement. Don't paste the output into the PR:
   ```bash
@@ -167,6 +167,6 @@ README, `docs/getting-started.md`, `.env.example`, `docs/adding-an-e-wallet.md` 
 | A different GoTyme layout (another month or account type) breaks column detection | `_find_columns` reads the header on each page instead of hard-coding x positions. Add the new layout as a made-up test case. |
 | Two genuinely identical rows on the same day | `n` keeps their ids different; there's a test for it. |
 | Real data leaks into a test or PR | Rewrite the test with invented values before merging. If it's already on `main`, see P0's risks table. |
-| GoTyme changes the PDF | The checks raise `ValueError`, so nothing wrong is uploaded. Fix the parser and add a made-up test for the new shape. |
+| GoTyme changes the PDF | The checks raise `StatementError`, so nothing wrong is uploaded. Fix the parser and add a made-up test for the new shape. |
 
 Rollback: revert PR 2 to remove GoTyme from the Source list. The parser module can stay unused.

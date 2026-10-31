@@ -55,6 +55,7 @@ import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 from flask import Flask, jsonify, redirect, render_template, request, session
 
+from statement_etl.parsers.common import StatementError
 from statement_etl.pipeline import (
     ending_balance_check,
     new_account_starting_balance,
@@ -394,11 +395,11 @@ def api_parse():
 
     try:
         rows, transactions = parse_statement(io.BytesIO(upload.read()), password, source)
-    except ValueError as e:
-        # The parsers' own messages, written for the user (wrong password, totals off)
+    except StatementError as e:
+        # Written for the user (wrong password, totals off), so shown as it is
         return _error(str(e), 400)
     except Exception as e:  # noqa: BLE001 - e.g. not a PDF at all
-        # Library errors can carry internal details, so the page gets a fixed message
+        # Any other error can carry internal details, so the page gets a fixed message
         # and the log gets only the error type (never the PDF or its contents).
         app.logger.warning("Could not read the uploaded PDF: %s", type(e).__name__)
         return _error("Could not read the PDF. Is it the statement PDF?", 400)

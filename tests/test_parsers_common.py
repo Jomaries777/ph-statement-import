@@ -30,7 +30,7 @@ class OpenPdfTest(unittest.TestCase):
         error = PdfminerException(PDFPasswordIncorrect())
         with (
             mock.patch.object(common.pdfplumber, "open", side_effect=error),
-            self.assertRaisesRegex(ValueError, "^Incorrect PDF password.$"),
+            self.assertRaisesRegex(common.StatementError, "^Incorrect PDF password.$"),
         ):
             common.open_pdf("statement.pdf", "wrong")
 

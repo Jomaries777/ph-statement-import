@@ -21,6 +21,7 @@ from unittest import mock
 
 from ynab import exceptions
 
+from statement_etl.parsers.common import StatementError
 from statement_etl.transform import transform
 from statement_etl.web import app as web
 from statement_etl.ynab_api.balance import compare_balance
@@ -570,9 +571,13 @@ class ParseTest(WebTest):
 
     def test_parse_errors(self):
         cases = [
-            (ValueError("Incorrect PDF password."), "Incorrect PDF password."),
-            (ValueError("Total Credit doesn't match"), "Total Credit doesn't match"),
+            (StatementError("Incorrect PDF password."), "Incorrect PDF password."),
+            (StatementError("Total Credit doesn't match"), "Total Credit doesn't match"),
             # other errors never reach the page: they can carry internal details
+            (
+                ValueError("time data 'x' does not match format"),
+                "Could not read the PDF. Is it the statement PDF?",
+            ),
             (
                 RuntimeError("/internal/path/x.py"),
                 "Could not read the PDF. Is it the statement PDF?",

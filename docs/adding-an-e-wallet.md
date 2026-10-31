@@ -89,7 +89,7 @@ Your parser must also provide these functions for the `Source` entry:
 
 | Function | Returns | Used for |
 |---|---|---|
-| `parse_transactions(pdf, password)` | list of row dicts | everything. `pdf` is a file path or a file object (the web upload). Raise `ValueError` with a clear message for a wrong password or a misread statement. |
+| `parse_transactions(pdf, password)` | list of row dicts | everything. `pdf` is a file path or a file object (the web upload). Raise `StatementError` (from `parsers/common.py`) with a clear message for a wrong password or a misread statement. The web page shows that message as it is. |
 | `statement_balances(rows)` | `{"starting": Decimal, "ending": Decimal}` | the YNAB balance checks before and after the upload |
 | `summary(rows)` *(optional)* | one line of text, or `None` | shown under the parsed rows, e.g. "Total debit … · Total credit … · matches statement ✓" |
 

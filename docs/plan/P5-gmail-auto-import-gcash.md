@@ -160,7 +160,7 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
     4. `pipeline.import_statement()`
     5. `store.write_run()` with a status:
        - `ok`
-       - `wrong password` (a `ValueError` from `open_pdf`)
+       - `wrong password` (a `StatementError` from `open_pdf`)
        - `parse error`
        - `balance mismatch` (`ending_check` not matching)
        - `YNAB error` (an `ApiException`)

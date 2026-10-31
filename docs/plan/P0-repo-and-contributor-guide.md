@@ -150,7 +150,7 @@ This PR only reformats. It contains no logic changes, so reviewers can skim it, 
      - Sources never import YNAB code: they return neutral `Transaction`s, and `ynab_api/` turns them into YNAB's format.
      - Never rename a source key (`gcash`, `gotyme`). It's part of every `import_id`, so renaming it creates duplicates in YNAB.
      - Never log or commit personal data: no tokens, passwords, PDF bytes or parsed rows in logs, and no real statements anywhere in the repo, issues or PRs. Tests use made-up rows (`tests/e2e/make_pdf.py`).
-     - A parser raises `ValueError` with a message the user can act on. Library code never calls `sys.exit`.
+     - A parser raises `StatementError` (a `ValueError` subclass in `parsers/common.py`, added after P0) with a message the user can act on. Library code never calls `sys.exit`.
   4. **Branches, commits and PRs:**
      - Branches: `feat/…`, `fix/…`, `refactor/…`, `docs/…`, `test/…`.
      - Commits: Conventional Commits. Subject line under 72 characters and imperative; the body explains why.
