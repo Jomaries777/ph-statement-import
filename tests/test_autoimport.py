@@ -277,7 +277,7 @@ class RunStatusTest(RunnerTest):
         wrong = PasswordError("Incorrect PDF password.")
         with mock.patch.object(runner.pipeline, "parse_statement", side_effect=wrong):
             run = self.poll_one()
-        self.assertEqual(run["status"], runner.WRONG_PASSWORD)
+        self.assertEqual(run["status"], runner.PDF_LOCKED)
         self.import_statement.assert_not_called()
 
     def test_the_password_comes_from_the_stored_inputs(self):
