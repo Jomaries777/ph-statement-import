@@ -131,7 +131,7 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
          --image=us-west1-docker.pkg.dev/$PROJECT/app/ph-statement-import:${{ github.sha }} \
          --service-account=app-runtime@$PROJECT.iam.gserviceaccount.com \
          --min-instances=0 --max-instances=1 --concurrency=8 \
-         --cpu=1 --memory=512Mi --timeout=60 --session-affinity \
+         --cpu=1 --memory=512Mi --timeout=60 --no-session-affinity \
          --set-secrets=APP_CONFIG=app-config:latest \
          --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }}
        ```
