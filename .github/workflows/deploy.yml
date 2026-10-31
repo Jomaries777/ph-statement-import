@@ -61,6 +61,7 @@ jobs:
       # --no-session-affinity: with one instance it adds nothing, only Google's
       # GAESA cookie, which has no Secure or HttpOnly flag.
       # GOOGLE_CLIENT_ID turns on /auto-import when set (empty leaves it off).
+      # GMAIL_PUSH_TOPIC turns on Gmail push (empty leaves only the 15-minute poll).
       # ALLOWED_GOOGLE_EMAILS lives in the app-config secret, not here: personal
       # email addresses stay out of public Actions logs, and --set-env-vars
       # splits values on commas.
@@ -72,4 +73,4 @@ jobs:
             --min-instances=0 --max-instances=1 --concurrency=8 \
             --cpu=1 --memory=512Mi --timeout=60 --no-session-affinity \
             --set-secrets=APP_CONFIG=app-config:latest \
-            --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }},GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }}
+            --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }},GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }},GMAIL_PUSH_TOPIC=${{ vars.GMAIL_PUSH_TOPIC }}

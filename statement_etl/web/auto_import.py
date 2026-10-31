@@ -1,6 +1,6 @@
 """
-ph-statement-import - Gmail auto-import page, Google sign-in and scheduler route
-(Blueprint "auto_import").
+ph-statement-import - Gmail auto-import page, Google sign-in, and the scheduler
+and Gmail push routes (Blueprint "auto_import").
 
 Registered in web/app.py only when both config.HOSTED and GOOGLE_CLIENT_ID are
 set, so local runs and hosted deploys without Google credentials expose none of
@@ -13,7 +13,10 @@ these routes:
     POST /api/auto-import         - validate and save plan, mappings, password inputs
     POST /api/auto-import/test    - try password inputs on the newest statement email
     POST /api/auto-import/delete  - delete stored data, revoke Gmail, sign out
-    POST /tasks/poll-gmail        - Cloud Scheduler hook (OIDC token verified first)
+    POST /tasks/poll-gmail        - Cloud Scheduler hook, every 15 minutes (OIDC token
+                                    verified first)
+    POST /tasks/gmail-push        - Pub/Sub push when a user's inbox changes (OIDC token
+                                    verified first)
 
 Why YNAB is refreshed once on save: YNAB refresh tokens are single-use (each
 refresh rotates the token and invalidates the old one). Keeping the same
@@ -29,11 +32,18 @@ Environment (APP_CONFIG / environment):
     ALLOWED_GOOGLE_EMAILS  - comma-separated invite list in APP_CONFIG (never in
                              deploy.yml, so personal email addresses stay out of
                              public GitHub Actions logs)
-    GCP_PROJECT_ID         - optional override for the scheduler service account's
+    GCP_PROJECT_ID         - optional override for the task service accounts'
                              project (defaults to Cloud Run's metadata project ID)
+    GMAIL_PUSH_TOPIC       - Pub/Sub topic Gmail publishes inbox changes to, e.g.
+                             "projects/<project>/topics/gmail-push". Empty leaves
+                             push off: the 15-minute poll alone still imports.
 """
 
+import base64
+import binascii
+import contextlib
 import http.client
+import json
 import os
 import re
 import secrets
@@ -553,6 +563,10 @@ def save_settings():
     if not user.get("last_checked"):
         fields["last_checked"] = datetime.now(UTC)
     store.save_user(user["sub"], **fields)
+
+    # Gmail push, so a statement is imported within seconds, not at the next poll.
+    # Never raises: without push, the 15-minute poll still imports.
+    runner.start_watch(user)
     return jsonify({"enabled": True})
 
 
@@ -619,7 +633,11 @@ def delete_settings():
     # 1. Remove the user document and all of its runs first
     store.delete_user(sub)
 
-    # 2. Revoke the Gmail token with Google; finish the delete even if revoke fails
+    # 2. Stop Gmail push, so Google stops telling the app about this inbox
+    if gmail_token and user.get("gmail_watch_expires"):
+        _stop_gmail_push(gmail_token)
+
+    # 3. Revoke the Gmail token with Google; finish the delete even if revoke fails
     revoked = not decrypt_failed
     warning = None
     if gmail_token:
@@ -634,15 +652,56 @@ def delete_settings():
             "Third-party access."
         )
 
-    # 3. Clear the Google part of the Flask session
+    # 4. Clear the Google part of the Flask session
     session.pop("google_sub", None)
     session.pop("google_oauth_state", None)
     return jsonify({"deleted": True, "revoked": revoked, "warning": warning})
 
 
+def _stop_gmail_push(gmail_refresh_token: str) -> None:
+    """Stop Gmail push for this token.
+
+    A failure is ignored: revoking the token next ends push too, and pushes for
+    a deleted user are ignored anyway.
+    """
+    with contextlib.suppress(gmail.GmailError):
+        gmail.stop(gmail.refresh_access_token(gmail_refresh_token))
+
+
 # =============================================================================
-# SCHEDULER ROUTE - Cloud Scheduler invokes every 15 minutes with an OIDC token
+# TASK ROUTES - called by Google Cloud, never by a browser, each with an OIDC token
 # =============================================================================
+
+
+def _is_from_google_task(path: str, account: str) -> bool:
+    """True if the request carries a Google-signed OIDC token for this route,
+    from the service account `account`@<project>.iam.gserviceaccount.com.
+
+    _is_from_google_task("/tasks/poll-gmail", "scheduler-invoker") -> True
+    Each route checks its own audience and account, so a token for one route
+    can't be used on the other.
+    """
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme != "Bearer" or not token.strip():
+        return False
+
+    project_id = _project_id()
+    if not project_id:
+        return False
+
+    # Always build the audience from config.PUBLIC_URL, never from request.url
+    # (a caller controls the Host header).
+    try:
+        claims = google.oauth2.id_token.verify_oauth2_token(
+            token.strip(),
+            google.auth.transport.requests.Request(),
+            audience=f"{config.PUBLIC_URL}{path}",
+        )
+    except Exception:  # noqa: BLE001 - any verification failure is a refusal
+        return False
+
+    expected_email = f"{account}@{project_id}.iam.gserviceaccount.com"
+    return claims.get("email") == expected_email and claims.get("email_verified") is True
 
 
 @blueprint.post("/tasks/poll-gmail")
@@ -652,28 +711,45 @@ def poll_gmail():
     POST /tasks/poll-gmail (Authorization: Bearer <OIDC token>)
     -> {"users": 1, "runs": 1, "failed": 0, "deferred": 0}
     """
-    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-    if scheme != "Bearer" or not token.strip():
+    if not _is_from_google_task("/tasks/poll-gmail", "scheduler-invoker"):
         return error_response("Forbidden.", 403)
-
-    project_id = _project_id()
-    if not project_id:
-        return error_response("Forbidden.", 403)
-
-    # Always build the audience from config.PUBLIC_URL, never from request.url
-    # (a caller controls the Host header).
-    audience = f"{config.PUBLIC_URL}/tasks/poll-gmail"
-    try:
-        claims = google.oauth2.id_token.verify_oauth2_token(
-            token.strip(),
-            google.auth.transport.requests.Request(),
-            audience=audience,
-        )
-    except Exception:  # noqa: BLE001 - any verification failure is a 403
-        return error_response("Forbidden.", 403)
-
-    expected_email = f"scheduler-invoker@{project_id}.iam.gserviceaccount.com"
-    if claims.get("email") != expected_email or claims.get("email_verified") is not True:
-        return error_response("Forbidden.", 403)
-
     return jsonify(runner.poll_all())
+
+
+@blueprint.post("/tasks/gmail-push")
+def gmail_push():
+    """Verify Pub/Sub's OIDC bearer token, then import for the user whose inbox changed.
+
+    POST /tasks/gmail-push (Authorization: Bearer <OIDC token>)
+        {"message": {"data": base64 of {"emailAddress": "...", "historyId": "..."}}}
+    -> 204; or 503 when another run is going, so Pub/Sub sends it again
+
+    Everything but "busy" gets 204, failures too: Pub/Sub would otherwise
+    resend a push that can't work (say, revoked Gmail access) until the message
+    expires. The next 15-minute poll tries again instead.
+    """
+    if not _is_from_google_task("/tasks/gmail-push", "pubsub-push"):
+        return error_response("Forbidden.", 403)
+
+    email_address = _pushed_email_address(request.get_json(silent=True))
+    if email_address and runner.process_push(email_address) == runner.PUSH_BUSY:
+        return "", 503
+    return "", 204
+
+
+def _pushed_email_address(body: object) -> str:
+    """The inbox's address from a Gmail push message, or "" if it has none.
+
+    {"message": {"data": "eyJlbWFpbEFkZHJlc3MiOiAianVhbkBleGFtcGxlLnRlc3QifQ=="}}
+    -> "juan@example.test"
+    """
+    message = body.get("message") if isinstance(body, dict) else None
+    data = message.get("data") if isinstance(message, dict) else None
+    if not isinstance(data, str):
+        return ""
+    try:
+        decoded = json.loads(base64.b64decode(data, validate=True))
+    except (ValueError, binascii.Error):  # not base64, or not JSON
+        return ""
+    address = decoded.get("emailAddress") if isinstance(decoded, dict) else None
+    return address.strip() if isinstance(address, str) else ""
