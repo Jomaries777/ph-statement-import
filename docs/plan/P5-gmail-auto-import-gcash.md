@@ -17,7 +17,7 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
 
 ## Why it's built this way
 
-- **Polling, not Gmail push.** A Scheduler job every 15 minutes is simpler than Gmail `watch` plus Pub/Sub, which needs renewing every 7 days. It's well within the free tier at this scale.
+- **Polling, not Gmail push.** A Scheduler job every 15 minutes is simpler than Gmail `watch` plus Pub/Sub, which needs renewing every 7 days. It's well within the free tier at this scale. [P5b](P5b-gmail-push.md) adds push later, keeping this poll as the safety net.
 - **Stored secrets, opt-in only.** A background run has no browser session, so it needs the Gmail refresh token, the YNAB refresh token, the mapping and the PDF password inputs. They're stored only for users who turn this on.
   - Tokens and password inputs are **encrypted in the app** with `MultiFernet`, using keys from the `app-config` secret, then stored in Firestore.
   - No Cloud KMS: it isn't free for a personal project.

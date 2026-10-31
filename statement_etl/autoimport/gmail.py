@@ -10,6 +10,8 @@ ph-statement-import - Google OAuth and Gmail REST client, with no Flask session.
     list_messages()         - search messages (adding after:<epoch>), following nextPageToken
     get_message()           - fetch one Gmail message's metadata and MIME payload
     get_pdf_attachment()    - first attachment matching a filename regex, in memory only
+    watch()                 - ask Gmail to notify a Pub/Sub topic when the inbox changes
+    stop()                  - stop those notifications
     revoke()                - POST https://oauth2.googleapis.com/revoke
 
 Uses plain HTTPS via `urllib`, like `statement_etl/web/ynab_oauth.py`, so there
@@ -142,6 +144,15 @@ def _gmail_get(access_token: str, path: str, params: dict[str, str] | None = Non
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     return _parse_json(_request(url, headers={"Authorization": f"Bearer {access_token}"}))
+
+
+def _gmail_post(access_token: str, path: str, body: dict | None = None) -> bytes:
+    return _request(
+        f"{GMAIL_API_BASE}/{path.lstrip('/')}",
+        method="POST",
+        data=json.dumps(body or {}).encode("utf-8"),
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+    )
 
 
 # =============================================================================
@@ -338,3 +349,35 @@ def get_pdf_attachment(
                 raise GmailError("Gmail attachment response did not include data.")
             return filename, _b64url_decode(raw_data)
     return None
+
+
+# =============================================================================
+# PUSH - Gmail tells a Pub/Sub topic when the inbox changes (runner.process_push)
+# =============================================================================
+
+
+def watch(access_token: str, topic: str) -> datetime:
+    """Ask Gmail to publish to `topic` whenever the inbox changes; returns when that stops.
+
+    Each message only says which mailbox changed ({"emailAddress", "historyId"}),
+    never what changed. A watch lasts about 7 days: call this again before then.
+    Calling it again while one is running just renews it.
+
+    watch("token", "projects/example-project/topics/gmail-push")
+    -> datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
+    """
+    body = {"topicName": topic, "labelIds": ["INBOX"], "labelFilterBehavior": "INCLUDE"}
+    expiration = _parse_json(_gmail_post(access_token, "watch", body)).get("expiration")
+    try:
+        # Epoch milliseconds, as text
+        return datetime.fromtimestamp(int(expiration) / 1000, UTC)
+    except (TypeError, ValueError):
+        raise GmailError("Gmail watch response did not include an expiration.") from None
+
+
+def stop(access_token: str) -> None:
+    """Stop the inbox notifications that watch() started.
+
+    stop("token") -> None
+    """
+    _gmail_post(access_token, "stop")
