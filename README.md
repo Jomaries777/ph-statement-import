@@ -102,9 +102,22 @@ Over plain `http://localhost` the browser won't send the session cookie back, be
 |---|---|
 | `PUBLIC_URL` | The address people open, e.g. `https://statements.example.com`. Turns on hosted mode. The OAuth redirect URI is `PUBLIC_URL` + `/oauth/callback`; register exactly that in your YNAB OAuth application. |
 | `YNAB_CLIENT_ID` | From your YNAB OAuth application. Not a secret, so a plain variable. |
-| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}`. Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
+| `GOOGLE_CLIENT_ID` | Optional. From your Google Cloud OAuth 2.0 Web client (redirect URI `PUBLIC_URL` + `/google/callback`). Turns on `/auto-import` when set. |
+| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}` (plus `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` when `GOOGLE_CLIENT_ID` is set). Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
 
-`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode. If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
+`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode (`GOOGLE_CLIENT_SECRET` and `ENCRYPTION_KEYS` too when `GOOGLE_CLIENT_ID` is set). If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
+
+### Auto-import (hosted)
+
+In hosted mode with `GOOGLE_CLIENT_ID` set, invited users can open `/auto-import` (also linked from the main page header) to import emailed statements automatically:
+
+1. **Connect Gmail** (`gmail.readonly`, read-only) — only Google accounts listed in `ALLOWED_GOOGLE_EMAILS` (in `APP_CONFIG`) can turn it on.
+2. **Connect YNAB** via YNAB OAuth login.
+3. **Choose one YNAB plan**, map each supported e-wallet (currently **GCash**) to its own YNAB account, enter its PDF password inputs once (last name is prefilled from Google), and click **Test** to check the newest statement email without importing.
+4. **Turn on** — Cloud Scheduler calls `POST /tasks/poll-gmail` every 15 minutes with a verified OIDC token (`scheduler-invoker@<PROJECT_ID>.iam.gserviceaccount.com`). New matching statement PDFs are read in memory, parsed, and imported **unapproved** via `import_statement()`.
+5. **Turn off and delete my data** removes the user's Firestore settings document and run log, revokes the Google token, and signs out of Google.
+
+Refresh tokens and password inputs are encrypted in the app with `MultiFernet` (`ENCRYPTION_KEYS` in `APP_CONFIG`) before they reach Firestore. Setup details: [docs/plan/P5-gmail-auto-import-gcash.md](docs/plan/P5-gmail-auto-import-gcash.md).
 
 ## Deploy
 
@@ -119,6 +132,7 @@ The one-time Google Cloud setup is in [docs/plan/P4-go-live-on-gcp.md](docs/plan
 | `GCP_DEPLOYER` | The service account that deploys |
 | `PUBLIC_URL` | The app's Cloud Run URL (see [Hosted mode](#hosted-mode)) |
 | `YNAB_CLIENT_ID` | From the YNAB OAuth application |
+| `GOOGLE_CLIENT_ID` | Optional; from the Google OAuth 2.0 Web client (empty keeps `/auto-import` off; `ALLOWED_GOOGLE_EMAILS` goes in `app-config`, not GitHub variables) |
 
 ## Project layout
 
@@ -130,7 +144,8 @@ statement_etl/
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
 ├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py
-└── web/            # Flask app, token store, page template (templates/) and its CSS / JS (static/)
+├── autoimport/     # hosted Gmail auto-import: store.py (encrypted Firestore), gmail.py, runner.py
+└── web/            # Flask app, token store, page templates (templates/) and CSS / JS (static/)
 tests/
 ├── test_<module>.py  # one unit test file per module above, e.g. test_parsers_gcash.py
 ├── fakes.py          # made-up PDF words, GCash rows and YNAB objects shared by the tests

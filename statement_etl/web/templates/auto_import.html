@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto-import from Gmail · Statement → YNAB Import</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="narrow" id="auto-import-main"
+      data-enabled="{{ 'true' if enabled else 'false' }}"
+      data-gmail-connected="{{ 'true' if gmail_connected else 'false' }}"
+      data-has-saved-ynab="{{ 'true' if has_saved_ynab else 'false' }}">
+  <header>
+    <a class="btn-link secondary" href="/">◂ Manual upload</a>
+    <h1>Auto-import from Gmail</h1>
+  </header>
+
+  <div id="page-msg" class="msg hidden"></div>
+
+  {%- if not_invited %}
+  <section id="card-invite-only" class="card">
+    <h2>Invite only</h2>
+    <p>Auto-import from Gmail is limited to invited Google accounts. Ask the owner for an
+      invite, or use <a href="/">manual upload</a> instead — your statement PDF is processed
+      in memory and never stored.</p>
+    <div class="actions spaced">
+      <a class="btn-link" href="/">Back to manual upload</a>
+      <a class="btn-link secondary" href="/google/login">Try another Google account</a>
+    </div>
+  </section>
+  {%- else %}
+
+  <!-- W3: shown when auto-import is turned on -->
+  <div id="auto-on-view"{% if not enabled %} class="hidden"{% endif %}>
+    <section id="card-active" class="card">
+      <div class="status-line">
+        <span class="dot on"></span>
+        <strong>On</strong>
+        <span class="muted">· checks every 15 min · last checked {{ last_checked }}</span>
+      </div>
+      <dl class="kv">
+        <dt>Gmail</dt>
+        <dd>{{ gmail_email }} ✓</dd>
+        <dt>YNAB plan</dt>
+        <dd>{{ plan_name }} ✓</dd>
+        <dt>Wallets</dt>
+        <dd>
+          {%- for s in sources %}
+          {%- if s.enabled %}
+          <div>{{ s.name }} → <strong>{{ s.account_name }}</strong></div>
+          {%- else %}
+          <div class="muted">{{ s.name }} → not imported</div>
+          {%- endif %}
+          {%- endfor %}
+        </dd>
+      </dl>
+      <div class="actions">
+        <button id="edit-btn" class="secondary" type="button">Edit mappings</button>
+      </div>
+    </section>
+
+    <section id="card-runs" class="card">
+      <h2><span>Recent imports</span><span class="muted">last 20</span></h2>
+      {%- if runs %}
+      <div class="table-wrap">
+        <table id="runs-table">
+          <thead>
+            <tr>
+              <th>Received</th>
+              <th>Wallet → account</th>
+              <th>Status</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {%- for run in runs %}
+            <tr>
+              <td>{{ run.received }}</td>
+              <td>{{ run.target }}</td>
+              <td><span class="badge {{ run.badge_kind }}">{{ run.badge_text }}</span></td>
+              <td class="wrap-cell">{{ run.result }}</td>
+            </tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
+      {%- else %}
+      <p class="muted no-margin">No statement emails imported yet. Request a statement in your
+        e-wallet or bank app and it will appear here within 15 minutes.</p>
+      {%- endif %}
+    </section>
+  </div>
+
+  <!-- W2: shown when auto-import is off, or when clicking "Edit mappings" -->
+  <div id="auto-setup-view"{% if enabled %} class="hidden"{% endif %}>
+    <p class="muted intro-note">When a statement email arrives, it's imported to YNAB
+      <strong>unapproved</strong>, so you still review it there. Invite only.</p>
+
+    <!-- ① Gmail -->
+    <section id="card-gmail" class="card{% if gmail_connected %} complete{% endif %}">
+      <h2><span><span class="num">1</span>Gmail</span><span class="done">✓</span></h2>
+      <div id="gmail-on" class="actions{% if not gmail_connected %} hidden{% endif %}">
+        <span id="gmail-on-label">● Connected as <strong>{{ gmail_email }}</strong></span>
+        <a class="btn-link secondary" href="/google/login">Switch account</a>
+      </div>
+      <div id="gmail-off" class="actions{% if gmail_connected %} hidden{% endif %}">
+        <span class="muted">○ Not connected</span>
+        <a id="gmail-connect-btn" class="btn-link" href="/google/login">Connect Gmail</a>
+      </div>
+      <p class="small-note muted">Read-only access. Only emails matching the statement search are opened.</p>
+      <div id="gmail-msg" class="msg err{% if not google_error %} hidden{% endif %}">{{ google_error }}</div>
+    </section>
+
+    <!-- ② YNAB -->
+    <section id="card-ynab" class="card">
+      <h2><span><span class="num">2</span>YNAB</span><span class="done">✓</span></h2>
+      <div id="ynab-off" class="actions">
+        <span class="muted">○ Not connected</span>
+        <button id="connect-btn" type="button">Connect with YNAB login</button>
+      </div>
+      <div id="ynab-on" class="actions hidden">
+        <span id="ynab-on-label">● Connected to YNAB (YNAB login)</span>
+        <button id="reconnect-ynab-btn" class="secondary" type="button">Reconnect</button>
+      </div>
+      <div id="ynab-msg" class="msg hidden"></div>
+    </section>
+
+    <!-- ③ YNAB plan -->
+    <section id="card-plan" class="card disabled">
+      <h2><span><span class="num">3</span>YNAB plan</span><span class="done">✓</span></h2>
+      <div class="row">
+        <label for="plan">Plan</label>
+        <select id="plan" data-saved-plan-id="{{ plan_id }}">
+          <option value="">— connect to YNAB first —</option>
+        </select>
+      </div>
+      <div id="plan-msg" class="msg hidden"></div>
+    </section>
+
+    <!-- ④ Map e-wallets to YNAB accounts -->
+    <section id="card-mappings" class="card">
+      <h2><span><span class="num">4</span>Map e-wallets to YNAB accounts</span><span class="done">✓</span></h2>
+      <div class="table-wrap no-top-margin">
+        <table id="mapping-table">
+          <thead>
+            <tr>
+              <th>E-wallet</th>
+              <th id="account-col-header">YNAB account</th>
+              <th>To open the PDF</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {%- for s in sources %}
+            <tr data-source="{{ s.key }}" data-source-name="{{ s.name }}">
+              <td class="wallet-cell"><strong>{{ s.name }}</strong></td>
+              <td class="account-cell">
+                <select class="account-select" data-source="{{ s.key }}"
+                        data-saved-account-id="{{ s.account_id }}"
+                        aria-label="YNAB account for {{ s.name }}" disabled>
+                  <option value="">Don't import</option>
+                  {%- if s.account_id %}
+                  <option value="{{ s.account_id }}" selected>{{ s.account_name }}</option>
+                  {%- endif %}
+                </select>
+              </td>
+              <td class="inputs-cell">
+                <div class="input-group">
+                  {%- for field in s.inputs %}
+                  <div class="input-field">
+                    <input
+                      type="{{ field.type }}"
+                      data-input="{{ field.name }}"
+                      aria-label="{{ field.label }}"
+                      placeholder="{{ field.placeholder }}"
+                      value="{{ field.value }}"
+                      autocomplete="{{ field.autocomplete }}"
+                      {%- if field.inputmode %} inputmode="{{ field.inputmode }}"{% endif %}
+                      {%- if field.maxlength %} maxlength="{{ field.maxlength }}"{% endif %}>
+                    {%- if field.note %}
+                    <span class="field-note muted">{{ field.note }}</span>
+                    {%- endif %}
+                  </div>
+                  {%- endfor %}
+                </div>
+                {%- if s.password_hint %}
+                <div class="small-note muted">{{ s.password_hint }}</div>
+                {%- endif %}
+                <div class="msg hidden test-msg" id="test-msg-{{ s.key }}"></div>
+              </td>
+              <td class="test-cell">
+                <button type="button" class="secondary small-btn test-btn"
+                        data-source="{{ s.key }}"{% if not gmail_connected %} disabled{% endif %}>Test</button>
+              </td>
+            </tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="small-note muted">One row per supported e-wallet or bank account. Each needs its own YNAB account.</p>
+      <div class="msg info">ⓘ Statement emails arrive when you request them in your e-wallet or
+        bank app; each one is imported within 15 minutes. Your connections and password details
+        are stored encrypted until you turn this off.</div>
+      <div id="save-msg" class="msg hidden"></div>
+      <div class="actions spaced">
+        <button id="save-btn" type="button" disabled>{% if enabled %}Save changes{% else %}Turn on{% endif %}</button>
+        {%- if enabled %}
+        <button id="cancel-edit-btn" class="secondary" type="button">Cancel</button>
+        {%- endif %}
+      </div>
+    </section>
+  </div>
+
+  <!-- Turn off and delete: shown whenever a Firestore record exists for this Google account -->
+  <section id="card-delete" class="card{% if not has_stored_data %} hidden{% endif %}">
+    <div class="actions spaced-between">
+      <span class="muted">Deletes your stored settings and run log, and revokes Gmail access.</span>
+      <button id="delete-btn" class="danger" type="button">Turn off and delete my data</button>
+    </div>
+    <div id="delete-msg" class="msg hidden"></div>
+  </section>
+
+  {%- endif %}
+</main>
+{% include "footer.html" %}
+
+<script src="/static/auto_import.js"></script>
+</body>
+</html>

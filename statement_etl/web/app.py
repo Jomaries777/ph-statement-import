@@ -18,9 +18,10 @@ the same functions as the command line; plans, accounts and the connection
 check reuse ynab_api/accounts.py.
 
 This file creates the Flask app, serves the /privacy and /terms pages, and
-starts it. The other routes are in two blueprints, one per job:
+starts it. The other routes are in blueprints, one per job:
     upload.py      - the page, parsing, plans / accounts, balance checks, upload
     ynab_auth.py   - connecting to YNAB: personal access token or OAuth login
+    auto_import.py - Gmail auto-import (hosted mode with GOOGLE_CLIENT_ID only)
 and their helpers:
     state.py       - STORE, this browser's server-side state
     ynab_oauth.py  - YNAB OAuth token calls (no Flask session)
@@ -69,7 +70,7 @@ import sys
 from flask import Flask, render_template
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from statement_etl.web import token_store, upload, ynab_auth
+from statement_etl.web import auto_import, token_store, upload, ynab_auth
 from statement_etl.web.config import HOSTED, PORT, REDIRECT_URI
 from statement_etl.web.limits import limiter
 from statement_etl.web.state import drop_idle_states, error_response
@@ -92,11 +93,16 @@ SECURITY_HEADERS = {
 LEGAL_LAST_UPDATED = "31 October 2026"
 CONTACT_EMAIL = "froze.settle-1p@icloud.com"
 
+AUTO_IMPORT = HOSTED and bool(os.environ.get("GOOGLE_CLIENT_ID"))
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.jinja_env.globals["auto_import_enabled"] = AUTO_IMPORT
 app.register_blueprint(upload.blueprint)
 app.register_blueprint(ynab_auth.blueprint)
+if AUTO_IMPORT:
+    app.register_blueprint(auto_import.blueprint)
 limiter.init_app(app)  # does nothing locally: limits.limiter is on in hosted mode only
 
 if HOSTED:

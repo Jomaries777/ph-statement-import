@@ -10,7 +10,12 @@
 <main>
   <header>
     <h1>Statement → YNAB Import</h1>
-    <span id="status-pill" class="pill">○ Not connected</span>
+    <div class="header-right">
+      {%- if auto_import_enabled %}
+      <a id="auto-import-link" class="btn-link secondary" href="/auto-import">Auto-import ▸</a>
+      {%- endif %}
+      <span id="status-pill" class="pill">○ Not connected</span>
+    </div>
   </header>
 
   <!-- ① Statement -->

@@ -19,7 +19,8 @@
 body { margin: 0; background: var(--bg); color: var(--text);
        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 main { max-width: 1400px; margin: 0 auto; padding: 24px 16px 64px; }
-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 h1 { font-size: 22px; margin: 0; }
 .pill { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
         background: var(--card); color: var(--muted); white-space: nowrap; }
@@ -35,12 +36,16 @@ h1 { font-size: 22px; margin: 0; }
 .row { display: grid; grid-template-columns: 90px 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
 label { color: var(--muted); font-size: 14px; }
 label.check { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
-input[type=password], select { width: 100%; max-width: 420px; padding: 8px 10px; font: inherit;
+input[type=password], input[type=text], input[type=date], select {
+       width: 100%; max-width: 420px; padding: 8px 10px; font: inherit;
        border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
 input[type=file] { font: inherit; max-width: 100%; }
-button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent);
-         background: var(--accent); color: var(--accent-text); cursor: pointer; }
-button.secondary { background: transparent; color: var(--accent); }
+button, a.btn-link { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent);
+         background: var(--accent); color: var(--accent-text); cursor: pointer; text-decoration: none;
+         display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+button.secondary, a.btn-link.secondary { background: transparent; color: var(--accent); }
+button.danger { background: transparent; color: var(--err); border-color: var(--err); }
+button.small-btn { padding: 6px 12px; font-size: 14px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 .msg { padding: 8px 12px; border-radius: 6px; margin: 10px 0 0; font-size: 14px; }
@@ -73,4 +78,32 @@ main.legal { max-width: 760px; }
 main.legal h2 { font-size: 17px; margin: 28px 0 8px; }
 main.legal li { margin-bottom: 6px; }
 main.legal code { font-size: 13px; }
-@media (max-width: 560px) { .row { grid-template-columns: 1fr; gap: 4px; } }
+/* Auto-import page (templates/auto_import.html) */
+main.narrow { max-width: 920px; }
+.intro-note { margin: 0 0 14px; }
+.small-note { font-size: 13px; margin: 6px 0 0; }
+.no-margin { margin: 0; }
+.no-top-margin { margin-top: 0; }
+.spaced-between { justify-content: space-between; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.on { background: var(--ok); }
+.status-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; margin: 0 0 12px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; display: inline-block; }
+.badge.ok { color: var(--ok); background: var(--ok-bg); }
+.badge.warn { color: var(--warn); background: var(--warn-bg); }
+.badge.err { color: var(--err); background: var(--err-bg); }
+td.inputs-cell { white-space: normal; min-width: 280px; vertical-align: top; }
+td.account-cell { min-width: 220px; }
+td.wallet-cell, td.account-cell, td.test-cell { vertical-align: top; padding-top: 10px; }
+td.wrap-cell { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
+.input-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.input-field { flex: 1 1 130px; display: flex; flex-direction: column; gap: 2px; }
+.input-field input { max-width: none; }
+.field-note { font-size: 12px; }
+@media (max-width: 560px) {
+  .row { grid-template-columns: 1fr; gap: 4px; }
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+}
