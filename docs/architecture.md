@@ -48,7 +48,7 @@ One setting, `PUBLIC_URL`, picks the mode. Empty (the default) is **local mode**
 | The page shows only **Connect with YNAB login** | `templates/index.html` (`token_allowed`), `static/app.js` |
 | Session cookie is `Secure`, `HttpOnly`, `SameSite=Lax`; `ProxyFix` trusts Cloud Run's one proxy hop | `app.py` |
 | Rate limits: `/api/parse` 10 per minute, `/oauth/*` 20 per minute, `/google/*` and `/api/auto-import*` 20 per minute, per client IP; a 429 JSON error | `limits.py`; the decorators in `upload.py`, `ynab_auth.py` and `auto_import.py`; the 429 handler in `app.py` |
-| Gmail auto-import routes (`/auto-import`, `/google/*`, `/api/auto-import*`, `/tasks/poll-gmail`) exist only when `GOOGLE_CLIENT_ID` is also set (which requires `GOOGLE_CLIENT_SECRET` and `ENCRYPTION_KEYS`) | `config.py` `load_hosted_config()`; `app.py`; `auto_import.py` |
+| Gmail auto-import routes (`/auto-import`, `/google/*`, `/api/auto-import*`, `/tasks/poll-gmail`) exist only when `GOOGLE_CLIENT_ID` is also set (which requires `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS`) | `config.py` `load_hosted_config()`; `app.py`; `auto_import.py` |
 | A browser's state is dropped after 30 minutes idle (`IDLE_SECONDS`) | `state.py` `session_state()` and `drop_idle_states()`, run before each request (`app.py`) |
 | The parsed statement is dropped after a successful upload | `upload.py` `api_upload()` |
 

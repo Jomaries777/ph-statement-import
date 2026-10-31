@@ -21,8 +21,9 @@ server would connect every visitor. It needs FLASK_SECRET_KEY,
 YNAB_CLIENT_ID and YNAB_CLIENT_SECRET; without one, the app stops at startup.
 
 Auto-import from Gmail (hosted mode only, P5) is on when GOOGLE_CLIENT_ID is
-set. It then also needs GOOGLE_CLIENT_SECRET and ENCRYPTION_KEYS (see
-autoimport/store.py). Without GOOGLE_CLIENT_ID, neither is needed.
+set. It then also needs GOOGLE_CLIENT_SECRET, ENCRYPTION_KEYS (see
+autoimport/store.py) and ALLOWED_GOOGLE_EMAILS, the invite list. Without
+GOOGLE_CLIENT_ID, none of them is needed.
 
 REDIRECT_URI is where YNAB sends the browser back after OAuth login. It must
 match the redirect URI of your YNAB OAuth application exactly.
@@ -41,8 +42,9 @@ HOSTED = bool(PUBLIC_URL)  # hosted mode: OAuth only, no keychain, strict cookie
 
 # Without these, hosted mode can't sign cookies or log anyone in to YNAB
 HOSTED_REQUIRED = ("FLASK_SECRET_KEY", "YNAB_CLIENT_ID", "YNAB_CLIENT_SECRET")
-# Without these, auto-import can't log in to Google or encrypt what it stores
-AUTO_IMPORT_REQUIRED = ("GOOGLE_CLIENT_SECRET", "ENCRYPTION_KEYS")
+# Without these, auto-import can't log in to Google, encrypt what it stores or
+# let anyone in: an empty invite list would turn every Google account away
+AUTO_IMPORT_REQUIRED = ("GOOGLE_CLIENT_SECRET", "ENCRYPTION_KEYS", "ALLOWED_GOOGLE_EMAILS")
 
 
 def require(keys, needed_by):

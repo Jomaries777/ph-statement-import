@@ -63,16 +63,18 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
   - Scopes `openid`, `email`, `profile`, `https://www.googleapis.com/auth/gmail.readonly`.
   - **Publish to "In production"**, without submitting for verification.
 - [ ] OAuth client (Credentials → Create → OAuth client ID → Web application). Authorized redirect URI: `<PUBLIC_URL>/google/callback`.
-- [ ] Generate an encryption key, and add `GOOGLE_CLIENT_SECRET` and `ENCRYPTION_KEYS` to `app-config` (the same temp-file and destroy-old-version steps as in P4 step D):
+- [ ] Generate an encryption key, and add `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` to `app-config` (the same temp-file and destroy-old-version steps as in P4 step D):
   ```bash
   python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
   ```
-  `ENCRYPTION_KEYS` is a comma-separated list, newest first. To rotate later, put the new key first and keep the old one until all data has been rewritten.
-- [ ] GitHub `production` environment variables:
-  - `GOOGLE_CLIENT_ID`
-  - `ALLOWED_GOOGLE_EMAILS` (comma list; you and family)
-
-  Add both to the `--set-env-vars` in `deploy.yml` in PR 5.
+  - `ENCRYPTION_KEYS` is a comma-separated list, newest first. To rotate later, put the new key first and keep the old one until all data has been rewritten.
+  - `ALLOWED_GOOGLE_EMAILS` is the invite list, comma-separated (you and family). It goes in the secret, not in a GitHub variable: this repo's Actions logs are public, and the deploy step would print it.
+  - With `GOOGLE_CLIENT_ID` set, the app won't start without all three.
+  - To change one later, add a new `app-config` version, then start a new revision. The running app reads the secret only when it starts:
+    ```bash
+    gcloud run services update ph-statement-import --region=us-west1 --update-labels=app-config-version=<N>
+    ```
+- [ ] GitHub `production` environment variable `GOOGLE_CLIENT_ID`, after the secret has the three keys above. `deploy.yml` passes it to the app (PR 5).
 - [ ] Scheduler service account. The job and its permission are created in step C, after the route exists.
   ```bash
   gcloud iam service-accounts create scheduler-invoker
@@ -207,7 +209,7 @@ This phase ships GCash only. GoTyme is added in P6, as one more `Source` with em
   - What auto-import stores (encrypted tokens, mapping, password inputs) and for how long (until you turn it off).
   - That only emails matching the statement search are read, and no email content beyond the run log is stored.
   - How "Turn off and delete" works.
-- [x] `deploy.yml`: add `GOOGLE_CLIENT_ID` and `ALLOWED_GOOGLE_EMAILS` to `--set-env-vars`.
+- [x] `deploy.yml`: add `GOOGLE_CLIENT_ID` to `--set-env-vars`. `ALLOWED_GOOGLE_EMAILS` is read from `app-config` instead (step A).
 - [x] Tests:
   - `/tasks/poll-gmail` without a valid OIDC token → 403, and the runner isn't called
   - a non-allowlisted Google email can't turn the feature on

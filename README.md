@@ -105,7 +105,7 @@ Over plain `http://localhost` the browser won't send the session cookie back, be
 | `GOOGLE_CLIENT_ID` | Optional. From your Google Cloud OAuth 2.0 Web client (redirect URI `PUBLIC_URL` + `/google/callback`). Turns on `/auto-import` when set. |
 | `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}` (plus `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` when `GOOGLE_CLIENT_ID` is set). Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
 
-`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode (`GOOGLE_CLIENT_SECRET` and `ENCRYPTION_KEYS` too when `GOOGLE_CLIENT_ID` is set). If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
+`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode (`GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` too when `GOOGLE_CLIENT_ID` is set). If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
 
 ### Auto-import (hosted)
 
