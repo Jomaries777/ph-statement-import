@@ -471,7 +471,8 @@ class ParseTest(WebTest):
     def test_parse_errors(self):
         cases = [
             (ValueError("Incorrect PDF password."), "Incorrect PDF password."),
-            (RuntimeError("not a PDF"), "Could not read the PDF: not a PDF"),
+            (ValueError("sensitive parser details"), "Could not read the PDF."),
+            (RuntimeError("sensitive parser details"), "Could not read the PDF."),
         ]
         for error, message in cases:
             with self.subTest(message), mock.patch.object(web, "parse_statement", side_effect=error):

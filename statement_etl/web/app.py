@@ -43,6 +43,7 @@ Usage:
 
 import io
 import json
+import logging
 import os
 import secrets
 import sys
@@ -401,10 +402,11 @@ def api_parse():
 
     try:
         rows, transactions = parse_statement(io.BytesIO(upload.read()), password, source)
-    except ValueError as e:
-        return _error(str(e), 400)
     except Exception as e:  # noqa: BLE001 - e.g. not a PDF at all
-        return _error(f"Could not read the PDF: {e}", 400)
+        if isinstance(e, ValueError) and e.args == ("Incorrect PDF password.",):
+            return _error("Incorrect PDF password.", 400)
+        logging.exception("Could not read the uploaded PDF")
+        return _error("Could not read the PDF.", 400)
 
     # Statement rows vs. balance-correction rows added by the parser
     real_rows = [r for r in rows if not src.is_correction_row(r)]
