@@ -17,8 +17,8 @@ pipeline.parse_statement(), starting_balance_check() and import_statement(),
 the same functions as the command line; plans, accounts and the connection
 check reuse ynab_api/accounts.py.
 
-This file only creates the Flask app and starts it. The routes are in two
-blueprints, one per job:
+This file creates the Flask app, serves the /privacy and /terms pages, and
+starts it. The other routes are in two blueprints, one per job:
     upload.py      - the page, parsing, plans / accounts, balance checks, upload
     ynab_auth.py   - connecting to YNAB: personal access token or OAuth login
 and their helpers:
@@ -66,7 +66,7 @@ import os
 import secrets
 import sys
 
-from flask import Flask
+from flask import Flask, render_template
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from statement_etl.web import token_store, upload, ynab_auth
@@ -88,6 +88,10 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
 }
 
+# The privacy and terms pages: change the date with every change to them
+LEGAL_LAST_UPDATED = "31 October 2026"
+CONTACT_EMAIL = "<CONTACT_EMAIL>"  # placeholder: set when the app goes live (P4)
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -103,6 +107,18 @@ if HOSTED:
     # Trust exactly that one: more would let a client spoof its IP past the rate limits.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     app.before_request(drop_idle_states)
+
+
+@app.get("/privacy")
+def privacy():
+    return render_template(
+        "privacy.html", last_updated=LEGAL_LAST_UPDATED, contact_email=CONTACT_EMAIL, hosted=HOSTED
+    )
+
+
+@app.get("/terms")
+def terms():
+    return render_template("terms.html", last_updated=LEGAL_LAST_UPDATED)
 
 
 @app.after_request

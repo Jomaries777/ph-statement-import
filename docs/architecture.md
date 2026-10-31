@@ -72,6 +72,7 @@ In both modes, every response gets a strict Content-Security-Policy (`default-sr
 | `statement_etl/web/config.py` | `PORT`, the OAuth `REDIRECT_URI` and `HOSTED` (hosted mode); loads `.env` and, in hosted mode, `APP_CONFIG` |
 | `statement_etl/web/token_store.py` | Saving and deleting the YNAB personal access token in the OS secure store via `keyring` |
 | `statement_etl/web/templates/index.html` | The page for the 4-step import workflow |
+| `statement_etl/web/templates/privacy.html`, `terms.html`, `footer.html` | The privacy policy (also the RA 10173 privacy notice) and terms, served by `app.py`; the footer every page includes |
 | `statement_etl/web/static/app.css`, `app.js` | The page's styles and script (no inline code, so a strict Content-Security-Policy works) |
 
 ## Design and roadmap
