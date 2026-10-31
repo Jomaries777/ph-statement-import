@@ -1,6 +1,6 @@
 # P4. Go live on Google Cloud, at $0
 
-Status: Not started · Estimate: about 1–2 days, plus waiting on family · Needs: P3
+Status: Done (PRs #25 to #28) · Estimate: about 1–2 days, plus waiting on family · Needs: P3
 
 ## Goal
 
@@ -37,14 +37,14 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
 
 ### A. Project, budget and APIs (console or CLI)
 
-- [ ] Create the project and link billing:
+- [x] Create the project and link billing:
   ```bash
   gcloud projects create <PROJECT_ID> --name="ph-statement-import"
   gcloud billing projects link <PROJECT_ID> --billing-account=<BILLING_ACCOUNT_ID>
   gcloud config set project <PROJECT_ID>
   gcloud projects describe <PROJECT_ID> --format='value(projectNumber)'   # → <PROJECT_NUMBER>
   ```
-- [ ] **Budget first, before anything can cost money.** Use the billing account's currency: $1, or ₱50 if the account bills in PHP.
+- [x] **Budget first, before anything can cost money.** Use the billing account's currency: $1, or ₱50 if the account bills in PHP.
   ```bash
   gcloud services enable pubsub.googleapis.com billingbudgets.googleapis.com
   gcloud pubsub topics create budget-alerts
@@ -55,14 +55,14 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
     --notifications-rule-pubsub-topic=projects/<PROJECT_ID>/topics/budget-alerts
   ```
   Budget alert emails go to billing admins by default. The kill switch that reads this topic comes in step E.
-- [ ] Enable only what P4 needs:
+- [x] Enable only what P4 needs:
   ```bash
   gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
     secretmanager.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
   gcloud services list --enabled | grep -Ei 'cloudbuild|containerscanning|cloudkms' \
     && echo "Disable these" || echo "OK: none enabled"
   ```
-- [ ] Artifact Registry repo with a cleanup policy:
+- [x] Artifact Registry repo with a cleanup policy:
   ```bash
   gcloud artifacts repositories create app --repository-format=docker --location=us-west1
   cat > /tmp/cleanup.json <<'EOF'
@@ -73,21 +73,21 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
   EOF
   gcloud artifacts repositories set-cleanup-policies app --location=us-west1 --policy=/tmp/cleanup.json
   ```
-- [ ] The **one** secret, `app-config`. Write it from a temporary file, so the values don't end up in your shell history. The real `YNAB_CLIENT_SECRET` comes in step D.
+- [x] The **one** secret, `app-config`. Write it from a temporary file, so the values don't end up in your shell history. The real `YNAB_CLIENT_SECRET` comes in step D.
   ```bash
   umask 077
   python3 -c 'import json,secrets; print(json.dumps({"FLASK_SECRET_KEY": secrets.token_hex(32), "YNAB_CLIENT_SECRET": "set-in-step-D"}))' > /tmp/app-config.json
   gcloud secrets create app-config --replication-policy=user-managed --locations=us-west1 --data-file=/tmp/app-config.json
   rm /tmp/app-config.json
   ```
-- [ ] Runtime service account. It can read `app-config` and nothing else:
+- [x] Runtime service account. It can read `app-config` and nothing else:
   ```bash
   gcloud iam service-accounts create app-runtime --display-name="ph-statement-import runtime"
   gcloud secrets add-iam-policy-binding app-config \
     --member=serviceAccount:app-runtime@<PROJECT_ID>.iam.gserviceaccount.com \
     --role=roles/secretmanager.secretAccessor
   ```
-- [ ] Workload Identity Federation, so GitHub Actions on **`main` of your repo only** can deploy, with no JSON keys:
+- [x] Workload Identity Federation, so GitHub Actions on **`main` of your repo only** can deploy, with no JSON keys:
   ```bash
   gcloud iam workload-identity-pools create github --location=global
   gcloud iam workload-identity-pools providers create-oidc github --location=global \
@@ -106,7 +106,7 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
     --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/attribute.repository/<you>/ph-statement-import"
   ```
   Don't give the deployer any Secret Manager or owner roles. `roles/run.developer` also can't change who may call the service, so you make it public yourself, once, after the first deploy (step B).
-- [ ] In GitHub → Settings → Environments, create a `production` environment with **you as a required reviewer**, limited to the `main` branch. Add these environment **variables** (not secrets; none of them is sensitive):
+- [x] In GitHub → Settings → Environments, create a `production` environment with **you as a required reviewer**, limited to the `main` branch. Add these environment **variables** (not secrets; none of them is sensitive):
   - `GCP_PROJECT_ID`
   - `GCP_WIF_PROVIDER` = `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github`
   - `GCP_DEPLOYER` = `deployer@<PROJECT_ID>.iam.gserviceaccount.com`
@@ -115,7 +115,7 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
 
 ### B. PR 1: `ci/deploy`, "ci: build the image in GitHub Actions and deploy to Cloud Run"
 
-- [ ] `.github/workflows/deploy.yml`:
+- [x] `.github/workflows/deploy.yml`:
   - Trigger: `on: push: branches: [main]` only. **Never** `pull_request` or `pull_request_target`, so forks can't reach GCP.
   - `permissions: { contents: read, id-token: write }`, and `environment: production`.
   - Steps:
@@ -136,23 +136,23 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
          --set-env-vars=PUBLIC_URL=${{ vars.PUBLIC_URL }},YNAB_CLIENT_ID=${{ vars.YNAB_CLIENT_ID }}
        ```
   - Pin each action to a full version tag, and let Dependabot update them.
-- [ ] README: add a "Deploy" section linking to this file.
-- [ ] Merge, approve the `production` deployment in GitHub, and watch it finish.
-- [ ] Make the service public, once. Until then every request gets a 403. The setting stays across deploys.
+- [x] README: add a "Deploy" section linking to this file.
+- [x] Merge, approve the `production` deployment in GitHub, and watch it finish.
+- [x] Make the service public, once. Until then every request gets a 403. The setting stays across deploys.
   ```bash
   gcloud run services add-iam-policy-binding ph-statement-import --region=us-west1 \
     --member=allUsers --role=roles/run.invoker
   ```
   If this fails with an organization policy error, your project is in a Google Workspace or Cloud organization whose "Domain restricted sharing" policy (`iam.allowedPolicyMemberDomains`) blocks `allUsers`. Allow it for this project, then run the command again.
-- [ ] Check the URL matches `PUBLIC_URL`:
+- [x] Check the URL matches `PUBLIC_URL`:
   ```bash
   gcloud run services describe ph-statement-import --region=us-west1 --format='value(status.url)'
   ```
 
 ### C. Check the live app
 
-- [ ] Open the URL: the main page shows only **Connect with YNAB login**, and `/privacy` and `/terms` load.
-- [ ] Check the headers:
+- [x] Open the URL: the main page shows only **Connect with YNAB login**, and `/privacy` and `/terms` load.
+- [x] Check the headers:
   ```bash
   curl -sI https://ph-statement-import-<PROJECT_NUMBER>.us-west1.run.app/ | grep -Ei 'content-security|x-frame|referrer|nosniff|set-cookie'
   ```
@@ -160,12 +160,12 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
 
 ### D. YNAB OAuth app (Restricted Mode)
 
-- [ ] YNAB → Account Settings → Developer Settings → **New OAuth Application**:
+- [x] YNAB → Account Settings → Developer Settings → **New OAuth Application**:
   - **Name:** **"PH Statement Import for YNAB"**. YNAB allows "YNAB" in a name only after "for".
   - **Redirect URI:** `<PUBLIC_URL>/oauth/callback`
   - **Privacy policy URL:** `<PUBLIC_URL>/privacy`
   - **Scope:** the default read/write. The app creates transactions; request nothing more.
-- [ ] Put the client secret into a new version of `app-config`, then destroy the old version to stay within 6 active versions:
+- [x] Put the client secret into a new version of `app-config`, then destroy the old version to stay within 6 active versions:
   ```bash
   umask 077
   gcloud secrets versions access latest --secret=app-config > /tmp/app-config.json
@@ -174,20 +174,20 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
   gcloud secrets versions list app-config
   gcloud secrets versions destroy <OLD_VERSION> --secret=app-config
   ```
-- [ ] Set the `YNAB_CLIENT_ID` environment variable in GitHub, then redeploy by re-running the last deploy workflow, so a new revision reads the new secret and client id.
-- [ ] Update the privacy page's contact email to `<CONTACT_EMAIL>` in a small `docs:`/`feat:` PR, if it's still a placeholder.
+- [x] Set the `YNAB_CLIENT_ID` environment variable in GitHub, then redeploy by re-running the last deploy workflow, so a new revision reads the new secret and client id.
+- [x] Update the privacy page's contact email to `<CONTACT_EMAIL>` in a small `docs:`/`feat:` PR, if it's still a placeholder.
 
 ### E. PR 2: `feat/budget-guard`, "feat: disable billing when the budget is exceeded"
 
 The kill switch runs from **the same image** as the app, so it adds nothing to Artifact Registry. It runs as its own private Cloud Run service, under its own service account.
 
-- [ ] `statement_etl/ops/budget_guard.py`, a small Flask app with one route, `POST /`, which receives the Pub/Sub push. Module docstring: what it does and why.
+- [x] `statement_etl/ops/budget_guard.py`, a small Flask app with one route, `POST /`, which receives the Pub/Sub push. Module docstring: what it does and why.
   1. Decode the budget message.
   2. If `costAmount <= budgetAmount`, return 204. Budgets send messages several times a day even when nothing is wrong, so most messages do nothing.
   3. Otherwise, unlink billing from the project through the Cloud Billing API (`projects/<PROJECT_ID>/billingInfo` with `billingAccountName: ""`), following Google's guide "Disable billing usage with notifications", and log one line.
   4. When `BUDGET_GUARD_DRY_RUN=1`, log what it would do instead of doing it.
-- [ ] Tests: under-budget does nothing; over-budget calls the billing API (mocked); dry run never calls it; a bad message returns 400.
-- [ ] Deploy it once by hand from the app's latest image. It needs no `deploy.yml` change unless you want it redeployed every time:
+- [x] Tests: under-budget does nothing; over-budget calls the billing API (mocked); dry run never calls it; a bad message returns 400.
+- [x] Deploy it once by hand from the app's latest image. It needs no `deploy.yml` change unless you want it redeployed every time:
   ```bash
   gcloud iam service-accounts create budget-guard
   gcloud projects add-iam-policy-binding <PROJECT_ID> \
@@ -206,7 +206,7 @@ The kill switch runs from **the same image** as the app, so it adds nothing to A
     --push-auth-service-account=pubsub-push@<PROJECT_ID>.iam.gserviceaccount.com
   ```
   If `roles/billing.projectManager` turns out not to be enough to unlink billing, use the role Google's guide names. Keep it to this one service account.
-- [ ] Test in dry run by publishing a fake over-budget message:
+- [x] Test in dry run by publishing a fake over-budget message:
   ```bash
   gcloud pubsub topics publish budget-alerts --message='{"costAmount": 2, "budgetAmount": 1}'
   gcloud logging read 'resource.labels.service_name="budget-guard"' --limit=5
@@ -230,6 +230,17 @@ The kill switch runs from **the same image** as the app, so it adds nothing to A
 - [ ] Invite one family member in the YNAB OAuth app (Restricted Mode → add their YNAB email). Watch them do one upload.
 - [ ] Then invite the rest of the family (up to 25 in total).
 
+## As built
+
+Where the setup differs from the steps above, and why:
+
+- **`YNAB_CLIENT_ID` was set to `set-in-step-D` before step D.** Hosted mode won't start without it (see P3's "As built"), so the first deploy needed a value. Step D replaced it with the real client id.
+- **The deploy no longer makes the service public (#28).** The deployer has `roles/run.developer`, which can't change who may call the service. So `--allow-unauthenticated` only printed a warning, and the first deploy served a 403. The owner makes the service public once, by hand (step B), and `deploy.yml` leaves that setting alone.
+- **Session affinity is off (#28).** With one instance it adds nothing except Google's `GAESA` cookie, which has no `Secure` or `HttpOnly` flag. `gcloud run deploy` keeps any setting it isn't given, so the deploy says `--no-session-affinity` instead of leaving the flag out.
+- **budget-guard runs gunicorn with `--no-control-socket`.** Its `--command` replaces the Dockerfile's gunicorn command, so it needs the same flag as the app. Without it, gunicorn tries to open an admin socket in `~/.gunicorn`, and the container's `app` user has no home folder. Its `--args` are `-w,1,-b,0.0.0.0:8080,--no-control-socket,statement_etl.ops.budget_guard:app`.
+- **budget-guard's image is also tagged `budget-guard`, and a keep rule protects it.** The cleanup policy keeps only the 2 newest images. After two more deploys of the app, it would delete the image budget-guard runs from, and the kill switch might not start when it's needed. A third rule, `keep-budget-guard`, keeps the image tagged `budget-guard`. So Artifact Registry holds up to 3 images.
+- **The kill switch passed its dry run.** With `BUDGET_GUARD_DRY_RUN=1`, the fake over-budget message logged "would disable billing". Then dry run was turned off, as in step E.
+
 ## Tests
 
 ```bash
@@ -249,7 +260,7 @@ New: the `budget_guard` tests (step E). `deploy.yml` runs the unit tests before 
   - has logs with no secrets or statement content
 - One family member uploaded successfully.
 - The kill switch passed its dry run and is live.
-- **After 2–3 days:** Billing → Reports for the project, grouped by SKU, shows **$0.00** total. Artifact Registry holds 2 or fewer image versions. Secret Manager has 1 active version.
+- **After 2–3 days:** Billing → Reports for the project, grouped by SKU, shows **$0.00** total. Artifact Registry holds 3 or fewer image versions: the 2 newest, plus the one tagged `budget-guard`. Secret Manager has 1 active version.
 
 ## Docs to update
 
