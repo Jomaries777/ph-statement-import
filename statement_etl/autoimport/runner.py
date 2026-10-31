@@ -56,7 +56,7 @@ log = logging.getLogger(__name__)
 
 # A run's status: what happened to one email for one source, shown in the run log
 OK = "ok"
-WRONG_PASSWORD = "wrong password"
+PDF_LOCKED = "wrong password"  # the user's inputs don't open the PDF
 PARSE_ERROR = "parse error"
 BALANCE_MISMATCH = "balance mismatch"
 YNAB_ERROR = "YNAB error"
@@ -228,7 +228,7 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
         rows, transactions = pipeline.parse_statement(io.BytesIO(pdf_bytes), password, source.key)
     except PasswordError:
         result["message"] = "Check the password inputs on the auto-import page."
-        return WRONG_PASSWORD
+        return PDF_LOCKED
     except StatementError as e:  # its message is written to be shown
         result["message"] = str(e)
         return PARSE_ERROR

@@ -143,7 +143,9 @@ def handle_budget_alert() -> tuple[Response | str, int]:
     try:
         cost, budget = parse_budget_message(request.get_json(silent=True))
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        # The reason goes to the log; the caller gets a fixed message, never exception text
+        app.logger.warning("Ignored a message that isn't a budget notification: %s", e)
+        return jsonify({"error": "Not a budget notification."}), 400
 
     # 2. Budgets publish several times a day even at $0; under or at budget does nothing
     if cost <= budget:

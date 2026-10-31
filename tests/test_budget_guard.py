@@ -217,13 +217,14 @@ class BadMessageTest(BudgetGuardTest):
             pubsub_envelope('{"costAmount": Infinity, "budgetAmount": 1}'),
         ]
         for body in bad_bodies:
-            with self.subTest(body=body):
+            with self.subTest(body=body), self.assertLogs(budget_guard.app.logger, "WARNING"):
                 if body is None:
                     response = self.client.post("/", data=b"{not-json", content_type="text/plain")
                 else:
                     response = self.client.post("/", json=body)
                 self.assertEqual(response.status_code, 400)
-                self.assertIn("error", response.get_json())
+                # A fixed message: the reason is only in the log, never in the response
+                self.assertEqual(response.get_json(), {"error": "Not a budget notification."})
         self.urlopen.assert_not_called()
 
 
