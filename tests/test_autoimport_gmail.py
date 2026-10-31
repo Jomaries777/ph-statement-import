@@ -385,5 +385,15 @@ class GetPdfAttachmentTest(GmailTestCase):
         self.assertTrue(self.http.calls[-1]["url"].endswith("/attachments/att%2F1"))
 
 
+class SafetyNetIntegrationTest(unittest.TestCase):
+    def test_unmocked_gmail_calls_hit_googleapis_safety_net(self) -> None:
+        env = {"GOOGLE_CLIENT_ID": CLIENT_ID, "GOOGLE_CLIENT_SECRET": CLIENT_SECRET}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, r"oauth2\.googleapis\.com"):
+                gmail.refresh_access_token(REFRESH_TOKEN)
+            with self.assertRaisesRegex(RuntimeError, r"gmail\.googleapis\.com"):
+                gmail.list_messages(ACCESS_TOKEN, "from:test@example.test")
+
+
 if __name__ == "__main__":
     unittest.main()
