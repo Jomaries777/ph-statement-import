@@ -1,0 +1,103 @@
+# Builds the hosted-mode Docker image on every push and pull request, and checks
+# it the way docs/plan/P3-hosted-mode.md asks: small enough for Artifact
+# Registry's free tier, serves the OAuth-only page with the security headers,
+# and refuses to start without its secrets. Every value here is made up: no
+# secrets are needed.
+name: docker
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IMAGE: ph-statement-import
+      URL: http://localhost:8080
+      # Made up, like the docker run example in the README
+      APP_CONFIG: '{"FLASK_SECRET_KEY": "local-test", "YNAB_CLIENT_SECRET": "made-up-client-secret"}'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t "$IMAGE" .
+
+      # Artifact Registry's free tier is 0.5 GB, and P4 keeps 2 images
+      - name: Image is under 250 MB
+        run: |
+          size=$(docker image inspect --format '{{.Size}}' "$IMAGE")
+          echo "Image size: $((size / 1000000)) MB"
+          if [ "$size" -ge 250000000 ]; then echo "Over 250 MB"; exit 1; fi
+
+      - name: Start it in hosted mode
+        run: |
+          docker run -d --name app -p 8080:8080 \
+            -e PUBLIC_URL="$URL" -e APP_CONFIG -e YNAB_CLIENT_ID=made-up-client-id "$IMAGE"
+          for _ in $(seq 30); do  # gunicorn is up within a few seconds
+            if curl -sf -o /dev/null "$URL/"; then exit 0; fi
+            sleep 1
+          done
+          echo "The app didn't answer within 30 seconds"
+          exit 1
+
+      - name: Security headers on the page
+        run: |
+          headers=$(curl -sfI "$URL/")
+          echo "$headers"
+          for name in Content-Security-Policy X-Frame-Options Referrer-Policy X-Content-Type-Options; do
+            if ! grep -qi "^$name:" <<<"$headers"; then echo "Missing $name"; exit 1; fi
+          done
+
+      - name: HTTPS-only session cookie
+        run: |
+          cookie=$(curl -sfI "$URL/api/status" | grep -i '^set-cookie:')
+          echo "$cookie"
+          for flag in Secure HttpOnly SameSite=Lax; do
+            if ! grep -q "$flag" <<<"$cookie"; then echo "Cookie is missing $flag"; exit 1; fi
+          done
+
+      # Hosted mode is YNAB OAuth only: no personal access token field
+      - name: Only "Connect with YNAB login" on the page
+        run: |
+          page=$(curl -sf "$URL/")
+          if ! grep -q 'id="connect-btn"' <<<"$page"; then echo "No YNAB login button"; exit 1; fi
+          if grep -q 'id="ynab-token"' <<<"$page"; then echo "Token field is shown"; exit 1; fi
+
+      - name: Privacy, terms and static files load
+        run: |
+          for path in /privacy /terms /static/app.js /static/app.css; do
+            if ! curl -sf -o /dev/null "$URL$path"; then echo "$path failed"; exit 1; fi
+            echo "$path OK"
+          done
+
+      - name: No secret in the app's log
+        run: |
+          docker logs app 2>&1 | tee app.log
+          if grep -q -e local-test -e made-up-client-secret app.log; then
+            echo "A secret value is in the log"
+            exit 1
+          fi
+
+      # gunicorn's --preload makes a missing secret stop the container. Without
+      # it, the worker would restart forever behind an open port.
+      - name: Refuses to start without FLASK_SECRET_KEY
+        run: |
+          code=0
+          timeout 60 docker run --name no-secret -e PUBLIC_URL="$URL" \
+            -e APP_CONFIG='{"YNAB_CLIENT_SECRET": "do-not-print-this"}' \
+            -e YNAB_CLIENT_ID=made-up-client-id "$IMAGE" > no-secret.log 2>&1 || code=$?
+          docker rm -f no-secret > /dev/null 2>&1 || true
+          cat no-secret.log
+          if [ "$code" -eq 0 ]; then echo "It started without FLASK_SECRET_KEY"; exit 1; fi
+          if [ "$code" -eq 124 ]; then echo "It kept running instead of stopping"; exit 1; fi
+          if ! grep -q "needs FLASK_SECRET_KEY" no-secret.log; then echo "No clear message"; exit 1; fi
+          if grep -q do-not-print-this no-secret.log; then echo "A secret value was printed"; exit 1; fi
+
+      - name: App log, if something failed
+        if: failure()
+        run: docker logs app || true
