@@ -67,6 +67,15 @@ class Source:
         balance_corrections - rows -> [{"date_time", "description",
                               "reference", "amount" (signed Decimal)}]
         balance_warning     - rows -> warning text, or None if the statement adds up
+
+    Optional, for Gmail auto-import (/auto-import in hosted mode):
+        email_query        - Gmail search for this source's statement emails.
+                             Sources without it don't appear on /auto-import.
+        attachment_pattern - regex for the PDF attachment's filename (an email
+                             may carry several PDFs)
+        password_inputs    - names of the inputs the user enters once, e.g.
+                             ("last_name", "mobile_last4")
+        build_password     - dict of inputs -> PDF password
     """
 
     key: str
@@ -84,6 +93,10 @@ class Source:
     is_correction_row: Callable = _never_correction
     balance_corrections: Callable = _no_corrections
     balance_warning: Callable = _no_warning
+    email_query: str | None = None
+    attachment_pattern: str | None = None
+    password_inputs: tuple = ()
+    build_password: Callable | None = None
 
 
 # =============================================================================
@@ -109,6 +122,13 @@ SOURCES = {
             is_correction_row=gcash.is_correction_row,
             balance_corrections=gcash.balance_corrections,
             balance_warning=gcash.balance_warning,
+            email_query=(
+                'from:noreply-transhistory@gcash.com subject:"Your GCash Transaction History" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"\.pdf$",
+            password_inputs=("last_name", "mobile_last4"),
+            build_password=gcash.build_password,
         ),
         Source(
             key="gotyme",

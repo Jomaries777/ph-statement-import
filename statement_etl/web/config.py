@@ -20,6 +20,10 @@ access tokens), and the OS secure store is never used: one token saved on the
 server would connect every visitor. It needs FLASK_SECRET_KEY,
 YNAB_CLIENT_ID and YNAB_CLIENT_SECRET; without one, the app stops at startup.
 
+Auto-import from Gmail (hosted mode only, P5) is on when GOOGLE_CLIENT_ID is
+set. It then also needs GOOGLE_CLIENT_SECRET and ENCRYPTION_KEYS (see
+autoimport/store.py). Without GOOGLE_CLIENT_ID, neither is needed.
+
 REDIRECT_URI is where YNAB sends the browser back after OAuth login. It must
 match the redirect URI of your YNAB OAuth application exactly.
 """
@@ -37,6 +41,17 @@ HOSTED = bool(PUBLIC_URL)  # hosted mode: OAuth only, no keychain, strict cookie
 
 # Without these, hosted mode can't sign cookies or log anyone in to YNAB
 HOSTED_REQUIRED = ("FLASK_SECRET_KEY", "YNAB_CLIENT_ID", "YNAB_CLIENT_SECRET")
+# Without these, auto-import can't log in to Google or encrypt what it stores
+AUTO_IMPORT_REQUIRED = ("GOOGLE_CLIENT_SECRET", "ENCRYPTION_KEYS")
+
+
+def require(keys, needed_by):
+    """Stop the app (SystemExit) naming each key in `keys` that isn't set."""
+    missing = [key for key in keys if not os.environ.get(key)]
+    if missing:
+        raise SystemExit(
+            f"{needed_by} needs {', '.join(missing)} in APP_CONFIG or the environment."
+        )
 
 
 def load_hosted_config():
@@ -57,12 +72,9 @@ def load_hosted_config():
                 raise SystemExit(f"APP_CONFIG: {key} must be a string.")
             os.environ[key] = value
 
-    missing = [key for key in HOSTED_REQUIRED if not os.environ.get(key)]
-    if missing:
-        raise SystemExit(
-            f"Hosted mode (PUBLIC_URL is set) needs {', '.join(missing)} "
-            "in APP_CONFIG or the environment."
-        )
+    require(HOSTED_REQUIRED, "Hosted mode (PUBLIC_URL is set)")
+    if os.environ.get("GOOGLE_CLIENT_ID"):
+        require(AUTO_IMPORT_REQUIRED, "Auto-import (GOOGLE_CLIENT_ID is set)")
 
 
 if HOSTED:

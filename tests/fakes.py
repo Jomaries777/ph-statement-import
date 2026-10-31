@@ -1,13 +1,19 @@
 """
 Shared fakes for the tests: pdfplumber words and pages, GCash rows, YNAB SDK
-objects. Importing this module also loads the safety net in tests/__init__.py.
+objects, the auto-import store. Importing this module also loads the safety
+net in tests/__init__.py.
 
 All data here is made up. Never put a real statement, name, account or
 reference number in a test.
 """
 
+import base64
+import copy
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest import mock
+
+from statement_etl.autoimport import store
 
 # =============================================================================
 # PDF WORDS - in the shape pdfplumber's page.extract_words() returns
@@ -163,3 +169,63 @@ def ynab_account(**fields):
         "closed": False,
     }
     return SimpleNamespace(**{**defaults, **fields})
+
+
+# =============================================================================
+# AUTO-IMPORT STORE - in memory, in place of statement_etl/autoimport/store.py
+# =============================================================================
+
+# A made-up Fernet key. Tests that save secrets set it with
+#   mock.patch.dict(os.environ, ENCRYPTION_KEYS=ENCRYPTION_KEY)
+ENCRYPTION_KEY = base64.urlsafe_b64encode(b"made-up key for tests, 32 bytes!").decode()
+
+
+class FakeStore:
+    """The functions of autoimport/store.py, keeping records in dicts instead of Firestore.
+
+        with mock.patch.object(runner, "store", FakeStore()):
+
+    Secrets are encrypted the same way as by the real store (it needs
+    ENCRYPTION_KEYS), so get_user() returns them encrypted, as Firestore would.
+    tests/test_autoimport_store.py checks the two have the same functions.
+    """
+
+    DecryptError = store.DecryptError
+    encrypt = staticmethod(store.encrypt)
+    decrypt = staticmethod(store.decrypt)
+
+    def __init__(self):
+        self.users = {}  # sub -> record fields
+        self.runs = {}  # sub -> {"{msg_id}:{source_key}": run fields}
+
+    def get_user(self, sub):
+        if sub not in self.users:
+            return None
+        return {"sub": sub, **copy.deepcopy(self.users[sub])}
+
+    def save_user(self, sub, **fields):
+        self.users.setdefault(sub, {}).update(store.encrypt_secrets(fields))
+
+    def list_enabled_users(self):
+        return [self.get_user(sub) for sub, user in self.users.items() if user.get("enabled")]
+
+    def delete_user(self, sub):
+        self.users.pop(sub, None)
+        self.runs.pop(sub, None)
+
+    def set_last_checked(self, sub, when):
+        self.save_user(sub, last_checked=when)
+
+    def save_ynab_tokens(self, sub, tokens):
+        self.save_user(sub, ynab_refresh_token=tokens["refresh_token"])
+
+    def run_exists(self, sub, msg_id, source_key):
+        return f"{msg_id}:{source_key}" in self.runs.get(sub, {})
+
+    def write_run(self, sub, msg_id, source_key, **result):
+        record = {**result, "source": source_key, "ran_at": datetime.now(UTC)}
+        self.runs.setdefault(sub, {})[f"{msg_id}:{source_key}"] = record
+
+    def list_runs(self, sub, limit=20):
+        runs = sorted(self.runs.get(sub, {}).values(), key=lambda run: run["ran_at"], reverse=True)
+        return copy.deepcopy(runs[:limit])
