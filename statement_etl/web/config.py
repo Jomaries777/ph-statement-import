@@ -60,8 +60,8 @@ def load_hosted_config():
     missing = [key for key in HOSTED_REQUIRED if not os.environ.get(key)]
     if missing:
         raise SystemExit(
-            f"Hosted mode (PUBLIC_URL is set) needs {', '.join(missing)}. "
-            "Add them to APP_CONFIG or the environment."
+            f"Hosted mode (PUBLIC_URL is set) needs {', '.join(missing)} "
+            "in APP_CONFIG or the environment."
         )
 
 

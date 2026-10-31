@@ -81,6 +81,23 @@ In hosted mode:
 
 Both modes send security headers on every response, including a strict Content-Security-Policy. Both also serve `/privacy` and `/terms`, linked from the footer of every page. The privacy policy is the URL YNAB's OAuth app review asks for; set its contact email (`CONTACT_EMAIL` in `statement_etl/web/app.py`) before going live.
 
+### Docker
+
+The `Dockerfile` runs hosted mode with gunicorn: one worker, because the server-side state lives in that process's memory, and 8 threads.
+
+```bash
+docker build -t ph-statement-import .
+docker image ls ph-statement-import   # check the size; aim for under 250 MB
+docker run --rm -p 8080:8080 \
+  -e PUBLIC_URL=http://localhost:8080 \
+  -e APP_CONFIG='{"FLASK_SECRET_KEY":"local-test","YNAB_CLIENT_SECRET":"x"}' \
+  -e YNAB_CLIENT_ID=x ph-statement-import
+```
+
+Open http://localhost:8080: only **Connect with YNAB login** shows. Check the security headers with `curl -sI http://localhost:8080/`.
+
+Over plain `http://localhost` the browser won't send the session cookie back, because in hosted mode it's HTTPS-only. That's expected: Cloud Run serves HTTPS. Deploying to Cloud Run is in [docs/plan/P4-go-live-on-gcp.md](docs/plan/P4-go-live-on-gcp.md).
+
 | Variable | What it is |
 |---|---|
 | `PUBLIC_URL` | The address people open, e.g. `https://statements.example.com`. Turns on hosted mode. The OAuth redirect URI is `PUBLIC_URL` + `/oauth/callback`; register exactly that in your YNAB OAuth application. |

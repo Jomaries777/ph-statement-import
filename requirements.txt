@@ -4,3 +4,4 @@ ynab==4.4.1
 python-dotenv==1.2.4
 keyring==25.7.0
 Flask-Limiter==4.1.1
+gunicorn==26.2.0
