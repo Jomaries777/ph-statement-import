@@ -38,6 +38,7 @@ Entry points sit on top of the pipeline:
 | `statement_etl/sources.py` | Registry of supported e-wallets and banks (`SOURCES`): their column metadata and parser functions, including `to_transactions` |
 | `statement_etl/parsers/common.py` | Shared PDF helpers: `open_pdf()`, `group_lines()`, `to_decimal()` |
 | `statement_etl/parsers/gcash.py` | GCash Transaction History PDF parser, totals verification, balance-correction rows, and `to_transactions()` |
+| `statement_etl/parsers/gotyme.py` | GoTyme Everyday Deposit Account PDF parser, summary/totals/running-balance checks, and `to_transactions()` |
 | `statement_etl/transaction.py` | The neutral `Transaction` dataclass |
 | `statement_etl/convert.py` | `rows_to_transactions(rows, source)`: picks the source and calls its converter; CLI that prints the YNAB JSON (`python -m statement_etl.convert`) |
 | `statement_etl/pipeline.py` | Pipeline steps (`parse_statement`, `starting_balance_check`, and `import_statement`, which runs `new_account_starting_balance`, `upload_transactions` and `ending_balance_check`) and the CLI |

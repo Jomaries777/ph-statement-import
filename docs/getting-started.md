@@ -9,7 +9,7 @@ The app runs only on your computer. It opens in your web browser, but the page i
 ## What you need
 
 - **A YNAB account.**
-- **Your statement PDF** and its password. For GCash, request a transaction history in the GCash app; it arrives by email.
+- **Your statement PDF** and its password. For GCash, request a transaction history in the GCash app; it arrives by email. For GoTyme (Everyday Deposit Account), request a statement in the GoTyme app; it arrives by email.
 - **Python 3.13.** Check whether you have it:
 
   | OS | Check | If it's missing |
@@ -91,7 +91,7 @@ You'll also see a red `WARNING: This is a development server`. That's expected: 
 
 Open **http://localhost:5050** in your browser. The page has four steps:
 
-1. **Statement:** pick the source (e.g. GCash), choose the PDF, type its password, and click **Parse**. You'll see a preview of the transactions and a check that the statement adds up.
+1. **Statement:** pick the source (e.g. GCash or GoTyme), choose the PDF, type its password, and click **Parse**. You'll see a preview of the transactions and a check that the statement adds up.
 2. **YNAB:** paste your token from step 3 and click **Connect**.
    - Leave **Remember this token on this computer** ticked to save it in your computer's secure store (macOS Keychain, Windows Credential Manager or Linux Secret Service). Next time, this step connects by itself.
    - On macOS, Keychain may ask whether `python` can use the item. Click **Always Allow**.
@@ -158,7 +158,7 @@ Never share or commit `.env`.
 | Windows: "running scripts is disabled on this system" when activating | Skip activating, and run the app with the environment's Python directly: `.venv\Scripts\python -m statement_etl.web` |
 | macOS: the terminal stops before printing `Open http://localhost:5050` | The app is reading your saved token, and macOS is asking for permission in a Keychain dialog, which may be behind other windows. Click **Always Allow**. This happens again after you update or recreate `.venv`. |
 | `Address already in use`, or the page doesn't load | Another program uses port 5050. Set `APP_PORT=5051` in `.env` (see above) and open http://localhost:5051. |
-| "Wrong password" after **Parse** | Check the PDF password. For GCash it's your registered last name in lowercase plus the last 4 digits of your mobile number, e.g. `delacruz1234`. |
+| "Wrong password" after **Parse** | Check the PDF password. For GCash it's your registered last name in lowercase plus the last 4 digits of your mobile number, e.g. `delacruz1234`. For GoTyme it's your date of birth as `MMDDYYYY`, e.g. `01311990`. |
 | The starting or ending balance doesn't match YNAB | It's a warning, not an error, and the upload is still allowed. Usually the YNAB account has transactions from before the statement period, or some transactions were entered by hand. Compare them in YNAB. |
 | YNAB says the token is invalid | It may have been revoked. Create a new one (step 3). If you ticked **Remember**, the app removes the old one and asks again. |
 

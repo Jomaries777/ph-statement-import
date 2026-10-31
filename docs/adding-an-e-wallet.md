@@ -254,6 +254,35 @@ Checklist:
 
 ---
 
+## Worked example: GoTyme (`gotyme`)
+
+GoTyme Bank Everyday Deposit Account statements (`statement_etl/parsers/gotyme.py`) show how a source without transaction reference numbers works:
+
+- **Columns:** `("Date", "Details", "Credits", "Debits", "Running Balance")`.
+- **Wrapped Details:** a long `Details` line wraps onto two lines—the first about 4 pt above the date and amounts line, and the second about 4 pt below it—so `_anchor_rows()` anchors one row per date line and collects `Details` words in that row's vertical band.
+- **Four checks in `_check_totals()`:** `Σ Credits = Total Credit`, `Σ Debits = Total Debit`, `Opening + Σ Credits − Σ Debits = Closing`, and every row's `Running Balance = previous + Credits − Debits`.
+
+**GoTyme row → `Transaction` → YNAB `NewTransaction`**. The middle column is the neutral `Transaction` that `gotyme.to_transactions()` returns; the YNAB column is what `ynab_api.format.to_ynab()` makes of it. `ynab_api/client.import_transactions()` sends them all in one `POST /plans/{plan_id}/transactions`. Another budgeting app would start from the same `Transaction`.
+
+| Statement column | `Transaction` field | YNAB field | Rule | Example (made up) |
+|---|---|---|---|---|
+| — | — | `account_id` | the account picked on the page or in auto-import | `"3f2a…"` |
+| `Date` | `date` | `date` | `strptime(Date, "%d %b %Y")`; YNAB gets `YYYY-MM-DD` | `2026-10-05` → `"2026-10-05"` |
+| `Credits`, `Debits` | `amount` (pesos) | `amount` (milliunits) | `Credits − Debits`; YNAB gets × 1000; inflow +, outflow − | `Decimal("-249.00")` → `-249000` |
+| `Details` | `payee` | `payee_name` | `gotyme_payee()`; cut to 200 characters by the YNAB client | `"SHOPEE PH"` |
+| `Details` | `memo` | `memo` | `"GoTyme: " + Details` | `"GoTyme: Card payment at SHOPEE PH, Card •••• 1234"` |
+| `Date`, `Credits`, `Debits`, `Running Balance` | `source`, `key` | `import_id` | `key = "…\|n"`; YNAB gets `make_import_id(source, key)` | `"05 Oct 2026\|0.00\|249.00\|4751.00\|0"` → `"ETLPH:9c1e…"` |
+| — | `flagged` = `False` | `flag_color` = `null` | no correction rows | |
+| — | — | `cleared` / `approved` | fixed by the YNAB client: `"cleared"` / `False` (you review them in YNAB) | |
+| — | — | `payee_id`, `category_id` | not sent; YNAB matches the payee name and applies your payee rules | |
+
+Statement values that aren't sent as transactions:
+- Opening and Closing balance feed the starting- and ending-balance checks.
+- Period and the totals are used only by `_check_totals()`.
+- Running Balance is used only in `key` (so `import_id`) and the checks.
+
+---
+
 ## Changing the web page itself
 
 For UI fixes or improvements, unrelated to adding a source.

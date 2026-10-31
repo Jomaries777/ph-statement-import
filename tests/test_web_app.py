@@ -605,7 +605,7 @@ class ParseTest(WebTest):
         response = self.post(self.pdf(source="nope"))
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            response.get_json()["error"], "Unknown source 'nope'. Known sources: gcash"
+            response.get_json()["error"], "Unknown source 'nope'. Known sources: gcash, gotyme"
         )
 
     def test_no_file(self):
