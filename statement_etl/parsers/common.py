@@ -38,6 +38,10 @@ class StatementError(ValueError):
     """
 
 
+class PasswordError(StatementError):
+    """The PDF password is wrong. Auto-import tells this apart from other problems."""
+
+
 # =============================================================================
 # OPENING - open the password-protected PDF
 # =============================================================================
@@ -47,13 +51,13 @@ def open_pdf(pdf_path, password=""):
     """Open a password-protected PDF with pdfplumber; use it in a `with` block.
 
     A PDF that isn't encrypted opens with any password.
-    Raises StatementError if the password is wrong.
+    Raises PasswordError (a StatementError) if the password is wrong.
     """
     try:
         return pdfplumber.open(pdf_path, password=password)
     except PdfminerException as e:
         if e.args and isinstance(e.args[0], PDFPasswordIncorrect):
-            raise StatementError("Incorrect PDF password.") from None
+            raise PasswordError("Incorrect PDF password.") from None
         raise
 
 
