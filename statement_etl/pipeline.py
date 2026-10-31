@@ -77,6 +77,7 @@ from decimal import Decimal
 import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
+from statement_etl.parsers.common import StatementError
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
 from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import (
@@ -122,8 +123,9 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
         they are uploaded too, flagged red.
 
     Raises:
-        ValueError: unknown source, wrong password, totals mismatch, or no
-        transactions found
+        StatementError: wrong password, totals mismatch, or no transactions
+        found (a ValueError, with a message for the user)
+        ValueError: unknown source
     """
     src = get_source(source)
 
@@ -133,7 +135,7 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
 
     # Must have at least one real statement row, not only corrections
     if not any(not src.is_correction_row(r) for r in rows):
-        raise ValueError("no transactions found in the PDF")
+        raise StatementError("no transactions found in the PDF")
 
     # Transform every row; correction rows are uploaded too (flagged red)
     return rows, transform(rows, source)

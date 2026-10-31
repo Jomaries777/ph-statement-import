@@ -19,7 +19,7 @@ from decimal import Decimal
 from unittest import mock
 
 from statement_etl.parsers import gcash
-from statement_etl.parsers.common import group_lines
+from statement_etl.parsers.common import StatementError, group_lines
 from tests.fakes import (
     BALANCE_X1,
     CREDIT_X1,
@@ -287,7 +287,7 @@ class ParseTransactionsTest(unittest.TestCase):
 
     def test_totals_mismatch(self):
         with self.assertRaisesRegex(
-            ValueError, "parsed total debit 350.50 != statement total 999.00"
+            StatementError, "parsed total debit 350.50 != statement total 999.00"
         ):
             self.parse(statement_pages(total_debit="999.00"))
 
@@ -316,7 +316,7 @@ class CheckTotalsTest(unittest.TestCase):
 
     def test_mismatch(self):
         with self.assertRaisesRegex(
-            ValueError, "parsed total credit 1000.00 != statement total 900.00"
+            StatementError, "parsed total credit 1000.00 != statement total 900.00"
         ):
             gcash._check_totals(self.ROWS, {"credit": Decimal("900.00")})
 

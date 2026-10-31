@@ -55,7 +55,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
-from statement_etl.parsers.common import group_lines, open_pdf, to_decimal
+from statement_etl.parsers.common import StatementError, group_lines, open_pdf, to_decimal
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -253,7 +253,7 @@ def gcash_payee(description):
 def parse_transactions(pdf_path, password=""):
     """Parse a GCash PDF into a list of transaction dicts.
 
-    Raises ValueError if the password is wrong or the parsed totals don't
+    Raises StatementError if the password is wrong or the parsed totals don't
     match the statement's totals.
     """
     transactions = []
@@ -309,7 +309,7 @@ def parse_transactions(pdf_path, password=""):
 
 # =============================================================================
 # CHECKING - make sure no transaction was missed (REUSABLE)
-# Stops with ValueError: a mismatch here means the PDF was read wrongly.
+# Stops with StatementError: a mismatch here means the PDF was read wrongly.
 # =============================================================================
 
 
@@ -322,7 +322,7 @@ def _check_totals(transactions, totals):
     credit = sum(to_decimal(t["Credit"]) for t in transactions)
     for name, parsed in (("debit", debit), ("credit", credit)):
         if name in totals and totals[name] != parsed:
-            raise ValueError(f"parsed total {name} {parsed} != statement total {totals[name]}")
+            raise StatementError(f"parsed total {name} {parsed} != statement total {totals[name]}")
 
 
 # =============================================================================

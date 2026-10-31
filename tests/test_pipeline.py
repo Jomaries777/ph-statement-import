@@ -18,6 +18,7 @@ from unittest import mock
 import ynab
 
 from statement_etl import pipeline
+from statement_etl.parsers.common import StatementError
 from statement_etl.sources import SOURCES
 from statement_etl.transform import transform
 from statement_etl.ynab_api.balance import compare_balance
@@ -89,7 +90,7 @@ class ParseStatementTest(unittest.TestCase):
             with (
                 self.subTest(rows=rows),
                 gcash_parsing(rows),
-                self.assertRaisesRegex(ValueError, "^no transactions found in the PDF$"),
+                self.assertRaisesRegex(StatementError, "^no transactions found in the PDF$"),
             ):
                 pipeline.parse_statement("statement.pdf", "")
 

@@ -5,6 +5,7 @@ Each parser (e.g. parsers/gcash.py) reads one e-wallet's or bank's PDF and
 returns every row with the statement's own column names. These helpers don't
 depend on any statement format:
 
+    StatementError - a problem with the statement, worded for the user
     open_pdf()     - open a password-protected PDF
     group_lines()  - turn a page's words into text lines
     to_decimal()   - turn amount text into a number
@@ -23,6 +24,21 @@ LINE_TOLERANCE = 3
 
 
 # =============================================================================
+# ERRORS - problems with the statement that the user can fix
+# =============================================================================
+
+
+class StatementError(ValueError):
+    """A problem with the statement itself, with a message for the user.
+
+    The web page shows the message as it is, e.g. "Incorrect PDF password.",
+    so put only text in it that is safe and useful to show. Any other error
+    gets a fixed message instead, because a library's message can carry
+    internal details. A ValueError subclass, so `except ValueError` still works.
+    """
+
+
+# =============================================================================
 # OPENING - open the password-protected PDF
 # =============================================================================
 
@@ -31,13 +47,13 @@ def open_pdf(pdf_path, password=""):
     """Open a password-protected PDF with pdfplumber; use it in a `with` block.
 
     A PDF that isn't encrypted opens with any password.
-    Raises ValueError if the password is wrong.
+    Raises StatementError if the password is wrong.
     """
     try:
         return pdfplumber.open(pdf_path, password=password)
     except PdfminerException as e:
         if e.args and isinstance(e.args[0], PDFPasswordIncorrect):
-            raise ValueError("Incorrect PDF password.") from None
+            raise StatementError("Incorrect PDF password.") from None
         raise
 
 

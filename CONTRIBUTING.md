@@ -66,7 +66,7 @@ ruff format . && ruff check .
 - **Boundary between sources and YNAB:** Sources never import YNAB code: they return neutral `Transaction`s, and `ynab_api/` turns them into YNAB's format.
 - **Source keys are permanent:** Never rename a source key (`gcash`, `gotyme`). It's part of every `import_id`, so renaming it creates duplicates in YNAB.
 - **No personal data:** Never log or commit personal data: no tokens, passwords, PDF bytes or parsed rows in logs, and no real statements anywhere in the repo, issues or PRs. Tests use made-up rows (`tests/e2e/make_pdf.py`). Keep real PDFs in `statements/` (gitignored).
-- **Errors:** A parser raises `ValueError` with a message the user can act on. Library code never calls `sys.exit`.
+- **Errors:** A parser raises `StatementError` (from `parsers/common.py`) with a message the user can act on, e.g. "Incorrect PDF password." The web page shows only these messages; any other error gets a fixed one, so never put internal details in a `StatementError`. Library code never calls `sys.exit`.
 
 ## 4. Branches, commits and PRs
 
