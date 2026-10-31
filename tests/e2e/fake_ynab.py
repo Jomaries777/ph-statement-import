@@ -3,7 +3,7 @@ An in-memory YNAB for the browser tests: stateful fakes of the SDK's UserApi,
 PlansApi, AccountsApi and TransactionsApi.
 
 FakeYnab.patch() swaps them in for ynab.UserApi / ynab.PlansApi / ... with
-mock.patch, so pipeline.py, ynab_api/* and web/app.py all run for real; only
+mock.patch, so pipeline.py, ynab_api/* and web/* all run for real; only
 the HTTP calls are replaced. It also makes web/token_store.py report "no
 secure store", so the real Keychain is never read or written.
 

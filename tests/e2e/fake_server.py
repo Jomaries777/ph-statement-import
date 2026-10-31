@@ -24,6 +24,7 @@ from werkzeug.serving import make_server
 
 import tests  # noqa: F401 - the safety net: nothing reaches YNAB or the keyring
 from statement_etl.web import app as web_app
+from statement_etl.web import state as web_state
 from tests.e2e import make_pdf
 from tests.e2e.fake_ynab import TOKEN, FakeYnab
 
@@ -46,7 +47,7 @@ class FakeServer:
     def reset(self):
         """Fresh YNAB state and no browser sessions."""
         self.ynab.reset()
-        web_app.STORE.clear()
+        web_state.STORE.clear()
 
     def start(self):
         if self.quiet:
@@ -70,7 +71,7 @@ class FakeServer:
             self._thread.join(timeout=5)
         if self._patches:
             self._patches.close()
-        web_app.STORE.clear()
+        web_state.STORE.clear()
         self._server = self._thread = self._patches = None
 
     def __enter__(self):

@@ -1,6 +1,6 @@
 """
-Tests for web/app.py: every route, the token handling and the YNAB error
-mapping, through Flask's test client.
+Tests for the web app (web/app.py and its blueprints): every route, the
+token handling and the YNAB error mapping, through Flask's test client.
 
 Run from the project folder:  python -m unittest discover tests
 
@@ -25,6 +25,8 @@ from statement_etl import pipeline
 from statement_etl.convert import rows_to_transactions
 from statement_etl.parsers.common import StatementError
 from statement_etl.web import app as web
+from statement_etl.web import config, token_store, upload, ynab_auth, ynab_oauth
+from statement_etl.web import state as web_state
 from statement_etl.ynab_api.balance import compare_balance
 from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
@@ -64,14 +66,14 @@ class WebTest(unittest.TestCase):
     """A test client with no saved token, no OAuth settings and an empty STORE."""
 
     def setUp(self):
-        self.patch_dict(web.STORE, {}, clear=True)
+        self.patch_dict(web_state.STORE, {}, clear=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("YNAB_CLIENT_")}
         self.patch_dict(os.environ, env, clear=True)
-        self.available = self.patch(web.token_store, "available", return_value=False)
-        self.store_name = self.patch(web.token_store, "store_name", return_value=None)
-        self.load_token = self.patch(web.token_store, "load_token", return_value=None)
-        self.save_token = self.patch(web.token_store, "save_token", return_value=True)
-        self.delete_token = self.patch(web.token_store, "delete_token")
+        self.available = self.patch(token_store, "available", return_value=False)
+        self.store_name = self.patch(token_store, "store_name", return_value=None)
+        self.load_token = self.patch(token_store, "load_token", return_value=None)
+        self.save_token = self.patch(token_store, "save_token", return_value=True)
+        self.delete_token = self.patch(token_store, "delete_token")
         self.client = web.app.test_client()
 
     def patch(self, target, name, **kwargs):
@@ -88,12 +90,12 @@ class WebTest(unittest.TestCase):
         """This browser's server-side state."""
         with self.client.session_transaction() as session:
             session["sid"] = "test-sid"
-        web.STORE["test-sid"] = state
+        web_state.STORE["test-sid"] = state
         return state
 
     def state(self):
         with self.client.session_transaction() as session:
-            return web.STORE[session["sid"]]
+            return web_state.STORE[session["sid"]]
 
     def connected(self, kind="personal", **state):
         return self.set_state(access_token="test-token", token_kind=kind, **state)
@@ -104,6 +106,37 @@ class WebTest(unittest.TestCase):
     def oauth_env(self):
         self.patch_dict(
             os.environ, {"YNAB_CLIENT_ID": "client-id", "YNAB_CLIENT_SECRET": "client-secret"}
+        )
+
+
+# =============================================================================
+# ROUTES - the same URLs and methods as before the split into blueprints
+# =============================================================================
+
+
+class RoutesTest(unittest.TestCase):
+    def test_every_route_is_still_there(self):
+        routes = {
+            (rule.rule, method)
+            for rule in web.app.url_map.iter_rules()
+            for method in rule.methods - {"HEAD", "OPTIONS"}
+        }
+        self.assertEqual(
+            routes,
+            {
+                ("/", "GET"),
+                ("/api/status", "GET"),
+                ("/api/parse", "POST"),
+                ("/api/plans", "GET"),
+                ("/api/plans/<plan_id>/accounts", "GET"),
+                ("/api/starting-balance", "POST"),
+                ("/api/upload", "POST"),
+                ("/api/token", "POST"),
+                ("/oauth/login", "GET"),
+                ("/oauth/callback", "GET"),
+                ("/oauth/logout", "POST"),
+                ("/static/<path:filename>", "GET"),
+            },
         )
 
 
@@ -139,7 +172,7 @@ class StatusTest(WebTest):
         self.load_token.return_value = "saved-token"
         self.available.return_value = True
         self.store_name.return_value = "Test Store"
-        with mock.patch.object(web, "get_user") as get_user:
+        with mock.patch.object(upload, "get_user") as get_user:
             status = self.client.get("/api/status").get_json()
         get_user.assert_called_once_with("saved-token")
         self.assertTrue(status["connected"])
@@ -149,7 +182,7 @@ class StatusTest(WebTest):
 
     def test_revoked_saved_token_is_removed(self):
         self.load_token.return_value = "saved-token"
-        with mock.patch.object(web, "get_user", side_effect=unauthorized()):
+        with mock.patch.object(upload, "get_user", side_effect=unauthorized()):
             status = self.client.get("/api/status").get_json()
         self.assertFalse(status["connected"])
         self.assertIn("saved token", status["connect_error"])
@@ -186,7 +219,7 @@ class TokenTest(WebTest):
                 )
 
     def test_rejected_token(self):
-        with mock.patch.object(web, "get_user", side_effect=unauthorized()):
+        with mock.patch.object(ynab_auth, "get_user", side_effect=unauthorized()):
             response = self.post({"token": "bad-token"})
         self.assertEqual(response.status_code, 401)
         self.assertIn("YNAB rejected this token", response.get_json()["error"])
@@ -195,13 +228,13 @@ class TokenTest(WebTest):
         error = exceptions.ApiException(
             status=500, reason="Server Error", body='{"error": {"detail": "try later"}}'
         )
-        with mock.patch.object(web, "get_user", side_effect=error):
+        with mock.patch.object(ynab_auth, "get_user", side_effect=error):
             response = self.post({"token": "test-token"})
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.get_json()["error"], "YNAB returned 500: try later")
 
     def test_connects_for_this_session(self):
-        with mock.patch.object(web, "get_user") as get_user:
+        with mock.patch.object(ynab_auth, "get_user") as get_user:
             response = self.post({"token": "  test-token  ", "remember": True})
         get_user.assert_called_once_with("test-token")
         self.assertEqual(
@@ -214,7 +247,7 @@ class TokenTest(WebTest):
 
     def test_remembered(self):
         self.available.return_value = True
-        with mock.patch.object(web, "get_user"):
+        with mock.patch.object(ynab_auth, "get_user"):
             response = self.post({"token": "test-token", "remember": True})
         self.save_token.assert_called_once_with("test-token")
         self.assertEqual(response.get_json()["token_kind"], "saved")
@@ -222,7 +255,7 @@ class TokenTest(WebTest):
 
     def test_not_remembered_unless_asked(self):
         self.available.return_value = True
-        with mock.patch.object(web, "get_user"):
+        with mock.patch.object(ynab_auth, "get_user"):
             self.post({"token": "test-token"})
         self.save_token.assert_not_called()
 
@@ -230,7 +263,7 @@ class TokenTest(WebTest):
         self.available.return_value = True
         self.store_name.return_value = "Test Store"
         self.save_token.return_value = False
-        with mock.patch.object(web, "get_user"):
+        with mock.patch.object(ynab_auth, "get_user"):
             body = self.post({"token": "test-token", "remember": True}).get_json()
         self.assertEqual(body["token_kind"], "personal")
         self.assertEqual(
@@ -246,7 +279,7 @@ class TokenTest(WebTest):
             expires_at=1,
             skip_saved=True,
         )
-        with mock.patch.object(web, "get_user"):
+        with mock.patch.object(ynab_auth, "get_user"):
             self.post({"token": "test-token"})
         state = self.state()
         self.assertEqual(state, {"access_token": "test-token", "token_kind": "personal"})
@@ -268,7 +301,7 @@ class OAuthTest(WebTest):
         response = self.client.get("/oauth/login")
         self.assertEqual(response.status_code, 302)
         url = urllib.parse.urlparse(response.location)
-        self.assertEqual(f"{url.scheme}://{url.netloc}{url.path}", web.YNAB_AUTHORIZE_URL)
+        self.assertEqual(f"{url.scheme}://{url.netloc}{url.path}", ynab_auth.YNAB_AUTHORIZE_URL)
         query = urllib.parse.parse_qs(url.query)
         with self.client.session_transaction() as session:
             state = session["oauth_state"]
@@ -276,7 +309,7 @@ class OAuthTest(WebTest):
             query,
             {
                 "client_id": ["client-id"],
-                "redirect_uri": [web.REDIRECT_URI],
+                "redirect_uri": [config.REDIRECT_URI],
                 "response_type": ["code"],
                 "state": [state],
             },
@@ -300,19 +333,21 @@ class OAuthTest(WebTest):
             ({"state": "state-1", "code": "c"}, None),
         ):
             with self.subTest(query=query, session_state=session_state):
-                with mock.patch.object(web, "_exchange_token") as exchange:
+                with mock.patch.object(ynab_oauth, "exchange_token") as exchange:
                     response = self.callback(query, session_state)
                 self.assertEqual(response.location, "/?oauth_error=state_mismatch")
                 exchange.assert_not_called()
 
     def test_callback_exchange_fails(self):
-        with mock.patch.object(web, "_exchange_token", side_effect=urllib.error.URLError("down")):
+        with mock.patch.object(
+            ynab_oauth, "exchange_token", side_effect=urllib.error.URLError("down")
+        ):
             response = self.callback({"state": "state-1", "code": "c"})
         self.assertEqual(response.location, "/?oauth_error=token_exchange_failed")
 
     def test_callback_stores_tokens(self):
         token = {"access_token": "oauth-token", "refresh_token": "rt", "expires_in": 7200}
-        with mock.patch.object(web, "_exchange_token", return_value=token) as exchange:
+        with mock.patch.object(ynab_oauth, "exchange_token", return_value=token) as exchange:
             response = self.callback({"state": "state-1", "code": "code-1"})
         self.assertEqual(response.location, "/")
         exchange.assert_called_once_with(grant_type="authorization_code", code="code-1")
@@ -328,22 +363,22 @@ class OAuthTest(WebTest):
     def test_exchange_token_request(self):
         self.oauth_env()
         with mock.patch.object(
-            web.urllib.request,
+            ynab_oauth.urllib.request,
             "urlopen",
             return_value=io.BytesIO(b'{"access_token": "oauth-token"}'),
         ) as urlopen:
-            token = web._exchange_token(grant_type="refresh_token", refresh_token="rt")
+            token = ynab_oauth.exchange_token(grant_type="refresh_token", refresh_token="rt")
         self.assertEqual(token, {"access_token": "oauth-token"})
         url = urlopen.call_args.args[0]
         body = urllib.parse.parse_qs(urlopen.call_args.kwargs["data"].decode())
-        self.assertEqual(url, web.YNAB_TOKEN_URL)
+        self.assertEqual(url, ynab_oauth.YNAB_TOKEN_URL)
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 30)
         self.assertEqual(
             body,
             {
                 "client_id": ["client-id"],
                 "client_secret": ["client-secret"],
-                "redirect_uri": [web.REDIRECT_URI],
+                "redirect_uri": [config.REDIRECT_URI],
                 "grant_type": ["refresh_token"],
                 "refresh_token": ["rt"],
             },
@@ -371,21 +406,22 @@ class LogoutTest(WebTest):
 class GetTokenTest(WebTest):
     def test_personal_and_saved_tokens_never_refresh(self):
         for kind in ("personal", "saved"):
-            with self.subTest(kind), mock.patch.object(web, "_exchange_token") as exchange:
+            with self.subTest(kind), mock.patch.object(ynab_oauth, "exchange_token") as exchange:
                 self.assertEqual(
-                    web.get_token({"access_token": "t", "token_kind": kind, "expires_at": 0}), "t"
+                    ynab_auth.get_token({"access_token": "t", "token_kind": kind, "expires_at": 0}),
+                    "t",
                 )
                 exchange.assert_not_called()
 
     def test_loads_the_saved_token(self):
         self.load_token.return_value = "saved-token"
         state = {}
-        self.assertEqual(web.get_token(state), "saved-token")
+        self.assertEqual(ynab_auth.get_token(state), "saved-token")
         self.assertEqual(state, {"access_token": "saved-token", "token_kind": "saved"})
-        self.assertIsNone(web.get_token({"skip_saved": True}))
+        self.assertIsNone(ynab_auth.get_token({"skip_saved": True}))
 
     def test_not_connected(self):
-        self.assertIsNone(web.get_token({}))
+        self.assertIsNone(ynab_auth.get_token({}))
 
     def test_oauth_token_still_valid(self):
         state = {
@@ -393,8 +429,8 @@ class GetTokenTest(WebTest):
             "token_kind": "oauth",
             "expires_at": time.time() + 3600,
         }
-        with mock.patch.object(web, "_exchange_token") as exchange:
-            self.assertEqual(web.get_token(state), "oauth-token")
+        with mock.patch.object(ynab_oauth, "exchange_token") as exchange:
+            self.assertEqual(ynab_auth.get_token(state), "oauth-token")
         exchange.assert_not_called()
 
     def test_oauth_token_about_to_expire_is_refreshed(self):
@@ -405,9 +441,9 @@ class GetTokenTest(WebTest):
             "expires_at": time.time() + 30,
         }
         with mock.patch.object(
-            web, "_exchange_token", return_value={"access_token": "new", "expires_in": 60}
+            ynab_oauth, "exchange_token", return_value={"access_token": "new", "expires_in": 60}
         ) as exchange:
-            self.assertEqual(web.get_token(state), "new")
+            self.assertEqual(ynab_auth.get_token(state), "new")
         exchange.assert_called_once_with(grant_type="refresh_token", refresh_token="rt")
         self.assertEqual(state["refresh_token"], "rt")  # kept when YNAB doesn't send a new one
 
@@ -418,13 +454,15 @@ class GetTokenTest(WebTest):
             "refresh_token": "rt",
             "expires_at": 0,
         }
-        with mock.patch.object(web, "_exchange_token", side_effect=urllib.error.URLError("down")):
-            self.assertIsNone(web.get_token(state))
+        with mock.patch.object(
+            ynab_oauth, "exchange_token", side_effect=urllib.error.URLError("down")
+        ):
+            self.assertIsNone(ynab_auth.get_token(state))
         self.assertEqual(state, {})
 
     def test_no_refresh_token(self):
         state = {"access_token": "old", "token_kind": "oauth", "expires_at": 0}
-        self.assertIsNone(web.get_token(state))
+        self.assertIsNone(ynab_auth.get_token(state))
 
 
 # =============================================================================
@@ -434,7 +472,7 @@ class GetTokenTest(WebTest):
 
 class YnabCallTest(WebTest):
     def plans(self, side_effect):
-        with mock.patch.object(web, "get_plans", side_effect=side_effect) as get_plans:
+        with mock.patch.object(upload, "get_plans", side_effect=side_effect) as get_plans:
             response = self.client.get("/api/plans")
         return response, get_plans
 
@@ -475,7 +513,9 @@ class YnabCallTest(WebTest):
 
     def test_oauth_token_refreshed_once_and_retried(self):
         self.connected("oauth", refresh_token="rt", expires_at=time.time() + 3600)
-        with mock.patch.object(web, "_exchange_token", return_value={"access_token": "new-token"}):
+        with mock.patch.object(
+            ynab_oauth, "exchange_token", return_value={"access_token": "new-token"}
+        ):
             response, get_plans = self.plans([unauthorized(), ["plan"]])
         self.assertEqual(response.get_json(), ["plan"])
         self.assertEqual(
@@ -484,7 +524,9 @@ class YnabCallTest(WebTest):
 
     def test_oauth_rejected_after_refresh(self):
         self.connected("oauth", refresh_token="rt", expires_at=time.time() + 3600)
-        with mock.patch.object(web, "_exchange_token", return_value={"access_token": "new-token"}):
+        with mock.patch.object(
+            ynab_oauth, "exchange_token", return_value={"access_token": "new-token"}
+        ):
             response, get_plans = self.plans([unauthorized(), unauthorized()])
         self.assertEqual(response.status_code, 401)
         self.assertEqual(
@@ -531,17 +573,17 @@ class YnabCallTest(WebTest):
         )
         bad_body = exceptions.ApiException(status=400, reason="the reason", body="<html>")
         nothing = exceptions.ApiException(status=400)
-        self.assertEqual(web._error_detail(with_data), "from data")
-        self.assertEqual(web._error_detail(with_body), "from body")
-        self.assertEqual(web._error_detail(bad_body), "the reason")
-        self.assertEqual(web._error_detail(nothing), "Unknown error")
+        self.assertEqual(ynab_auth._error_detail(with_data), "from data")
+        self.assertEqual(ynab_auth._error_detail(with_body), "from body")
+        self.assertEqual(ynab_auth._error_detail(bad_body), "the reason")
+        self.assertEqual(ynab_auth._error_detail(nothing), "Unknown error")
 
     def test_accounts(self):
         self.connected()
         accounts = [
             {"id": ACCOUNT_ID, "name": "Test Wallet", "type": "checking", "balance": "₱0.00"}
         ]
-        with mock.patch.object(web, "get_accounts", return_value=accounts) as get_accounts:
+        with mock.patch.object(upload, "get_accounts", return_value=accounts) as get_accounts:
             response = self.client.get(f"/api/plans/{PLAN_ID}/accounts")
         self.assertEqual(response.get_json(), accounts)
         get_accounts.assert_called_once_with(PLAN_ID, "test-token")
@@ -588,7 +630,7 @@ class ParseTest(WebTest):
         for error, message in cases:
             with (
                 self.subTest(message),
-                mock.patch.object(web, "parse_statement", side_effect=error),
+                mock.patch.object(upload, "parse_statement", side_effect=error),
             ):
                 response = self.post(self.pdf())
             self.assertEqual(response.status_code, 400)
@@ -597,7 +639,7 @@ class ParseTest(WebTest):
     def test_unexpected_parse_error_logs_only_its_type(self):
         error = RuntimeError("/internal/path/x.py")
         with (
-            mock.patch.object(web, "parse_statement", side_effect=error),
+            mock.patch.object(upload, "parse_statement", side_effect=error),
             self.assertLogs(web.app.logger, level="WARNING") as logs,
         ):
             self.post(self.pdf())
@@ -607,7 +649,9 @@ class ParseTest(WebTest):
         )
 
     def test_parsed_statement(self):
-        with mock.patch.object(web, "parse_statement", return_value=(ROWS, TRANSACTIONS)) as parse:
+        with mock.patch.object(
+            upload, "parse_statement", return_value=(ROWS, TRANSACTIONS)
+        ) as parse:
             response = self.post(self.pdf())
         self.assertEqual(response.status_code, 200)
         pdf, password, source = parse.call_args.args
@@ -677,14 +721,14 @@ def starting_check(**kwargs):
 
 class CheckJsonTest(unittest.TestCase):
     def test_money(self):
-        self.assertIsNone(web._money(None))
-        self.assertEqual(web._money(Decimal("1234.5")), "1,234.50")
-        self.assertEqual(web._money(Decimal("-0.5")), "-0.50")
+        self.assertIsNone(upload._money(None))
+        self.assertEqual(upload._money(Decimal("1234.5")), "1,234.50")
+        self.assertEqual(upload._money(Decimal("-0.5")), "-0.50")
 
     def test_check_json(self):
         check = starting_check(already_in_ynab=1, to_upload=2)
         self.assertEqual(
-            web._check_json(check),
+            upload._check_json(check),
             {
                 "kind": "starting",
                 "matches": False,
@@ -695,7 +739,7 @@ class CheckJsonTest(unittest.TestCase):
                 "difference": "+734.50",
                 "already_in_ynab": 1,
                 "to_upload": 2,
-                "message": web.balance_check_message(check),
+                "message": upload.balance_check_message(check),
             },
         )
 
@@ -709,7 +753,7 @@ class CheckJsonTest(unittest.TestCase):
             "matches": True,
             "new_account": None,
         }
-        result = web._check_json(check)
+        result = upload._check_json(check)
         self.assertEqual(
             (result["ynab_before"], result["already_in_ynab"], result["to_upload"]), (None, 0, None)
         )
@@ -741,9 +785,9 @@ class StartingBalanceTest(WebTest):
     def test_check(self):
         self.parsed()
         check = starting_check()
-        with mock.patch.object(web, "starting_balance_check", return_value=check) as start:
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
             response = self.post(TARGET)
-        self.assertEqual(response.get_json(), web._check_json(check))
+        self.assertEqual(response.get_json(), upload._check_json(check))
         start.assert_called_once_with(
             ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash"
         )
@@ -826,7 +870,7 @@ class UploadTest(WebTest):
                 ],
                 "skipped": 1,
                 "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
-                "ending_check": web._check_json(self.ending),
+                "ending_check": upload._check_json(self.ending),
                 "ending_check_error": None,
                 "new_account_message": None,
             },
@@ -893,7 +937,7 @@ class MainTest(WebTest):
         stderr = io.StringIO()
         with mock.patch.object(web.app, "run") as run, contextlib.redirect_stderr(stderr):
             web.main()
-        run.assert_called_once_with(host="127.0.0.1", port=web.PORT, debug=False)
+        run.assert_called_once_with(host="127.0.0.1", port=config.PORT, debug=False)
         return stderr.getvalue()
 
     def test_binds_to_this_computer_only(self):
@@ -901,7 +945,7 @@ class MainTest(WebTest):
         out = self.run_main()
         self.assertNotIn("FLASK_SECRET_KEY", out)
         self.assertIn("Enter your YNAB personal access token on the page to connect.", out)
-        self.assertIn(f"Open http://localhost:{web.PORT}", out)
+        self.assertIn(f"Open http://localhost:{config.PORT}", out)
         self.assertNotIn("OAuth", out)
 
     def test_messages(self):
@@ -913,7 +957,7 @@ class MainTest(WebTest):
         self.assertIn("Note: FLASK_SECRET_KEY not set", out)
         self.assertIn("Using the saved YNAB token from the Test Store.", out)
         self.assertNotIn("saved-secret-token", out)  # never print the token
-        self.assertIn(f"YNAB OAuth also available (redirect URI: {web.REDIRECT_URI}).", out)
+        self.assertIn(f"YNAB OAuth also available (redirect URI: {config.REDIRECT_URI}).", out)
 
     def test_python_dash_m(self):
         with mock.patch.object(web, "main") as main:

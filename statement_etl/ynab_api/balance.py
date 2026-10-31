@@ -26,7 +26,7 @@ The check after the upload (YNAB balance vs. the statement's ending balance)
 is ynab_api.client.check_ending_balance(). It returns the same result shape, so
 balance_check_message() works for both.
 
-Used by ph-statement-import: pipeline.py (command line) and app.py
+Used by ph-statement-import: pipeline.py (command line) and web/upload.py
 (web page).
 
 Requirements:

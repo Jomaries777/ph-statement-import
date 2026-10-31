@@ -1,0 +1,250 @@
+"""
+ph-statement-import - the page and the statement upload steps (Blueprint "upload").
+
+Routes, in the order the page uses them:
+    GET  /                              - the page (templates/index.html)
+    GET  /api/status                    - restore the page after a reload or the OAuth redirect
+    POST /api/parse                     - ① parse the statement PDF (in memory only)
+    GET  /api/plans                     - ③ the Plan dropdown
+    GET  /api/plans/<plan_id>/accounts  - ③ the Account dropdown
+    POST /api/starting-balance          - ④ check before the upload
+    POST /api/upload                    - ④ upload, then the ending balance check
+
+Step ② (connecting to YNAB) is in ynab_auth.py. Parsing, the starting balance
+check and the upload reuse pipeline.parse_statement(), starting_balance_check()
+and import_statement(), the same functions as the command line.
+"""
+
+import io
+
+from flask import Blueprint, current_app, jsonify, render_template, request
+
+from statement_etl.parsers.common import StatementError
+from statement_etl.pipeline import (
+    import_statement,
+    parse_statement,
+    starting_balance_check,
+)
+from statement_etl.sources import DEFAULT_SOURCE, SOURCES
+from statement_etl.web import token_store
+from statement_etl.web.state import error_response, session_state
+from statement_etl.web.ynab_auth import api_error_message, get_token, ynab_call
+from statement_etl.web.ynab_oauth import oauth_configured
+from statement_etl.ynab_api.accounts import get_accounts, get_plans, get_user
+from statement_etl.ynab_api.balance import (
+    balance_check_message,
+    new_account_message,
+)
+
+blueprint = Blueprint("upload", __name__)
+
+
+@blueprint.get("/")
+def index():
+    return render_template("index.html", sources=SOURCES.values(), default_source=DEFAULT_SOURCE)
+
+
+@blueprint.get("/api/status")
+def api_status():
+    """Is YNAB connected, and is a parsed statement waiting? Restores the page
+    after a reload or the OAuth redirect."""
+    state = session_state()
+    connected, connect_error = False, None
+    get_token(state)  # loads the saved token, if there is one
+    if state.get("access_token"):
+        _, err = ynab_call(get_user)  # confirms the token still works
+        connected = err is None
+        if err:
+            connect_error = err[0].get_json()["error"]
+    return jsonify(
+        {
+            "connected": connected,
+            "connect_error": connect_error,
+            "token_kind": state.get("token_kind") if connected else None,
+            "oauth_configured": oauth_configured(),
+            # show "Remember this token on this computer" only with a secure store
+            "remember_available": token_store.available(),
+            "store_name": token_store.store_name(),
+            "parsed": state.get("parsed"),
+        }
+    )
+
+
+@blueprint.post("/api/parse")
+def api_parse():
+    """Parse the uploaded PDF (kept in memory only) and keep the transactions for upload."""
+    upload = request.files.get("pdf")
+    password = request.form.get("password", "")
+    source = request.form.get("source") or DEFAULT_SOURCE
+    if source not in SOURCES:
+        known = ", ".join(sorted(SOURCES))
+        return error_response(f"Unknown source {source!r}. Known sources: {known}", 400)
+    src = SOURCES[source]
+    if not upload or not upload.filename:
+        return error_response("Choose a PDF file.", 400)
+
+    try:
+        rows, transactions = parse_statement(io.BytesIO(upload.read()), password, source)
+    except StatementError as e:
+        # Written for the user (wrong password, totals off), so shown as it is
+        return error_response(str(e), 400)
+    except Exception as e:  # noqa: BLE001 - e.g. not a PDF at all
+        # Any other error can carry internal details, so the page gets a fixed message
+        # and the log gets only the error type (never the PDF or its contents).
+        current_app.logger.warning("Could not read the uploaded PDF: %s", type(e).__name__)
+        return error_response("Could not read the PDF. Is it the statement PDF?", 400)
+
+    # Statement rows vs. balance-correction rows added by the parser
+    real_rows = [r for r in rows if not src.is_correction_row(r)]
+    balances = src.statement_balances(rows)
+    parsed = {
+        "source": source,
+        "source_name": src.name,
+        "filename": upload.filename,
+        # the statement's own columns; the page styles them from the lists below
+        "columns": list(src.columns),
+        "rows": [[row[c] for c in src.columns] for row in rows],
+        "amount_columns": list(src.amount_columns),
+        "money_in_columns": list(src.money_in_columns),
+        "money_out_columns": list(src.money_out_columns),
+        "text_column": src.text_column,
+        # indexes in "rows" of the balance-correction rows (highlighted on the page)
+        "correction_rows": [i for i, r in enumerate(rows) if src.is_correction_row(r)],
+        # one line under the table, e.g. the statement's totals
+        "summary": src.summary(rows),
+        "statement_count": len(real_rows),
+        "count": len(transactions),  # what will be uploaded, corrections included
+        # running-balance check; empty / None when the statement adds up
+        "corrections": [
+            {**c, "amount": f"{c['amount']:+,.2f}"} for c in src.balance_corrections(rows)
+        ],
+        "balance_warning": src.balance_warning(rows),
+        # compared with the YNAB account balance before / after the upload
+        "starting_balance": f"{balances['starting']:,.2f}",
+        "ending_balance": f"{balances['ending']:,.2f}",
+    }
+    state = session_state()
+    state["source"] = source
+    state["rows"] = rows
+    state["transactions"] = transactions
+    state["parsed"] = parsed
+    return jsonify(parsed)
+
+
+@blueprint.get("/api/plans")
+def api_plans():
+    plans, err = ynab_call(get_plans)
+    return err or jsonify(plans)
+
+
+@blueprint.get("/api/plans/<plan_id>/accounts")
+def api_accounts(plan_id):
+    accounts, err = ynab_call(lambda token: get_accounts(plan_id, token))
+    return err or jsonify(accounts)
+
+
+def _check_json(check):
+    """A balance check (from ynab_api.balance / ynab_api.client) as JSON for the page."""
+    return {
+        "kind": check["kind"],
+        "matches": check["matches"],
+        "new_account": check["new_account"] is not None,
+        "statement": f"{check['statement']:,.2f}",
+        "ynab_before": _money(check["ynab_before"]),
+        "ynab_after": _money(check["ynab_after"]),
+        "difference": f"{check['difference']:+,.2f}",
+        # starting check: transactions YNAB already has (skipped on upload)
+        "already_in_ynab": check.get("already_in_ynab") or 0,
+        "to_upload": check.get("to_upload"),
+        "message": balance_check_message(check),
+    }
+
+
+def _money(amount):
+    """Decimal -> "1,234.56"; None stays None."""
+    return None if amount is None else f"{amount:,.2f}"
+
+
+@blueprint.post("/api/starting-balance")
+def api_starting_balance():
+    """Before the upload: YNAB account balance vs. the statement's starting balance.
+
+    A mismatch is returned as a warning; the page still allows the upload.
+    """
+    state = session_state()
+    rows, transactions = state.get("rows"), state.get("transactions")
+    body = request.get_json(silent=True) or {}
+    plan_id, account_id = body.get("plan_id"), body.get("account_id")
+    if not rows:
+        return error_response("Parse a statement first.", 400)
+    if not plan_id or not account_id:
+        return error_response("Choose a plan and an account.", 400)
+
+    check, err = ynab_call(
+        lambda token: starting_balance_check(
+            rows, transactions, account_id, plan_id, token, source=state["source"]
+        )
+    )
+    return err or jsonify(_check_json(check))
+
+
+@blueprint.post("/api/upload")
+def api_upload():
+    """Send the parsed transactions to the chosen plan / account.
+
+    Before: a newly created account gets its Starting Balance set to the
+    statement's. After: the YNAB balance is compared with the statement's
+    ending balance (a warning only).
+    """
+    state = session_state()
+    transactions = state.get("transactions")
+    body = request.get_json(silent=True) or {}
+    plan_id, account_id = body.get("plan_id"), body.get("account_id")
+    if not transactions:
+        return error_response("Parse a statement first.", 400)
+    if not plan_id or not account_id:
+        return error_response("Choose a plan and an account.", 400)
+
+    rows = state["rows"]
+
+    # New account's Starting Balance, upload, ending balance check. After a
+    # token refresh ynab_call() runs it again, which is safe: YNAB skips
+    # import_ids it already has, and the Starting Balance already matches.
+    imported, err = ynab_call(
+        lambda token: import_statement(
+            rows, transactions, account_id, plan_id, token, source=state["source"]
+        )
+    )
+    if err:
+        return err
+
+    created = [
+        {
+            "date": str(t.var_date),
+            "payee": t.payee_name or "",
+            "category": t.category_name or "Uncategorized",
+            "memo": t.memo or "",
+            "amount": t.amount,  # milliunits; the page formats it
+            # "red" on balance-correction rows, so the page can highlight them
+            "flag": t.flag_color.value if t.flag_color else "",
+        }
+        for t in imported.created
+    ]
+
+    # The upload is already done, so a failed ending check is reported, not an error
+    ending_check = _check_json(imported.ending_check) if imported.ending_check else None
+    ending_error = api_error_message(imported.ending_error)[0] if imported.ending_error else None
+
+    return jsonify(
+        {
+            "created": created,
+            "skipped": imported.skipped,
+            "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
+            "ending_check": ending_check,
+            "ending_check_error": ending_error,
+            # set when a new account's Starting Balance was set (or already matched)
+            "new_account_message": (
+                new_account_message(imported.new_account) if imported.new_account else None
+            ),
+        }
+    )

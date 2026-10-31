@@ -23,7 +23,7 @@ statement_etl/sources.py                                        (format, upload,
 
 Entry points sit on top of the pipeline:
 - **Pipeline (`statement_etl/pipeline.py`):** Three steps every caller uses: `parse_statement()`, `starting_balance_check()` (shown before the upload), and `import_statement()`, the one place that imports: it sets a new account's Starting Balance, uploads, and checks the ending balance, returning an `ImportResult`. Also the CLI (`python -m statement_etl.pipeline`).
-- **Web app (`statement_etl/web/`):** Local Flask web UI (`python -m statement_etl.web`) that calls the same three pipeline steps as the CLI and stores personal access tokens in the OS keyring (`token_store.py`).
+- **Web app (`statement_etl/web/`):** Local Flask web UI (`python -m statement_etl.web`), split into two blueprints: `upload.py` (the page and the import steps) and `ynab_auth.py` (connecting to YNAB). It calls the same three pipeline steps as the CLI and stores personal access tokens in the OS keyring (`token_store.py`).
 - **Auto-import runner (planned in P5):** Background polling for emailed statements, calling the same `parse_statement()` and `import_statement()`.
 
 ## Extending the app
@@ -45,7 +45,12 @@ Entry points sit on top of the pipeline:
 | `statement_etl/ynab_api/client.py` | YNAB SDK client setup, duplicate `import_id` lookup, batch transaction upload, and ending balance check |
 | `statement_etl/ynab_api/accounts.py` | Fetching YNAB user info, plans (budgets), and accounts |
 | `statement_etl/ynab_api/balance.py` | Comparing statement balances with YNAB account balances and setting `Starting Balance` on newly created YNAB accounts |
-| `statement_etl/web/app.py` | Flask routes, session state, OAuth flow, and JSON endpoints for the web UI |
+| `statement_etl/web/app.py` | Creates the Flask `app`, registers the blueprints, and `main()` (`python -m statement_etl.web`) |
+| `statement_etl/web/upload.py` | Blueprint `upload`: the page, `/api/status`, `/api/parse`, plans and accounts, the starting balance check, and `/api/upload` |
+| `statement_etl/web/ynab_auth.py` | Blueprint `ynab_auth`: `/oauth/*` and `/api/token`; `get_token()` and `ynab_call()`, which every YNAB call from the page goes through |
+| `statement_etl/web/ynab_oauth.py` | YNAB OAuth token exchange and refresh, with no Flask session (so a background job can use it) |
+| `statement_etl/web/state.py` | `STORE`, each browser's server-side state (tokens and parsed rows, in memory only) |
+| `statement_etl/web/config.py` | `PORT` and the OAuth `REDIRECT_URI`; loads `.env` |
 | `statement_etl/web/token_store.py` | Saving and deleting the YNAB personal access token in the OS secure store via `keyring` |
 | `statement_etl/web/templates/index.html` | Single-file HTML/CSS/JS front-end for the 4-step import workflow |
 

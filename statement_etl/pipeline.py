@@ -42,9 +42,9 @@ How it works:
 
 Who uses what:
     Command line - main() -> run_pipeline(), which prints and exits on errors.
-    Web app      - app.py calls parse_statement(), starting_balance_check() and
-                   import_statement(); they raise errors instead of exiting, so
-                   the page can show them. app.py never calls run_pipeline().
+    Web app      - web/upload.py calls parse_statement(), starting_balance_check()
+                   and import_statement(); they raise errors instead of exiting,
+                   so the page can show them. It never calls run_pipeline().
 
 Adding another e-wallet or bank needs no change here: register it in
 sources.py (see docs/adding-an-e-wallet.md).
@@ -105,7 +105,7 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 # STEPS - parse and upload (REUSABLE)
 #
 # Plain functions that raise errors instead of exiting. Used by both the
-# command line (run_pipeline below) and the web app (app.py).
+# command line (run_pipeline below) and the web app (web/upload.py).
 # =============================================================================
 
 
@@ -113,7 +113,7 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
     """ph-statement-import step: parse a statement PDF from `source` and
     convert the rows into YNAB transactions.
 
-    Used by run_pipeline() and by app.py. Raises instead of exiting, so the
+    Used by run_pipeline() and by web/upload.py. Raises instead of exiting, so the
     web app can show the error on the page.
 
     Args:
@@ -150,7 +150,7 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
 def upload_transactions(transactions, account_id, plan_id, access_token=None):
     """ph-statement-import step: send YNAB transactions to YNAB in one API call.
 
-    Used by run_pipeline() and by app.py. access_token is the web app's token
+    Used by run_pipeline() and by web/upload.py. access_token is the web app's token
     (BEARER_TOKEN or OAuth); None uses $BEARER_TOKEN from .env.
 
     Returns the SaveTransactionsResponseData (transactions, duplicate_import_ids).

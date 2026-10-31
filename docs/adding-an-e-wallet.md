@@ -264,7 +264,7 @@ For UI fixes or improvements, unrelated to adding a source.
 - four cards in the HTML: ① Statement, ② YNAB, ③ Plan & Account, ④ Upload
 - `<script>` at the bottom, in sections that match the cards (`// ---- ① Statement ----` and so on), plus shared helpers (`renderTable`, `message`, `api`) and the restore-on-load code at the end
 
-**The API it calls**, in `statement_etl/web/app.py`:
+**The API it calls**, in `statement_etl/web/upload.py` (② YNAB connection: `statement_etl/web/ynab_auth.py`):
 
 | Route | Used by |
 |---|---|
