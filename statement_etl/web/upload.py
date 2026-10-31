@@ -27,6 +27,8 @@ from statement_etl.pipeline import (
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES
 from statement_etl.web import token_store
+from statement_etl.web.config import HOSTED
+from statement_etl.web.limits import PARSE_LIMIT, limiter
 from statement_etl.web.state import error_response, session_state
 from statement_etl.web.ynab_auth import api_error_message, get_token, ynab_call
 from statement_etl.web.ynab_oauth import oauth_configured
@@ -41,7 +43,13 @@ blueprint = Blueprint("upload", __name__)
 
 @blueprint.get("/")
 def index():
-    return render_template("index.html", sources=SOURCES.values(), default_source=DEFAULT_SOURCE)
+    return render_template(
+        "index.html",
+        sources=SOURCES.values(),
+        default_source=DEFAULT_SOURCE,
+        # hosted mode: no personal access token field, only "Connect with YNAB login"
+        token_allowed=not HOSTED,
+    )
 
 
 @blueprint.get("/api/status")
@@ -62,15 +70,19 @@ def api_status():
             "connect_error": connect_error,
             "token_kind": state.get("token_kind") if connected else None,
             "oauth_configured": oauth_configured(),
-            # show "Remember this token on this computer" only with a secure store
-            "remember_available": token_store.available(),
-            "store_name": token_store.store_name(),
+            # personal access tokens: local mode only (hosted mode is OAuth only)
+            "token_allowed": not HOSTED,
+            # show "Remember this token on this computer" only with a secure store,
+            # and never in hosted mode (the server's store would be shared)
+            "remember_available": not HOSTED and token_store.available(),
+            "store_name": None if HOSTED else token_store.store_name(),
             "parsed": state.get("parsed"),
         }
     )
 
 
 @blueprint.post("/api/parse")
+@limiter.limit(PARSE_LIMIT)
 def api_parse():
     """Parse the uploaded PDF (kept in memory only) and keep the transactions for upload."""
     upload = request.files.get("pdf")
@@ -194,7 +206,8 @@ def api_upload():
 
     Before: a newly created account gets its Starting Balance set to the
     statement's. After: the YNAB balance is compared with the statement's
-    ending balance (a warning only).
+    ending balance (a warning only). In hosted mode the statement is then
+    dropped from the server: it's in YNAB now.
     """
     state = session_state()
     transactions = state.get("transactions")
@@ -217,6 +230,9 @@ def api_upload():
     )
     if err:
         return err
+    if HOSTED:
+        for key in ("source", "rows", "transactions", "parsed"):
+            state.pop(key, None)
 
     created = [
         {

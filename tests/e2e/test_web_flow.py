@@ -22,11 +22,13 @@ import os
 import re
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 import tests  # noqa: F401 - the safety net: nothing reaches YNAB or the keyring
 from tests.e2e import fake_ynab, make_pdf
 from tests.e2e.fake_server import FakeServer
+from tests.hosted import PUBLIC_URL, hosted_mode
 
 try:
     from playwright.sync_api import Error as PlaywrightError
@@ -46,11 +48,66 @@ PDF_PASSWORD = "not-a-real-password"
     sync_playwright is None and not REQUIRE_E2E,
     "Playwright not installed (pip install -r requirements-dev.txt)",
 )
-class WebFlowTest(unittest.TestCase):
+class BrowserTest(unittest.TestCase):
+    """Headless Chromium on the web app with the fake YNAB; hosted = True for hosted mode."""
+
+    hosted = False
+
     @classmethod
     def setUpClass(cls):
         if sync_playwright is None:
             raise RuntimeError("REQUIRE_E2E=1 but Playwright is not installed")
+        if cls.hosted:
+            cls.enterClassContext(hosted_mode())  # before the server takes the app
+        cls.server = FakeServer().start()
+        cls.addClassCleanup(cls.server.stop)
+        cls.playwright = sync_playwright().start()
+        cls.addClassCleanup(cls.playwright.stop)
+        try:
+            cls.browser = cls.playwright.chromium.launch()
+        except PlaywrightError as e:
+            if REQUIRE_E2E:
+                raise
+            raise unittest.SkipTest(
+                f"Chromium not installed (python -m playwright install chromium): {e}"
+            ) from None
+        cls.addClassCleanup(cls.browser.close)
+        expect.set_options(timeout=TIMEOUT_MS)
+
+    def setUp(self):
+        self.server.reset()
+        self.ynab = self.server.ynab
+        self.context = self.browser.new_context()
+        self.context.set_default_timeout(TIMEOUT_MS)
+        self.context.tracing.start(screenshots=True, snapshots=True)
+        self.page = self.context.new_page()
+        # Errors in the browser console, e.g. code the Content-Security-Policy blocked
+        self.console_errors = []
+        self.page.on("console", lambda m: m.type == "error" and self.console_errors.append(m.text))
+        # networkidle: the page's start-up /api/status call has finished, so it
+        # can't undo what the test does next
+        self.page.goto(self.server.url, wait_until="networkidle")
+
+    def tearDown(self):
+        # unittest marks the outcome before tearDown runs
+        failed = not getattr(self._outcome, "success", True)
+        name = re.sub(r"[^\w.-]", "_", self.id())
+        try:
+            if failed:
+                RESULTS_DIR.mkdir(exist_ok=True)
+                self.page.screenshot(path=RESULTS_DIR / f"{name}.png", full_page=True)
+                self.context.tracing.stop(path=RESULTS_DIR / f"{name}-trace.zip")
+            else:
+                self.context.tracing.stop()
+        finally:
+            self.context.close()
+
+
+class WebFlowTest(BrowserTest):
+    """Local mode: the 4 steps with a personal access token."""
+
+    @classmethod
+    def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.tmp.cleanup)
         folder = Path(cls.tmp.name)
@@ -77,46 +134,7 @@ class WebFlowTest(unittest.TestCase):
             make_pdf.BALANCED_STARTING,
             "1200.00",
         )
-
-        cls.server = FakeServer().start()
-        cls.addClassCleanup(cls.server.stop)
-        cls.playwright = sync_playwright().start()
-        cls.addClassCleanup(cls.playwright.stop)
-        try:
-            cls.browser = cls.playwright.chromium.launch()
-        except PlaywrightError as e:
-            if REQUIRE_E2E:
-                raise
-            raise unittest.SkipTest(
-                f"Chromium not installed (python -m playwright install chromium): {e}"
-            ) from None
-        cls.addClassCleanup(cls.browser.close)
-        expect.set_options(timeout=TIMEOUT_MS)
-
-    def setUp(self):
-        self.server.reset()
-        self.ynab = self.server.ynab
-        self.context = self.browser.new_context()
-        self.context.set_default_timeout(TIMEOUT_MS)
-        self.context.tracing.start(screenshots=True, snapshots=True)
-        self.page = self.context.new_page()
-        # networkidle: the page's start-up /api/status call has finished, so it
-        # can't undo what the test does next
-        self.page.goto(self.server.url, wait_until="networkidle")
-
-    def tearDown(self):
-        # unittest marks the outcome before tearDown runs
-        failed = not getattr(self._outcome, "success", True)
-        name = re.sub(r"[^\w.-]", "_", self.id())
-        try:
-            if failed:
-                RESULTS_DIR.mkdir(exist_ok=True)
-                self.page.screenshot(path=RESULTS_DIR / f"{name}.png", full_page=True)
-                self.context.tracing.stop(path=RESULTS_DIR / f"{name}-trace.zip")
-            else:
-                self.context.tracing.stop()
-        finally:
-            self.context.close()
+        super().setUpClass()
 
     # ---- user actions ----------------------------------------------------------
 
@@ -221,6 +239,8 @@ class WebFlowTest(unittest.TestCase):
         self.assertEqual(self.ynab.balance(account), 1_250_000)
         self.assertFalse(any(t.approved for t in created))
         self.assertEqual([t.amount for t in created], [500_000, -150_250, 250_000, -349_750])
+        # Nothing on the page was blocked by the Content-Security-Policy
+        self.assertEqual(self.console_errors, [])
 
     def test_reupload_skips_what_is_already_in_ynab(self):
         page = self.page
@@ -396,6 +416,41 @@ class WebFlowTest(unittest.TestCase):
         # Plans are loaded again, so the upload can carry on
         self.choose_account(fake_ynab.EXISTING_ACCOUNT_ID)
         expect(page.locator("#upload-btn")).to_have_text("Upload 4 transactions to YNAB")
+
+
+class HostedWebFlowTest(BrowserTest):
+    """Hosted mode (PUBLIC_URL set): YNAB login is the only way to connect."""
+
+    hosted = True
+
+    def test_only_the_ynab_login_shows(self):
+        page = self.page
+        expect(page.locator("#connect-btn")).to_be_visible()
+        expect(page.locator("#connect-btn")).to_have_text("Connect with YNAB login")
+        for token_part in ("#ynab-token", "#token-btn", "#token-note", "#remember-row"):
+            expect(page.locator(token_part)).to_have_count(0)
+        expect(page.locator("#status-pill")).to_have_text("○ Not connected")
+        self.assertEqual(self.console_errors, [])
+
+    def test_connect_goes_to_the_ynab_login_page(self):
+        page = self.page
+        redirects = []
+
+        def login(route):
+            # The app's redirect to YNAB, not followed: nothing reaches the real YNAB
+            # (page.route() doesn't see requests that come from a redirect)
+            response = route.fetch(max_redirects=0)
+            redirects.append(response.headers["location"])
+            route.fulfill(body="Fake YNAB login page")
+
+        page.route("**/oauth/login", login)
+        page.click("#connect-btn")
+        expect(page.locator("body")).to_have_text("Fake YNAB login page")
+        self.assertEqual(len(redirects), 1)
+        self.assertTrue(redirects[0].startswith("https://app.ynab.com/oauth/authorize?"))
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(redirects[0]).query)
+        self.assertEqual(query["redirect_uri"], [f"{PUBLIC_URL}/oauth/callback"])
+        self.assertEqual(query["response_type"], ["code"])
 
 
 if __name__ == "__main__":

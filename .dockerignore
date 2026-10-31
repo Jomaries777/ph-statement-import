@@ -1,0 +1,14 @@
+# Only requirements.txt and statement_etl/ go into the image: never secrets,
+# statements, tests or docs.
+.env
+*.swp
+.venv/
+statements/
+*.pdf
+tests/
+docs/
+.git/
+.github/
+.DS_Store
+test-results/
+__pycache__/

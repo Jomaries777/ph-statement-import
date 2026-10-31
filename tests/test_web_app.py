@@ -9,6 +9,7 @@ YNAB, OAuth and the OS secure store are mocked. All data here is made up.
 
 import contextlib
 import io
+import json
 import os
 import runpy
 import time
@@ -30,6 +31,7 @@ from statement_etl.web import state as web_state
 from statement_etl.ynab_api.balance import compare_balance
 from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
+from tests.hosted import HOSTED_ENV, PUBLIC_URL, SECRETS, hosted_mode
 
 ROWS = [
     gcash_row(
@@ -136,6 +138,8 @@ class RoutesTest(unittest.TestCase):
                 ("/oauth/callback", "GET"),
                 ("/oauth/logout", "POST"),
                 ("/static/<path:filename>", "GET"),
+                ("/privacy", "GET"),
+                ("/terms", "GET"),
             },
         )
 
@@ -152,6 +156,18 @@ class IndexTest(WebTest):
         self.assertIn(b"GCash", response.data)
         self.assertIn(b'value="gcash"', response.data)
 
+    def test_no_inline_script_or_style(self):
+        # A strict Content-Security-Policy blocks inline code: it lives in static/
+        page = self.client.get("/").data
+        self.assertIn(b'<script src="/static/app.js">', page)
+        self.assertIn(b'<link rel="stylesheet" href="/static/app.css">', page)
+        self.assertNotIn(b"<script>", page)
+        self.assertNotIn(b"<style", page)
+        self.assertNotIn(b"style=", page)
+        for path in ("/static/app.js", "/static/app.css"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+
 
 class StatusTest(WebTest):
     def test_not_connected(self):
@@ -162,6 +178,7 @@ class StatusTest(WebTest):
                 "connect_error": None,
                 "token_kind": None,
                 "oauth_configured": False,
+                "token_allowed": True,
                 "remember_available": False,
                 "store_name": None,
                 "parsed": None,
@@ -963,6 +980,333 @@ class MainTest(WebTest):
         with mock.patch.object(web, "main") as main:
             runpy.run_module("statement_etl.web", run_name="__main__")
         main.assert_called_once()
+
+
+# =============================================================================
+# PRIVACY AND TERMS
+# =============================================================================
+
+FOOTER_LINKS = [b'href="/privacy"', b'href="/terms"', b"github.com/Jomaries777/ph-statement-import"]
+
+
+class PagesTest(WebTest):
+    def test_pages(self):
+        for path, text in (("/privacy", b"Last updated: "), ("/terms", b"provided as is")):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(text, response.data)
+
+    def test_footer_on_every_page(self):
+        for path in ("/", "/privacy", "/terms"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertIn(b"Your PDF is processed in memory and never stored.", response.data)
+                for link in FOOTER_LINKS:
+                    self.assertIn(link, response.data)
+
+    def test_privacy_says_this_is_the_local_version(self):
+        self.assertIn(b"running the local version", self.client.get("/privacy").data)
+
+
+# =============================================================================
+# SECURITY - headers in both modes; nothing is ever logged that shouldn't be
+# =============================================================================
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self' https://app.ynab.com"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+class SecurityHeadersTest(WebTest):
+    def test_every_response_has_them(self):
+        for path in ("/", "/api/status", "/static/app.js", "/no-such-page"):
+            with self.subTest(path), self.client.get(path) as response:
+                for name, value in SECURITY_HEADERS.items():
+                    self.assertEqual(response.headers[name], value)
+
+
+class LocalModeTest(WebTest):
+    """What hosted mode adds stays off on your own computer."""
+
+    def test_no_rate_limit(self):
+        for _ in range(15):
+            self.assertEqual(self.client.post("/api/parse").status_code, 400)
+
+    def test_cookie_is_not_https_only(self):
+        cookie = self.client.get("/api/status").headers["Set-Cookie"]
+        self.assertNotIn("Secure", cookie)
+
+    def test_idle_browsers_are_kept(self):
+        self.set_state(rows=ROWS)
+        with mock.patch.object(web_state.time, "time", return_value=time.time() + 24 * 3600):
+            self.client.get("/api/status")
+        self.assertEqual(self.state()["rows"], ROWS)
+
+
+class LoggingTest(WebTest):
+    """The log never gets the PDF, its password, a token or a statement row."""
+
+    def test_parse_and_upload(self):
+        self.set_state(access_token="log-test-token", token_kind="personal")
+        secrets = ["log-test-password", "log-test-token", "%PDF-log-test"]
+        secrets += [row["Description"] for row in ROWS] + [row["Reference No."] for row in ROWS]
+        imported = SimpleNamespace(
+            created=[ynab_txn(memo="GCash Ref: 1000000000001")],
+            skipped=0,
+            ending_check=None,
+            ending_error=None,
+            new_account=None,
+        )
+        form = {
+            "password": "log-test-password",
+            "pdf": (io.BytesIO(b"%PDF-log-test"), "statement.pdf"),
+        }
+        with self.assertLogs(level="DEBUG") as logs:
+            # A PDF that can't be read: the one request that logs (the error type)
+            with mock.patch.object(upload, "parse_statement", side_effect=ValueError(ROWS[0])):
+                self.client.post("/api/parse", data=dict(form), content_type="multipart/form-data")
+            form["pdf"] = (io.BytesIO(b"%PDF-log-test"), "statement.pdf")
+            with mock.patch.object(upload, "parse_statement", return_value=(ROWS, TRANSACTIONS)):
+                self.client.post("/api/parse", data=form, content_type="multipart/form-data")
+            with mock.patch.object(upload, "import_statement", return_value=imported):
+                self.assertEqual(self.client.post("/api/upload", json=TARGET).status_code, 200)
+        log = "\n".join(logs.output)
+        self.assertIn("ValueError", log)
+        for secret in secrets:
+            self.assertNotIn(secret, log)
+
+
+# =============================================================================
+# HOSTED MODE - PUBLIC_URL set: YNAB OAuth only, never the OS secure store
+# =============================================================================
+
+
+class Hosted:
+    """Mixin for a WebTest: the app as it runs on the server, for other people."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(hosted_mode())
+        self.client = web.app.test_client()
+        # One token saved on the server would connect every visitor
+        for name in ("available", "store_name", "load_token", "save_token", "delete_token"):
+            getattr(token_store, name).side_effect = AssertionError(
+                f"hosted mode called token_store.{name}()"
+            )
+
+    def set_state(self, **state):
+        # As session_state() stamps it on every request; without it, the entry
+        # counts as idle and is dropped
+        state.setdefault("last_seen", time.time())
+        return super().set_state(**state)
+
+
+class HostedTest(Hosted, WebTest):
+    def test_mode(self):
+        self.assertTrue(config.HOSTED)
+        self.assertEqual(config.REDIRECT_URI, f"{PUBLIC_URL}/oauth/callback")
+
+    def test_secrets_come_from_app_config(self):
+        for key, value in SECRETS.items():
+            self.assertEqual(os.environ[key], value)
+        self.assertEqual(web.app.secret_key, SECRETS["FLASK_SECRET_KEY"])
+        self.assertTrue(ynab_oauth.oauth_configured())
+
+    def test_personal_access_token_is_refused(self):
+        with mock.patch.object(ynab_auth, "get_user") as get_user:
+            response = self.client.post("/api/token", json={"token": "a-token", "remember": True})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Personal access tokens are only supported in the local version. "
+            "Use Connect with YNAB login.",
+        )
+        get_user.assert_not_called()
+
+    def test_status(self):
+        status = self.client.get("/api/status").get_json()
+        self.assertFalse(status["token_allowed"])
+        self.assertFalse(status["remember_available"])
+        self.assertIsNone(status["store_name"])
+        self.assertTrue(status["oauth_configured"])
+        self.assertFalse(status["connected"])  # no saved token to load
+
+    def test_page_shows_only_the_ynab_login(self):
+        page = self.client.get("/").data
+        self.assertIn(b'id="connect-btn"', page)
+        for element in (b'id="ynab-token"', b'id="token-btn"', b'id="remember-row"'):
+            self.assertNotIn(element, page)
+
+    def test_privacy_and_terms(self):
+        for path in ("/privacy", "/terms"):
+            with self.subTest(path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+                for link in FOOTER_LINKS:
+                    self.assertIn(link, response.data)
+        privacy = self.client.get("/privacy").data
+        self.assertIn(b"us-west1", privacy)
+        self.assertNotIn(b"running the local version", privacy)
+
+    def test_privacy_link_next_to_the_ynab_login(self):
+        page = self.client.get("/").data.decode()
+        button = page.index('id="connect-btn"')
+        self.assertIn('<a href="/privacy">Privacy</a>', page[button : page.index("</div>", button)])
+
+    def test_oauth_redirect_uri(self):
+        location = self.client.get("/oauth/login").headers["Location"]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        self.assertEqual(query["redirect_uri"], [f"{PUBLIC_URL}/oauth/callback"])
+        self.assertEqual(query["client_id"], ["test-client-id"])
+
+    def test_oauth_still_connects(self):
+        self.set_state()
+        with self.client.session_transaction() as session:
+            session["oauth_state"] = "test-state"
+        token = {"access_token": "oauth-token", "refresh_token": "refresh", "expires_in": 7200}
+        with mock.patch.object(ynab_oauth, "exchange_token", return_value=token):
+            response = self.client.get("/oauth/callback?code=test-code&state=test-state")
+        self.assertEqual(response.headers["Location"], "/")
+        self.assertEqual(self.state()["token_kind"], "oauth")
+
+    def test_logout_never_touches_the_secure_store(self):
+        self.connected(kind="oauth", expires_at=time.time() + 3600)
+        response = self.client.post("/oauth/logout", json={"forget": True})
+        self.assertEqual(response.get_json(), {"connected": False})
+
+    def test_main_skips_the_keychain_message(self):
+        stderr = io.StringIO()
+        with mock.patch.object(web.app, "run"), contextlib.redirect_stderr(stderr):
+            web.main()
+        out = stderr.getvalue()
+        self.assertIn(f"Hosted mode: YNAB OAuth login only (redirect URI: {PUBLIC_URL}", out)
+        self.assertNotIn("personal access token", out)
+        self.assertNotIn("FLASK_SECRET_KEY", out)
+
+    def test_session_cookie_is_https_only(self):
+        cookie = self.client.get("/api/status").headers["Set-Cookie"]
+        self.assertIn("Secure", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Lax", cookie)
+
+    def test_security_headers(self):
+        response = self.client.get("/")
+        for name, value in SECURITY_HEADERS.items():
+            self.assertEqual(response.headers[name], value)
+
+    def test_idle_browsers_are_dropped(self):
+        now = time.time()
+        web_state.STORE.update(
+            {
+                "idle": {"rows": ROWS, "last_seen": now - web_state.IDLE_SECONDS - 1},
+                "active": {"rows": ROWS, "last_seen": now - web_state.IDLE_SECONDS + 60},
+            }
+        )
+        with mock.patch.object(web_state.time, "time", return_value=now):
+            self.client.get("/api/status")
+        self.assertNotIn("idle", web_state.STORE)
+        self.assertIn("active", web_state.STORE)
+
+    def test_each_request_counts_as_activity(self):
+        self.client.get("/api/status")
+        later = time.time() + web_state.IDLE_SECONDS - 60
+        with mock.patch.object(web_state.time, "time", return_value=later):
+            self.client.get("/api/status")
+        self.assertEqual(self.state()["last_seen"], later)
+        with mock.patch.object(web_state.time, "time", return_value=later + 120):
+            self.client.get("/api/status")  # still there: idle 2 minutes only
+        self.assertEqual(self.state()["last_seen"], later + 120)
+
+    def test_parse_is_rate_limited(self):
+        for _ in range(10):
+            self.assertEqual(self.client.post("/api/parse").status_code, 400)
+        with mock.patch.object(upload, "parse_statement") as parse:
+            response = self.client.post(
+                "/api/parse",
+                data={"pdf": (io.BytesIO(b"%PDF-test"), "statement.pdf")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.get_json(), {"error": "Too many requests. Wait a minute, then try again."}
+        )
+        parse.assert_not_called()  # blocked before any parsing work
+
+    def test_rate_limit_is_per_client_ip(self):
+        # ProxyFix: the client's IP is the one Cloud Run puts in X-Forwarded-For
+        def parse(ip):
+            return self.client.post("/api/parse", headers={"X-Forwarded-For": ip}).status_code
+
+        for _ in range(10):
+            self.assertEqual(parse("203.0.113.1"), 400)
+        self.assertEqual(parse("203.0.113.1"), 429)
+        self.assertEqual(parse("203.0.113.2"), 400)
+
+    def test_oauth_is_rate_limited(self):
+        for _ in range(20):
+            self.assertEqual(self.client.get("/oauth/login").status_code, 302)
+        self.assertEqual(self.client.get("/oauth/login").status_code, 429)
+        self.assertEqual(self.client.post("/oauth/logout").status_code, 200)  # its own count
+
+
+class HostedUploadTest(Hosted, UploadTest):
+    """Every upload test again in hosted mode, and the statement is dropped after it."""
+
+    def test_statement_is_dropped_after_the_upload(self):
+        self.parsed(parsed={"filename": "statement.pdf"})
+        self.assertEqual(self.post().status_code, 200)
+        state = self.state()
+        for key in ("source", "rows", "transactions", "parsed"):
+            self.assertNotIn(key, state)
+        self.assertEqual(state["access_token"], "test-token")  # still connected
+        with mock.patch.object(upload, "get_user"):
+            self.assertIsNone(self.client.get("/api/status").get_json()["parsed"])
+
+    def test_statement_is_kept_when_the_upload_fails(self):
+        self.parsed()
+        self.upload.side_effect = exceptions.BadRequestException(status=400, reason="Bad Request")
+        self.assertEqual(self.post().status_code, 400)
+        self.assertEqual(self.state()["rows"], ROWS)  # so the user can try again
+
+
+class HostedStartupTest(unittest.TestCase):
+    """Hosted mode stops at startup without its secrets, and never prints them."""
+
+    def start(self, **env):
+        with self.assertRaises(SystemExit) as caught, hosted_mode({**HOSTED_ENV, **env}):
+            pass
+        return str(caught.exception)
+
+    def test_missing_secret_key(self):
+        message = self.start(
+            FLASK_SECRET_KEY="",
+            APP_CONFIG=json.dumps({"YNAB_CLIENT_SECRET": "do-not-print-this"}),
+        )
+        self.assertIn("needs FLASK_SECRET_KEY", message)
+        self.assertNotIn("do-not-print-this", message)
+        self.assertNotIn("test-client-id", message)
+
+    def test_every_missing_key_is_named(self):
+        message = self.start(FLASK_SECRET_KEY="", YNAB_CLIENT_ID="", APP_CONFIG="{}")
+        self.assertIn("FLASK_SECRET_KEY, YNAB_CLIENT_ID, YNAB_CLIENT_SECRET", message)
+
+    def test_app_config_is_not_json(self):
+        message = self.start(APP_CONFIG='{"FLASK_SECRET_KEY": do-not-print-this')
+        self.assertEqual(message, "APP_CONFIG is not valid JSON.")
+
+    def test_app_config_values_must_be_strings(self):
+        message = self.start(APP_CONFIG='{"FLASK_SECRET_KEY": 12345678}')
+        self.assertEqual(message, "APP_CONFIG: FLASK_SECRET_KEY must be a string.")
+
+    def test_local_mode_again_afterwards(self):
+        with hosted_mode():
+            self.assertTrue(config.HOSTED)
+        self.assertFalse(config.HOSTED)
+        self.assertEqual(config.REDIRECT_URI, f"http://localhost:{config.PORT}/oauth/callback")
 
 
 if __name__ == "__main__":

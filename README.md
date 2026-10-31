@@ -61,12 +61,50 @@ python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick 
 
 ## Optional: OAuth instead of a token
 
-If you host the app for other people, you can use YNAB OAuth instead of a personal access token:
+You can also connect with your YNAB login instead of a personal access token:
 
 1. In YNAB Developer Settings, create an OAuth application with the redirect URI `http://localhost:5050/oauth/callback`.
 2. Set `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` in `.env`.
 
 The page then also shows a **Connect with YNAB login** button next to the token field.
+
+## Hosted mode
+
+To run the app on a server for other people, set `PUBLIC_URL`. Leave it empty on your own computer: the app then works as described above.
+
+In hosted mode:
+- **YNAB login (OAuth) only.** The token field is gone and `/api/token` is refused, because YNAB's API terms don't allow asking other people for their personal access tokens.
+- **No OS secure store.** A token saved on the server would connect every visitor, so the app never reads or writes it.
+- **HTTPS-only cookies** (`Secure`, `HttpOnly`, `SameSite=Lax`), and the app trusts the one proxy hop Cloud Run adds for the client's IP and HTTPS.
+- **Rate limits** per client IP: 10 statement parses and 20 YNAB login requests per minute.
+- **Nothing is kept for long.** The parsed statement is dropped after the upload, and everything about a browser (its YNAB connection too) after 30 minutes without a request.
+
+Both modes send security headers on every response, including a strict Content-Security-Policy. Both also serve `/privacy` and `/terms`, linked from the footer of every page. The privacy policy is the URL YNAB's OAuth app review asks for; set its contact email (`CONTACT_EMAIL` in `statement_etl/web/app.py`) before going live.
+
+### Docker
+
+The `Dockerfile` runs hosted mode with gunicorn: one worker, because the server-side state lives in that process's memory, and 8 threads.
+
+```bash
+docker build -t ph-statement-import .
+docker image ls ph-statement-import   # check the size; aim for under 250 MB
+docker run --rm -p 8080:8080 \
+  -e PUBLIC_URL=http://localhost:8080 \
+  -e APP_CONFIG='{"FLASK_SECRET_KEY":"local-test","YNAB_CLIENT_SECRET":"x"}' \
+  -e YNAB_CLIENT_ID=x ph-statement-import
+```
+
+Open http://localhost:8080: only **Connect with YNAB login** shows. Check the security headers with `curl -sI http://localhost:8080/`.
+
+Over plain `http://localhost` the browser won't send the session cookie back, because in hosted mode it's HTTPS-only. That's expected: Cloud Run serves HTTPS. Deploying to Cloud Run is in [docs/plan/P4-go-live-on-gcp.md](docs/plan/P4-go-live-on-gcp.md).
+
+| Variable | What it is |
+|---|---|
+| `PUBLIC_URL` | The address people open, e.g. `https://statements.example.com`. Turns on hosted mode. The OAuth redirect URI is `PUBLIC_URL` + `/oauth/callback`; register exactly that in your YNAB OAuth application. |
+| `YNAB_CLIENT_ID` | From your YNAB OAuth application. Not a secret, so a plain variable. |
+| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}`. Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
+
+`FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode. If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
 
 ## Project layout
 
@@ -78,7 +116,7 @@ statement_etl/
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
 ├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py
-└── web/            # Flask app, token store, page template
+└── web/            # Flask app, token store, page template (templates/) and its CSS / JS (static/)
 tests/
 ├── test_<module>.py  # one unit test file per module above, e.g. test_parsers_gcash.py
 ├── fakes.py          # made-up PDF words, GCash rows and YNAB objects shared by the tests
