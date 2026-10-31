@@ -1,6 +1,6 @@
 # P1. Refactors (no behavior change)
 
-Status: In progress (PR 2) · Estimate: about 2 days, 3 PRs · Needs: P0
+Status: Done (Oct 31, 2026) · Estimate: about 2 days, 3 PRs · Needs: P0
 
 ## Goal
 
@@ -153,25 +153,26 @@ What each module is, so the names don't get mixed up:
 
 ### PR 3: `refactor/web-blueprints`, "refactor: split the web app into blueprints"
 
-- [ ] Create these modules. **Move** code without changing it, and start each with a module docstring:
+- [x] Create these modules. **Move** code without changing it, and start each with a module docstring:
 
   | Module | Holds |
   |---|---|
-  | `web/state.py` | `STORE`, `_state()`, `_error()` |
-  | `web/ynab_oauth.py` | `exchange_token(**params)` (was `_exchange_token`) and `refresh(refresh_token)`: token exchange and refresh with **no Flask session**, so the P5 runner can use them |
-  | `web/ynab_auth.py` (Blueprint `ynab_auth`) | `/oauth/login`, `/oauth/callback`, `/oauth/logout`, `/api/token`, `get_token()`, `_refresh()`, `_store_tokens()`, `_clear_tokens()`, `_oauth_configured()`, `_ynab_call()`, `_error_detail()` |
+  | `web/state.py` | `STORE`, `session_state()` (was `_state`), `error_response()` (was `_error`) |
+  | `web/ynab_oauth.py` | `exchange_token(**params)` (was `_exchange_token`), `refresh(refresh_token)` and `oauth_configured()` (was `_oauth_configured`): token exchange and refresh with **no Flask session**, so the P5 runner can use them |
+  | `web/ynab_auth.py` (Blueprint `ynab_auth`) | `/oauth/login`, `/oauth/callback`, `/oauth/logout`, `/api/token`, `get_token()`, `_refresh()`, `_store_tokens()`, `_clear_tokens()`, `ynab_call()` (was `_ynab_call`), `api_error_message()` (was `_api_error_message`), `_error_detail()` |
   | `web/upload.py` (Blueprint `upload`) | `/`, `/api/status`, `/api/parse`, `/api/plans`, `/api/plans/<plan_id>/accounts`, `/api/starting-balance`, `/api/upload`, `_check_json()`, `_money()` |
   | `web/app.py` | Creates `app`, loads config, registers both blueprints, `main()`. Keeps a module-level `app`, so `python -m statement_etl.web` and the future gunicorn target `statement_etl.web.app:app` still work. |
 
-- [ ] Constants (`PORT`, `REDIRECT_URI`, the YNAB URLs) go to the module that uses them. If two modules need one, put it in `web/state.py`, or a small `web/config.py` if that reads better.
-- [ ] The templates don't use `url_for`, so endpoint renames are safe. Check with `grep -rn url_for statement_etl/`.
-- [ ] `tests/test_web_app.py`: change each `patch.object(web, "<name>")` to the module that **calls** the name:
+- [x] Names another module imports lose their leading underscore (listed above), since `_name` tells a reader it's private to one file.
+- [x] Constants (`PORT`, `REDIRECT_URI`, the YNAB URLs) go to the module that uses them. `PORT` and `REDIRECT_URI` are used by three modules, so they're in `web/config.py`, which also loads `.env`. If two modules need one, put it in `web/state.py`, or a small `web/config.py` if that reads better.
+- [x] The templates don't use `url_for`, so endpoint renames are safe. Check with `grep -rn url_for statement_etl/`.
+- [x] `tests/test_web_app.py`: change each `patch.object(web, "<name>")` to the module that **calls** the name:
   - `get_plans`, `get_accounts`, `parse_statement`, `starting_balance_check` → `web.upload`
   - `get_user` → `web.upload` for `/api/status` tests, `web.ynab_auth` for `/api/token` tests
   - `_exchange_token` → `web.ynab_oauth.exchange_token`
   - `web.app.run` and `web.main` stay in `web.app`
-- [ ] Add a test that lists `app.url_map` and checks every route URL and method from before the split is still there.
-- [ ] Update `docs/architecture.md` with the web module table above.
+- [x] Add a test that lists `app.url_map` and checks every route URL and method from before the split is still there.
+- [x] Update `docs/architecture.md` with the web module table above.
 
 ## Tests
 

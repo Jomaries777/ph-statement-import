@@ -2,7 +2,8 @@
 ph-statement-import - list YNAB plans (budgets) and their accounts with
 ids, to find YNAB_ACCOUNT_ID and --plan-id for pipeline.py.
 
-get_user(), get_plans() and get_accounts() are also used by app.py for the
+get_user(), get_plans() and get_accounts() are also used by the web app (web/upload.py,
+web/ynab_auth.py) for the
 web page's connection check and Plan / Account dropdowns.
 
 Environment:

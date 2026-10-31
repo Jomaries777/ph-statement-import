@@ -13,7 +13,7 @@ Without keyring, or without a secure store (e.g. a headless server),
 available() is False and the web app asks for the token every session.
 No function here raises: a locked or missing store just means "no token".
 
-Used by the ph-statement-import web app (app.py).
+Used by the ph-statement-import web app (ynab_auth.py, upload.py and app.py).
 
 Requirements:
     pip install keyring

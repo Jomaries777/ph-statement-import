@@ -354,7 +354,7 @@ def _check_totals(transactions, totals):
 # duplicate them in YNAB. Correction rows ARE uploaded to YNAB (unapproved,
 # red flag, memo "GCash Ref: <Reference No.>").
 #
-# Registered for GCash in sources.py, which pipeline.py and app.py use:
+# Registered for GCash in sources.py, which pipeline.py and web/upload.py use:
 #   is_correction_row(), balance_corrections(), balance_warning(),
 #   statement_balances() (for the YNAB balance checks in ynab_api/balance.py /
 #   ynab_api/client.py), summary() and to_transactions(), which uses

@@ -217,7 +217,7 @@ flowchart LR
   store --> fs[("Firestore (default)")]
 
   classDef new stroke-dasharray: 6 4,stroke-width:2px
-  class up,auth,ai,st,yo,runner,store,gmail,gapi,fs,gt,tx,fmt,cv new
+  class ai,runner,store,gmail,gapi,fs,gt new
 </script>
 
 <script type="text/x-mermaid" id="src-u1">
@@ -251,8 +251,6 @@ flowchart LR
   UT --> IT["client.import_transactions()<br/>unapproved, import_id"]
   IS --> EBC["pipeline.ending_balance_check()"]
 
-  classDef new stroke-dasharray: 6 4,stroke-width:2px
-  class IS,CV,ST,TY,YA new
 </script>
 
 <script type="text/x-mermaid" id="src-u2">
@@ -318,7 +316,7 @@ flowchart LR
   BP --> RN["runner.pdf_password()"]
 
   classDef new stroke-dasharray: 6 4,stroke-width:2px
-  class TT,BP,TX,Y,OD,EQ,PI,RN,GM new
+  class BP,OD,EQ,PI,RN,GM new
 </script>
 
 <script type="text/x-mermaid" id="src-seq-manual">
