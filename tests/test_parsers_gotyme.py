@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from decimal import Decimal
 from unittest import mock
 
@@ -22,6 +23,8 @@ from pdfplumber.utils.exceptions import PdfminerException
 
 from statement_etl.parsers import gotyme
 from statement_etl.parsers.common import StatementError, group_lines
+from statement_etl.transaction import Transaction
+from statement_etl.ynab_api.format import make_import_id, to_ynab
 from tests.fakes import FakePage, FakePDF, right_word, word, words_from
 
 # =============================================================================
@@ -330,6 +333,58 @@ class BalancesAndSummaryTest(unittest.TestCase):
             gotyme.summary(MADE_UP_ROWS),
             "Total credit 1,000.00 · Total debit 249.00 · matches statement ✓",
         )
+
+
+# =============================================================================
+# CONVERTING - rows -> neutral Transactions
+# =============================================================================
+
+
+class ToTransactionsTest(unittest.TestCase):
+    def test_debit_and_credit_rows(self):
+        txns = gotyme.to_transactions(MADE_UP_ROWS)
+        self.assertEqual(
+            txns,
+            [
+                Transaction(
+                    source="gotyme",
+                    key="05 Oct 2026|0.00|249.00|4751.00|0",
+                    date=date(2026, 10, 5),
+                    payee="SHOPEE PH",
+                    amount=Decimal("-249.00"),
+                    memo="GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                    flagged=False,
+                ),
+                Transaction(
+                    source="gotyme",
+                    key="06 Oct 2026|1000.00|0.00|5751.00|0",
+                    date=date(2026, 10, 6),
+                    payee="Transfer from JUAN DELA CRUZ BPI",
+                    amount=Decimal("1000.00"),
+                    memo="GoTyme: Transfer from JUAN DELA CRUZ BPI, Account No. •••••••1234",
+                    flagged=False,
+                ),
+            ],
+        )
+
+    def test_to_ynab(self):
+        [txn] = gotyme.to_transactions([MADE_UP_ROWS[0]])
+        self.assertEqual(
+            to_ynab(txn),
+            {
+                "date": "2026-10-05",
+                "payee_name": "SHOPEE PH",
+                "import_id": make_import_id("gotyme", "05 Oct 2026|0.00|249.00|4751.00|0"),
+                "amount": -249000,
+                "memo": "GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                "flag_color": None,
+            },
+        )
+
+    def test_identical_rows_increment_counter(self):
+        first, second = gotyme.to_transactions([MADE_UP_ROWS[0], dict(MADE_UP_ROWS[0])])
+        self.assertEqual(first.key, "05 Oct 2026|0.00|249.00|4751.00|0")
+        self.assertEqual(second.key, "05 Oct 2026|0.00|249.00|4751.00|1")
 
 
 # =============================================================================

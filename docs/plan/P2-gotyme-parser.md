@@ -35,7 +35,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
 
 ### PR 1: `feat/gotyme-parser`, "feat: parse GoTyme Everyday Deposit statements"
 
-- [ ] Create `statement_etl/parsers/gotyme.py`. Use the same layout and comment style as `parsers/gcash.py`: a module docstring with usage, `# ===` sections and numbered step comments. Reuse `parsers/common.py`: `open_pdf()` (a wrong password raises `StatementError`), `group_lines()` and `to_decimal()`.
+- [x] Create `statement_etl/parsers/gotyme.py`. Use the same layout and comment style as `parsers/gcash.py`: a module docstring with usage, `# ===` sections and numbered step comments. Reuse `parsers/common.py`: `open_pdf()` (a wrong password raises `StatementError`), `group_lines()` and `to_decimal()`.
   - `COLUMNS = ("Date", "Details", "Credits", "Debits", "Running Balance")`
   - `parse_transactions(pdf, password) -> list[dict]`: one dict per row, with keys equal to `COLUMNS`.
     - Amounts are plain text without commas (`"249.00"`), like GCash's output. Wrapped Details lines are joined with one space.
@@ -53,7 +53,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
   - `statement_balances(rows)`: `{"starting": first Running Balance − Credits + Debits, "ending": last Running Balance}`, computed the same way as GCash. The running-balance check guarantees these equal the printed Opening and Closing balances.
   - `summary(rows)`: e.g. `"Total credit 1,000.00 · Total debit 249.00 · matches statement ✓"`.
   - A `main()` CLI like GCash's: `python -m statement_etl.parsers.gotyme <pdf> [-o rows.json]`, with the password from `GOTYME_PDF_PASSWORD` or a prompt.
-- [ ] `tests/test_parsers_gotyme.py`, with **made-up** words and positions faked the way `tests/test_parsers_gcash.py` does it:
+- [x] `tests/test_parsers_gotyme.py`, with **made-up** words and positions faked the way `tests/test_parsers_gcash.py` does it:
   - a one-line row
   - a wrapped Details row, with the first line above and the second below the amounts
   - the header repeated on page 2, and the footer ignored
@@ -61,7 +61,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
   - each of the four checks failing → `StatementError` naming the check
   - a wrong password → `StatementError`
   - `statement_balances` and `summary` on made-up rows
-- [ ] Check locally against your real statement. Don't paste the output into the PR:
+- [x] Check locally against your real statement. Don't paste the output into the PR:
   ```bash
   python -m statement_etl.parsers.gotyme statements/<gotyme>.pdf -o /tmp/gotyme-rows.json
   ```
@@ -69,7 +69,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
 
 ### PR 2: `feat/gotyme-source`, "feat: add GoTyme as a source for manual upload and CLI"
 
-- [ ] In `parsers/gotyme.py`, add `gotyme_payee(details)` and `to_transactions(rows) -> list[Transaction]`, with an input-row comment block like GCash's. It knows nothing about YNAB; `ynab_api.format.to_ynab()` does the YNAB part.
+- [x] In `parsers/gotyme.py`, add `gotyme_payee(details)` and `to_transactions(rows) -> list[Transaction]`, with an input-row comment block like GCash's. It knows nothing about YNAB; `ynab_api.format.to_ynab()` does the YNAB part.
   - **Payee** rules:
     - `Card payment at MERCHANT, Card •••• NNNN` → `MERCHANT`
     - `Transfer to/from GoalSave` → `GoalSave`
@@ -80,7 +80,7 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
     - YNAB's `import_id` becomes `make_import_id("gotyme", key)`.
     - Running Balance makes the key stable: a later statement covering the same days gives the same keys, so YNAB skips them.
   - **`date`** from `Date` (`%d %b %Y`); **`amount`** = Credits − Debits in pesos; **`flagged`** = `False`, since GoTyme has no correction rows.
-- [ ] Register the source in `statement_etl/sources.py`:
+- [x] Register the source in `statement_etl/sources.py`:
   ```python
   Source(
       key="gotyme",
@@ -98,13 +98,13 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
   )
   ```
   No auto-import fields yet; those come in P6. `is_correction_row` and the other correction hooks keep their defaults, because GoTyme's running balance is checked instead.
-- [ ] `.env.example`: add `GOTYME_PDF_PASSWORD=` with a comment: "your date of birth as MMDDYYYY".
-- [ ] README: change "currently supports **GCash**" to "**GCash** and **GoTyme**" (Everyday Deposit Account).
-- [ ] `docs/getting-started.md`:
+- [x] `.env.example`: add `GOTYME_PDF_PASSWORD=` with a comment: "your date of birth as MMDDYYYY".
+- [x] README: change "currently supports **GCash**" to "**GCash** and **GoTyme**" (Everyday Deposit Account).
+- [x] `docs/getting-started.md`:
   - "What you need": how to get a GoTyme statement (requested in the GoTyme app; it arrives by email).
   - Step 5: GoTyme in the source list.
   - Troubleshooting, "Wrong password": GoTyme's password is your date of birth as `MMDDYYYY`, e.g. `01311990`.
-- [ ] `docs/adding-an-e-wallet.md`: add GoTyme as a second worked example, including this table:
+- [x] `docs/adding-an-e-wallet.md`: add GoTyme as a second worked example, including this table:
 
   **GoTyme row → `Transaction` → YNAB `NewTransaction`**. The middle column is the neutral `Transaction` that `gotyme.to_transactions()` returns; the YNAB column is what `ynab_api.format.to_ynab()` makes of it. `ynab_api/client.import_transactions()` sends them all in one `POST /plans/{plan_id}/transactions`. Another budgeting app would start from the same `Transaction`.
 
@@ -124,14 +124,14 @@ Out of scope: Gmail auto-import for GoTyme (P6), and the separate GoalSave savin
   - Opening and Closing balance feed the starting- and ending-balance checks.
   - Period and the totals are used only by `_check_totals()`.
   - Running Balance is used only in `key` (so `import_id`) and the checks.
-- [ ] A `GoTymeTest` class in `tests/test_sources.py`:
+- [x] A `GoTymeTest` class in `tests/test_sources.py`:
   - every parsed row has exactly `COLUMNS`
   - one made-up row → the exact `Transaction`, and its `to_ynab()` → the exact YNAB dict, both from the table above
   - signs: credit positive, debit negative
   - each payee rule
   - a stable `import_id`, and different ids for two otherwise identical rows (`n`)
   - `statement_balances` and `summary`
-- [ ] `docs/architecture.md`: list GoTyme under sources.
+- [x] `docs/architecture.md`: list GoTyme under sources.
 
 ## Tests
 

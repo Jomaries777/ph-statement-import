@@ -10,6 +10,8 @@ Output fields per transaction (same columns as the PDF table, amounts without co
     Debits           - amount text without commas, e.g. "249.00" or "0.00"
     Running Balance  - amount text without commas, e.g. "4751.00"
 
+to_transactions() turns these rows into neutral Transactions (transaction.py).
+
 How it works:
     1. Open      - open the PDF with its password                (open_pdf)
     2. Summary   - read Period, Opening, Total Credit,
@@ -46,6 +48,7 @@ from decimal import Decimal
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
 from statement_etl.parsers.common import StatementError, group_lines, open_pdf, to_decimal
+from statement_etl.transaction import Transaction
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -97,6 +100,16 @@ CLOSING_RE = re.compile(r"\bClosing balance\s+PHP\s+(-?[\d,]+\.\d{2})\b", re.IGN
 FOOTER_RE = re.compile(
     r"^(All figures are in PHP\b|Document ID:|Request Date:|\bPage\s+\d+\s+of\s+\d+\b)",
     re.IGNORECASE,
+)
+
+# Payee patterns in Details:
+#   "Card payment at SHOPEE PH, Card •••• 1234" -> "SHOPEE PH"
+#   "Transfer to/from GoalSave"                 -> "GoalSave"
+#   "Transfer to/from NAME BANK, Account No. …" -> "Transfer to/from NAME BANK"
+GOTYME_CARD_PAYMENT_RE = re.compile(r"^Card payment at\s+(.+),\s*Card\b.*$", re.IGNORECASE)
+GOTYME_GOALSAVE_RE = re.compile(r"^Transfer\s+(?:to|from)\s+GoalSave$", re.IGNORECASE)
+GOTYME_TRANSFER_ACCOUNT_RE = re.compile(
+    r"^(Transfer\s+(?:to|from)\s+.+?),\s*Account No\..*$", re.IGNORECASE
 )
 
 
@@ -389,6 +402,77 @@ def summary(rows: list[dict[str, str]]) -> str:
     credit = sum((to_decimal(r["Credits"]) for r in rows), Decimal("0.00"))
     debit = sum((to_decimal(r["Debits"]) for r in rows), Decimal("0.00"))
     return f"Total credit {credit:,.2f} · Total debit {debit:,.2f} · matches statement ✓"
+
+
+# =============================================================================
+# CONVERTING - rows -> neutral Transactions (registered in sources.py)
+#
+# Input row example:
+#   {
+#     "Date":            "05 Oct 2026",
+#     "Details":         "Card payment at SHOPEE PH, Card •••• 1234",
+#     "Credits":         "0.00",
+#     "Debits":          "249.00",
+#     "Running Balance": "4751.00"
+#   }
+#
+# GoTyme has no reference numbers, so the Transaction key is
+# "{Date}|{Credits}|{Debits}|{Running Balance}|{n}" where n counts earlier rows
+# in the same statement with the same four values (almost always 0).
+# YNAB's import_id is make_import_id("gotyme", key) (ynab_api/format.py).
+# =============================================================================
+
+
+def gotyme_payee(details: str) -> str:
+    """Get a clean payee name from a GoTyme Details string.
+
+    - "Card payment at MERCHANT, Card •••• NNNN" -> "MERCHANT"
+    - "Transfer to/from GoalSave" -> "GoalSave"
+    - "Transfer to/from NAME BANK, Account No. •••NNNN" -> text before ", Account No."
+    - Anything else -> Details as is
+    """
+    card = GOTYME_CARD_PAYMENT_RE.match(details)
+    if card:
+        return card.group(1).strip()
+
+    if GOTYME_GOALSAVE_RE.match(details):
+        return "GoalSave"
+
+    transfer = GOTYME_TRANSFER_ACCOUNT_RE.match(details)
+    if transfer:
+        return transfer.group(1).strip()
+
+    return details
+
+
+def to_transactions(rows: list[dict[str, str]]) -> list[Transaction]:
+    """Convert GoTyme rows into neutral Transactions, one per row.
+
+    Example:
+        to_transactions([{"Date": "05 Oct 2026", "Details": "Qr Payment",
+                          "Credits": "0.00", "Debits": "249.00",
+                          "Running Balance": "4751.00"}])
+    """
+    counts: dict[str, int] = {}
+    transactions = []
+    for row in rows:
+        base_key = f"{row['Date']}|{row['Credits']}|{row['Debits']}|{row['Running Balance']}"
+        occurrence = counts.get(base_key, 0)
+        counts[base_key] = occurrence + 1
+
+        amount = to_decimal(row["Credits"]) - to_decimal(row["Debits"])
+        transactions.append(
+            Transaction(
+                source="gotyme",
+                key=f"{base_key}|{occurrence}",
+                date=datetime.strptime(row["Date"], DATE_FORMAT).date(),
+                payee=gotyme_payee(row["Details"]),
+                amount=amount,
+                memo="GoTyme: " + row["Details"],
+                flagged=False,
+            )
+        )
+    return transactions
 
 
 # =============================================================================

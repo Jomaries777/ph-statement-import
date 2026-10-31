@@ -14,7 +14,7 @@ To add another e-wallet / bank, see docs/adding-an-e-wallet.md.
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from statement_etl.parsers import gcash
+from statement_etl.parsers import gcash, gotyme
 
 
 def _no_summary(rows):
@@ -109,6 +109,20 @@ SOURCES = {
             is_correction_row=gcash.is_correction_row,
             balance_corrections=gcash.balance_corrections,
             balance_warning=gcash.balance_warning,
+        ),
+        Source(
+            key="gotyme",
+            name="GoTyme",
+            password_env="GOTYME_PDF_PASSWORD",
+            columns=gotyme.COLUMNS,
+            amount_columns=("Credits", "Debits", "Running Balance"),
+            money_in_columns=("Credits",),
+            money_out_columns=("Debits",),
+            text_column="Details",
+            parse=gotyme.parse_transactions,
+            statement_balances=gotyme.statement_balances,
+            summary=gotyme.summary,
+            to_transactions=gotyme.to_transactions,
         ),
     ]
 }

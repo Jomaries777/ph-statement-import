@@ -1,6 +1,6 @@
 # ph-statement-import
 
-Import Philippine e-wallet and bank statement PDFs into your budgeting app. It currently supports [YNAB](https://www.ynab.com/). For statements, it currently supports **GCash**. Want another e-wallet or bank? See [Adding an e-wallet or bank](docs/adding-an-e-wallet.md).
+Import Philippine e-wallet and bank statement PDFs into your budgeting app. It currently supports [YNAB](https://www.ynab.com/). For statements, it currently supports **GCash** and **GoTyme** (Everyday Deposit Account). Want another e-wallet or bank? See [Adding an e-wallet or bank](docs/adding-an-e-wallet.md).
 
 It parses the password-protected statement PDF, checks the running balance, and compares the statement's starting balance with your YNAB account. It then creates the transactions in YNAB, unapproved, so you can review them. Re-uploading the same statement doesn't create duplicates.
 
@@ -111,7 +111,7 @@ Over plain `http://localhost` the browser won't send the session cookie back, be
 ```
 statement_etl/
 ├── sources.py      # the supported e-wallets / banks and their columns
-├── parsers/        # one module per statement source (gcash.py) + shared helpers (common.py)
+├── parsers/        # one module per statement source (gcash.py, gotyme.py) + shared helpers (common.py)
 ├── transaction.py  # the neutral Transaction, in no budgeting app's format
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline

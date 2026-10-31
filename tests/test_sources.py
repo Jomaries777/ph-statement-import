@@ -20,10 +20,10 @@ from unittest import mock
 
 import tests.fakes  # noqa: F401 - loads the safety net (no YNAB, no keychain)
 from statement_etl import pipeline
-from statement_etl.parsers import gcash
+from statement_etl.parsers import gcash, gotyme
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, Source, get_source
 from statement_etl.transaction import Transaction
-from statement_etl.ynab_api.format import to_ynab
+from statement_etl.ynab_api.format import make_import_id, to_ynab
 
 # =============================================================================
 # REGISTRY - every source is wired up consistently
@@ -55,11 +55,12 @@ class RegistryTest(unittest.TestCase):
             self.assertTrue(source.password_env.endswith("_PDF_PASSWORD"))
 
     def test_unknown_source(self):
-        with self.assertRaisesRegex(ValueError, "Known sources: gcash"):
+        with self.assertRaisesRegex(ValueError, "Known sources: gcash, gotyme"):
             get_source("nope")
 
     def test_get_source(self):
         self.assertIs(get_source("gcash"), SOURCES["gcash"])
+        self.assertIs(get_source("gotyme"), SOURCES["gotyme"])
 
 
 class SourceDefaultsTest(unittest.TestCase):
@@ -159,6 +160,121 @@ class GCashTest(unittest.TestCase):
         self.assertEqual(
             gcash.summary(GCASH_ROWS),
             "Total debit 250.50 · Total credit 1,000.00 · matches statement ✓",
+        )
+
+
+# =============================================================================
+# GOTYME - synthetic rows in the shape gotyme.parse_transactions() returns
+# =============================================================================
+
+
+def gotyme_row(date_str, details, credits="0.00", debits="0.00", balance="0.00"):
+    return {
+        "Date": date_str,
+        "Details": details,
+        "Credits": credits,
+        "Debits": debits,
+        "Running Balance": balance,
+    }
+
+
+GOTYME_ROWS = [
+    gotyme_row(
+        "05 Oct 2026",
+        "Card payment at SHOPEE PH, Card •••• 1234",
+        credits="0.00",
+        debits="249.00",
+        balance="4751.00",
+    ),
+    gotyme_row(
+        "06 Oct 2026",
+        "Transfer from JUAN DELA CRUZ BPI, Account No. •••••••1234",
+        credits="1000.00",
+        debits="0.00",
+        balance="5751.00",
+    ),
+]
+
+
+class GoTymeTest(unittest.TestCase):
+    def test_rows_have_exactly_the_columns(self):
+        for row in GOTYME_ROWS:
+            self.assertEqual(tuple(row), gotyme.COLUMNS)
+
+    def test_row_to_transaction_and_to_ynab(self):
+        [txn] = gotyme.to_transactions([GOTYME_ROWS[0]])
+        expected_key = "05 Oct 2026|0.00|249.00|4751.00|0"
+        self.assertEqual(
+            txn,
+            Transaction(
+                source="gotyme",
+                key=expected_key,
+                date=date(2026, 10, 5),
+                payee="SHOPEE PH",
+                amount=Decimal("-249.00"),
+                memo="GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                flagged=False,
+            ),
+        )
+        self.assertEqual(
+            to_ynab(txn),
+            {
+                "date": "2026-10-05",
+                "payee_name": "SHOPEE PH",
+                "import_id": make_import_id("gotyme", expected_key),
+                "amount": -249000,
+                "memo": "GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                "flag_color": None,
+            },
+        )
+
+    def test_signs_credit_positive_debit_negative(self):
+        debit_txn, credit_txn = gotyme.to_transactions(GOTYME_ROWS)
+        self.assertEqual(debit_txn.amount, Decimal("-249.00"))
+        self.assertEqual(credit_txn.amount, Decimal("1000.00"))
+
+    def test_payee_rules(self):
+        cases = {
+            "Card payment at SHOPEE PH, Card •••• 1234": "SHOPEE PH",
+            "Transfer to GoalSave": "GoalSave",
+            "Transfer from GoalSave": "GoalSave",
+            "Transfer to JUAN DELA CRUZ BPI, Account No. •••••••1234": (
+                "Transfer to JUAN DELA CRUZ BPI"
+            ),
+            "Transfer from JUAN DELA CRUZ BPI, Account No. •••••••1234": (
+                "Transfer from JUAN DELA CRUZ BPI"
+            ),
+            "Qr Payment": "Qr Payment",
+            "Bnpl - Deposit": "Bnpl - Deposit",
+            "Refund for card payment": "Refund for card payment",
+            "ATM withdrawal fee": "ATM withdrawal fee",
+        }
+        for details, expected_payee in cases.items():
+            with self.subTest(details=details):
+                self.assertEqual(gotyme.gotyme_payee(details), expected_payee)
+
+    def test_import_id_is_stable_and_numbers_identical_rows(self):
+        first = to_ynab(gotyme.to_transactions([GOTYME_ROWS[0]])[0])["import_id"]
+        again = to_ynab(gotyme.to_transactions([dict(GOTYME_ROWS[0])])[0])["import_id"]
+        self.assertEqual(first, again)
+        self.assertLessEqual(len(first), 36)
+
+        # Two otherwise identical rows on the same statement get n=0 and n=1
+        dup_a, dup_b = gotyme.to_transactions([GOTYME_ROWS[0], dict(GOTYME_ROWS[0])])
+        self.assertTrue(dup_a.key.endswith("|0"))
+        self.assertTrue(dup_b.key.endswith("|1"))
+        self.assertNotEqual(to_ynab(dup_a)["import_id"], to_ynab(dup_b)["import_id"])
+
+    def test_statement_balances(self):
+        self.assertEqual(
+            gotyme.statement_balances(GOTYME_ROWS),
+            {"starting": Decimal("5000.00"), "ending": Decimal("5751.00")},
+        )
+
+    def test_summary(self):
+        self.assertEqual(
+            gotyme.summary(GOTYME_ROWS),
+            "Total credit 1,000.00 · Total debit 249.00 · matches statement ✓",
         )
 
 
