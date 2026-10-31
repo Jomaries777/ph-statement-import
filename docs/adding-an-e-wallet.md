@@ -1,0 +1,301 @@
+# Adding an e-wallet or bank
+
+This guide walks you through adding a new statement source (Maya, GoTyme, a bank, …) next to GCash. The examples use **Maya** with the key `maya`.
+
+You'll touch three files and add one test. No HTML or web-app code changes are needed.
+
+| File | What you add |
+|---|---|
+| `statement_etl/parsers/maya.py` | The parser: reads the PDF into rows |
+| `statement_etl/transform.py` | `maya_to_ynab(row)` plus one line in `TRANSFORMERS` |
+| `statement_etl/sources.py` | One `Source(...)` entry that describes Maya's columns |
+| `tests/test_sources.py` | Tests with made-up rows |
+
+## How a statement flows
+
+```
+statement PDF
+   │  parsers/maya.py      parse_transactions(pdf, password)
+   ▼
+rows, exactly as printed   [{"Date": "01/10/2026", "Details": "...", "Amount": "-50.00", ...}, ...]
+   │  transform.py         maya_to_ynab(row), once per row
+   ▼
+YNAB transactions          {"date", "payee_name", "amount", "import_id", "memo", "flag_color"}
+   │  ynab_api/            upload, plus the starting / ending balance checks
+   ▼
+YNAB (unapproved, ready for review)
+```
+
+Two rules keep this simple:
+
+1. **The parser only reads.** Its job is to return every row and every column of the statement, with the column names and text exactly as printed. Don't rename, merge or skip columns, and don't drop rows. Every statement looks different, so there is no shared row format.
+2. **The transformer is the only place that knows YNAB.** It reads one row by your statement's column names and builds a YNAB transaction.
+
+The `Source` entry in `sources.py` connects the two and tells the command line and the web page how to show your columns.
+
+## 1. Set up
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m unittest discover tests     # should pass before you change anything
+```
+
+## 2. Study your statement
+
+Download **your own** statement and put it in `statements/`. That folder is gitignored, so the file can't be committed by accident. Never commit a real statement.
+
+Print every word with its position to see how the table is laid out:
+
+```python
+# python -I scratch.py statements/maya.pdf
+import sys, getpass, pdfplumber
+
+with pdfplumber.open(sys.argv[1], password=getpass.getpass("PDF password: ")) as pdf:
+    for word in pdf.pages[0].extract_words():
+        print(f'{word["x0"]:7.1f} {word["x1"]:7.1f} {word["top"]:7.1f}  {word["text"]}')
+```
+
+Write down:
+
+- **Every column name**, in the order printed. This becomes `COLUMNS`.
+- Which columns hold **money**, and which of those are **money in** and **money out**. Some statements have Debit and Credit columns; others have one signed Amount column.
+- The **date format**, e.g. `2026-10-20 06:50 AM` or `20 Oct 2026`.
+- A **reference number** per transaction, if there is one.
+- **Summary lines**: totals, starting balance, ending balance.
+- How **long descriptions wrap** onto the next line.
+
+## 3. Write the parser
+
+Start from the GCash parser:
+
+```bash
+cp statement_etl/parsers/gcash.py statement_etl/parsers/maya.py
+```
+
+Work through these parts of `maya.py`:
+
+| Section | What to change |
+|---|---|
+| Docstring and `main()` | Say "Maya". `main()` is the `python -m statement_etl.parsers.maya` command. |
+| **STATEMENT SETTINGS** | `COLUMNS` (Maya's column names), the header labels, date/time regexes and format, amount and reference regexes, and the totals / balance / summary line patterns. |
+| **PAGE LAYOUT** | `_find_columns()` finds the header row and the column edges. `_attach_wrapped_lines()` joins wrapped description lines. Adjust them if Maya's layout differs. |
+| **ROW PARSING** | `_parse_transaction_line()` reads one table line. `_to_output_row()` returns the row: **one key per entry in `COLUMNS`, text exactly as printed**. |
+| **CHECKING** | Keep `_check_totals()` if the statement prints totals: a mismatch means a row was misread, so parsing stops. |
+| **BALANCE CORRECTION** | GCash adds correction rows when its own running balance doesn't add up. Optional: delete this section if you don't need it. |
+
+Your parser must also provide these functions for the `Source` entry:
+
+| Function | Returns | Used for |
+|---|---|---|
+| `parse_transactions(pdf, password)` | list of row dicts | everything. `pdf` is a file path or a file object (the web upload). Raise `ValueError` with a clear message for a wrong password or a misread statement. |
+| `statement_balances(rows)` | `{"starting": Decimal, "ending": Decimal}` | the YNAB balance checks before and after the upload |
+| `summary(rows)` *(optional)* | one line of text, or `None` | shown under the parsed rows, e.g. "Total debit … · Total credit … · matches statement ✓" |
+
+`statement_etl/parsers/common.py` has helpers you can reuse: `open_pdf()` (handles a wrong password), `group_lines()` (words → text lines) and `to_decimal()` (`"1,234.50"` → `Decimal`).
+
+Check your parser on your own PDF and compare the output with the PDF: the row count, the first and last rows, and a wrapped description.
+
+```bash
+python -m statement_etl.parsers.maya statements/maya.pdf -o /tmp/maya.json
+```
+
+## 4. Write the transformer
+
+In `statement_etl/transform.py`, add `maya_to_ynab(row)` next to `gcash_to_ynab` (use it as the example), then register it:
+
+```python
+def maya_to_ynab(row):
+    """Convert one Maya row into a YNAB transaction."""
+    date = datetime.strptime(row["Date"], "%d/%m/%Y")      # Maya's own column names
+    amount = to_decimal(row["Amount"])                      # pesos; negative = money out
+    reference = row["Reference ID"]
+    return ynab_transaction(
+        date=date,
+        payee_name=row["Details"],
+        amount=amount,
+        import_id=make_import_id("maya", reference),
+        memo="Maya Ref: " + reference,
+    )
+
+
+TRANSFORMERS = {
+    "gcash": gcash_to_ynab,
+    "maya": maya_to_ynab,
+}
+```
+
+- **Sign**: money out is negative, money in is positive.
+- **`import_id`** stops duplicates when the same statement is uploaded twice. It must be **unique and stable** for each transaction. Use the statement's reference number. If there isn't one, build a value that never changes for that row, e.g. the date, amount, running balance and the row's position on that date.
+- **Correction rows** (if your parser adds them) get `flag_color="red"`, so they stand out for review in YNAB.
+
+Check it:
+
+```bash
+python -m statement_etl.transform /tmp/maya.json --source maya
+```
+
+## 5. Register the source
+
+In `statement_etl/sources.py`, import your parser and add an entry to `SOURCES`:
+
+```python
+from statement_etl.parsers import gcash, maya
+
+        Source(
+            key="maya",
+            name="Maya",
+            password_env="MAYA_PDF_PASSWORD",
+            columns=maya.COLUMNS,
+            amount_columns=("Amount", "Running Balance"),
+            money_in_columns=(),
+            money_out_columns=(),
+            text_column="Details",
+            parse=maya.parse_transactions,
+            statement_balances=maya.statement_balances,
+            summary=maya.summary,
+        ),
+```
+
+Then add `MAYA_PDF_PASSWORD=` to `.env.example`.
+
+### `Source` fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| `key` | yes | `"maya"`: the `--source` value, the `TRANSFORMERS` key, and part of every `import_id`. **Never rename it after release**, or YNAB will import duplicates. |
+| `name` | yes | `"Maya"`: shown in the page's Source dropdown and in command-line output |
+| `password_env` | yes | Environment variable with the PDF password, for the command line |
+| `columns` | yes | Every column, in the order the statement prints them |
+| `parse` | yes | `parse_transactions` |
+| `statement_balances` | yes | `statement_balances` |
+| `amount_columns` | no | Money columns: right-aligned |
+| `money_in_columns` | no | Shown green on the page (e.g. `Credit`). Leave empty for a single signed Amount column. |
+| `money_out_columns` | no | Shown red on the page (e.g. `Debit`) |
+| `text_column` | no | Long text that should wrap (e.g. `Description`) |
+| `summary` | no | The line under the parsed rows |
+| `is_correction_row`, `balance_corrections`, `balance_warning` | no | Only if your parser adds balance-correction rows. See the GCash parser. |
+
+## 6. Add tests
+
+`tests/test_sources.py` already checks every registered source automatically:
+
+- it has a transformer
+- its column settings name real columns
+- its password variable name ends in `_PDF_PASSWORD`
+
+Add a `MayaTest` class modelled on `GCashTest`, using **made-up rows** in the shape your parser returns:
+
+- every row has exactly the keys in `maya.COLUMNS`
+- `maya_to_ynab` gives the right date, amount (in milliunits), payee and memo
+- the `import_id` is the same when the row is converted twice
+- `maya.statement_balances` and `maya.summary` give the expected values
+
+Then add `tests/test_parsers_maya.py` for the parser itself, modelled on `tests/test_parsers_gcash.py`. It fakes the PDF with word positions (helpers in `tests/fakes.py`), so you can test reading the table, wrapped lines and your totals check without a real statement.
+
+```bash
+python -m unittest discover tests
+```
+
+## 7. Check the web page
+
+You don't edit the HTML. The page builds itself from your `Source` entry through the JSON that `/api/parse` returns:
+
+| `Source` field | Where it shows on the page |
+|---|---|
+| `key`, `name` | The **Source** dropdown in step ①, and "Parsing successful: N Maya transactions…" |
+| `columns` | The preview table's headers and cells, in this order |
+| `amount_columns` | Right-aligned numbers |
+| `money_in_columns` / `money_out_columns` | Green / red amounts |
+| `text_column` | The cell that wraps long text |
+| `summary` | The line under the preview table |
+| `balance_corrections`, `balance_warning`, `is_correction_row` | The yellow "Balance does not add up" box and highlighted rows |
+| `statement_balances` | The starting and ending balance checks in step ④ |
+
+```bash
+python -m statement_etl.web
+```
+
+Open http://localhost:5050, pick **Maya**, parse your PDF, and check:
+
+- every column is shown, in order
+- amounts are right-aligned and coloured correctly
+- the summary line and the starting balance are right
+- it also looks right at phone width (below 560px) and in dark mode
+
+If something looks wrong, fix your `Source` fields, not the HTML.
+
+## 8. Try it end to end
+
+Use a **test YNAB plan or account**, not your real budget.
+
+```bash
+python -m statement_etl.pipeline statements/maya.pdf --source maya --dry-run
+python -m statement_etl.pipeline statements/maya.pdf --source maya --plan-id <test plan> --account-id <test account>
+```
+
+Then upload the same statement again, from the command line or the web page. YNAB should skip every transaction ("Skipped N already imported"). The starting and ending balance checks should match.
+
+## 9. Open a pull request
+
+Checklist:
+
+- [ ] No PDFs, JSON dumps, screenshots or real names, account numbers or reference numbers in the commits. Test data is made up.
+- [ ] `python -m unittest discover tests` passes.
+- [ ] The parser returns every row and column as printed, and the totals check passes on your statement.
+- [ ] Uploading the same statement twice creates no duplicates.
+- [ ] The key (`maya`) is final.
+- [ ] `MAYA_PDF_PASSWORD=` is in `.env.example`, and Maya is in the README's "currently supports" line.
+- [ ] The PR says which statement type you tested with (e.g. "Maya Wallet transaction history, Oct 2026"), without attaching it.
+
+---
+
+## Changing the web page itself
+
+For UI fixes or improvements, unrelated to adding a source.
+
+**Where things are.** The page is a single file, `statement_etl/web/templates/index.html`, with no build step:
+
+- `<style>` at the top: colours for light and dark mode (`prefers-color-scheme`) and the phone layout (`max-width: 560px`)
+- four cards in the HTML: ① Statement, ② YNAB, ③ Plan & Account, ④ Upload
+- `<script>` at the bottom, in sections that match the cards (`// ---- ① Statement ----` and so on), plus shared helpers (`renderTable`, `message`, `api`) and the restore-on-load code at the end
+
+**The API it calls**, in `statement_etl/web/app.py`:
+
+| Route | Used by |
+|---|---|
+| `POST /api/parse` | ① Parse. Form fields: `source`, `pdf`, `password` |
+| `GET /api/status` | Restoring the page after a reload or the OAuth redirect |
+| `POST /api/token` | ② Connect with a personal access token |
+| `/oauth/login`, `/oauth/callback`, `/oauth/logout` | ② YNAB login (only when OAuth is set up) |
+| `GET /api/plans`, `GET /api/plans/<plan_id>/accounts` | ③ Plan and Account dropdowns |
+| `POST /api/starting-balance` | ④ The check before the upload |
+| `POST /api/upload` | ④ Upload, plus the ending balance check |
+
+`/api/parse` returns the fields below, so UI changes never need to know a statement's column names:
+
+| Field | Meaning |
+|---|---|
+| `source`, `source_name`, `filename` | What was parsed |
+| `columns`, `rows` | The statement's own columns, and each row as a list in that order |
+| `amount_columns`, `money_in_columns`, `money_out_columns`, `text_column` | How to style the columns |
+| `summary` | The line under the table, or `null` |
+| `statement_count`, `count` | Rows on the statement, and transactions to upload (corrections included) |
+| `correction_rows`, `corrections`, `balance_warning` | Balance-correction rows (indexes into `rows`, details, warning text) |
+| `starting_balance`, `ending_balance` | From the statement, formatted |
+
+**Rules for the page:**
+
+- Keep everything in the one file. Don't add CDNs, external scripts, fonts or trackers. The app runs on the user's own computer, and statement data must never leave it.
+- Don't use `localStorage`, `sessionStorage` or cookies for data. The access token and the parsed rows stay on the server, in memory.
+- Insert statement text with `textContent` (as `renderTable` does), never `innerHTML`: it comes from a PDF.
+- Don't hardcode column names in JavaScript. Use the `/api/parse` fields.
+- Keep the step order ① → ④. A balance mismatch is always a warning, never a block.
+
+**Testing a UI change.** There is no JavaScript test suite, so test by hand and say in the PR what you checked:
+
+- run `python -m statement_etl.web` and go through all four steps with your own statement and a test YNAB account
+- reload the page partway through; it should restore where you were
+- check phone width and dark mode
+- `python -m unittest discover tests` still passes

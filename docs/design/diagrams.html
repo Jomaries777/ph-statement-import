@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Flow Diagrams</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --text: #1f2328;
+    --muted: #5f6368;
+    --border: #e1e3e6;
+    --accent: #1a73e8;
+    --new: #b06000;
+    --code-bg: #f1f3f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141517;
+      --surface: #1d1f22;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --border: #33363a;
+      --accent: #8ab4f8;
+      --new: #fdd663;
+      --code-bg: #26292d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141517;
+    --surface: #1d1f22;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --border: #33363a;
+    --accent: #8ab4f8;
+    --new: #fdd663;
+    --code-bg: #26292d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 1400px; margin: 0 auto; }
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 16px 28px 24px; border-right: 1px solid var(--border);
+  }
+  nav h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  nav a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 14px; }
+  nav a:hover { background: var(--code-bg); }
+  nav a.sub { padding-left: 20px; color: var(--muted); }
+  main { padding: 28px 32px 64px; min-width: 0; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header p { margin: 0 0 18px; color: var(--muted); max-width: 72ch; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+    padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    font-size: 13px; color: var(--muted); margin-bottom: 28px;
+  }
+  .swatch { display: inline-block; width: 34px; height: 18px; border-radius: 4px; vertical-align: middle; margin-right: 6px; }
+  .swatch.solid { border: 1.5px solid var(--muted); }
+  .swatch.dashed { border: 1.5px dashed var(--new); }
+  section { margin: 0 0 36px; scroll-margin-top: 16px; }
+  section h2 { font-size: 20px; margin: 0 0 4px; }
+  section h3 { font-size: 16px; margin: 0 0 4px; }
+  section > p, .card > p { margin: 0 0 12px; color: var(--muted); max-width: 80ch; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 18px 8px; margin-bottom: 20px;
+  }
+  .diagram { overflow-x: auto; padding: 8px 0 12px; }
+  .diagram svg { display: block; margin: 0 auto; height: auto; max-width: none; }
+  .diagram .error { color: #d93025; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  a { color: var(--accent); }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 16px; }
+    main { padding: 20px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav aria-label="Contents">
+    <h2>Contents</h2>
+    <a href="#d2">D2 · .py files</a>
+    <a href="#use-cases">Use cases</a>
+    <a class="sub" href="#u1">U1 · Manual upload</a>
+    <a class="sub" href="#u2">U2 · Gmail auto-import poll</a>
+    <a class="sub" href="#u3">U3 · Adding a source</a>
+    <a href="#seq">Sequences</a>
+    <a class="sub" href="#seq-manual">Manual upload</a>
+    <a class="sub" href="#seq-auto">Gmail auto-import</a>
+  </nav>
+
+  <main>
+    <header>
+      <h1>ph-statement-import · call flow diagrams</h1>
+      <p>How the Python modules call each other once the app runs on Google Cloud in hosted mode with Gmail auto-import, after the refactors in <code>docs/plan/P1-refactors.md</code>.
+        The code has three parts: a <b>Source</b> (one per e-wallet or bank) turns statement rows into neutral <b>Transaction</b>s, and <b>YNAB</b> (<code>ynab_api/</code>) formats and uploads them.
+        The GCP architecture is in <code>gcp-architecture.drawio</code> and the screens are in <code>wireframes.html</code>.</p>
+    </header>
+
+    <div class="legend">
+      <span><span class="swatch solid"></span>Exists today</span>
+      <span><span class="swatch dashed"></span>New in the plan</span>
+      <span>Dotted arrow: only in one mode, or later</span>
+      <span>Public functions only; private <code>_helpers</code> are left to the code and its docstrings</span>
+    </div>
+
+    <section id="d2">
+      <h2>D2 · Call flow between .py files</h2>
+      <p>Arrows point from the caller to the module it calls. Everything is under <code>statement_etl/</code>. The web app is split into blueprints, one per job. Parsers never import YNAB code: they return <code>Transaction</code>s, and <code>ynab_api/format.py</code> turns those into YNAB's format.</p>
+      <div class="card"><div class="diagram" data-src="src-d2"></div></div>
+    </section>
+
+    <section id="use-cases">
+      <h2>Use cases</h2>
+      <p>One diagram per thing a user or contributor does. Each box is a public function as <code>module.function()</code>; routes show their HTTP method and path.</p>
+
+      <div class="card" id="u1">
+        <h3>U1 · Manual upload (web and command line)</h3>
+        <p>The web page and the CLI call the same three pipeline functions. <code>import_statement()</code> is the one place that sets a new account's starting balance, uploads, and checks the ending balance. Every YNAB call from the web gets its token from the YNAB auth blueprint, which refreshes it when needed.</p>
+        <div class="diagram wide" data-src="src-u1"></div>
+      </div>
+
+      <div class="card" id="u2">
+        <h3>U2 · Gmail auto-import poll (all new)</h3>
+        <p>Cloud Scheduler calls <code>/tasks/poll-gmail</code> every 15 minutes, and the OIDC token is checked before any work. For each user, the runner searches Gmail once per mapped wallet and imports new statements into that wallet's YNAB account, with the same <code>parse_statement()</code> and <code>import_statement()</code> as the manual upload. Users and wallets are handled separately, so one failure doesn't stop the rest. Tokens and password inputs are decrypted in the app (MultiFernet, with keys from the <code>app-config</code> secret); there's no Cloud KMS.</p>
+        <div class="diagram wide" data-src="src-u2"></div>
+      </div>
+
+      <div class="card" id="u3">
+        <h3>U3 · Adding a source (the <code>Source</code> contract)</h3>
+        <p>What a contributor writes to support a new e-wallet or bank: one parser module plus one <code>Source</code> entry. The source returns neutral <code>Transaction</code>s and never touches YNAB code.
+          <code>key</code> is a stable id within the source: GCash uses its Reference No.; GoTyme has none, so it uses <code>date|credits|debits|running balance|n</code>. YNAB's <code>import_id</code> is <code>make_import_id(source, key)</code>, so re-importing never creates duplicates.</p>
+        <div class="diagram wide" data-src="src-u3"></div>
+      </div>
+    </section>
+
+    <section id="seq">
+      <h2>Sequences</h2>
+      <p>The same calls in time order, from the browser or scheduler down to YNAB and Gmail.</p>
+
+      <div class="card" id="seq-manual">
+        <h3>Manual upload, hosted mode</h3>
+        <div class="diagram wide" data-src="src-seq-manual"></div>
+      </div>
+
+      <div class="card" id="seq-auto">
+        <h3>Gmail auto-import, one poll</h3>
+        <div class="diagram wide" data-src="src-seq-auto"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script type="text/x-mermaid" id="src-d2">
+flowchart LR
+  main["web/__main__.py"] --> app["web/app.py<br/>creates app, headers, blueprints"]
+  app --> up["web/upload.py<br/>page + /api/*"]
+  app --> auth["web/ynab_auth.py<br/>YNAB OAuth, token for each call"]
+  app --> ai["web/auto_import.py<br/>/auto-import, /google/*,<br/>/tasks/poll-gmail"]
+  up --> st["web/state.py<br/>STORE, idle expiry"]
+  up --> auth
+  auth --> st
+  auth --> yo["web/ynab_oauth.py<br/>token exchange + refresh"]
+  auth -.->|local only| ts["web/token_store.py<br/>OS keychain"]
+  ai --> runner["autoimport/runner.py"]
+  ai --> store["autoimport/store.py<br/>encrypt / decrypt"]
+  ai --> gmail["autoimport/gmail.py"]
+  runner --> gmail
+  runner --> store
+  runner --> yo
+  runner --> pipe
+  up --> pipe["pipeline.py<br/>parse_statement · import_statement"]
+  cli["pipeline.py main() · CLI"] --> pipe
+  pipe --> tr["transform.py"]
+
+  subgraph SRC["Source · one per e-wallet or bank"]
+    src["sources.py<br/>Source registry"]
+    gc["parsers/gcash.py"]
+    gt["parsers/gotyme.py"]
+    cm["parsers/common.py<br/>pdfplumber"]
+  end
+  subgraph TXN["Transaction"]
+    tx["transaction.py<br/>neutral Transaction"]
+  end
+  subgraph YNAB["YNAB · ynab_api/"]
+    fmt["format.py<br/>Transaction → YNAB dict"]
+    cl["client.py"]
+    bal["balance.py"]
+    acc["accounts.py"]
+  end
+
+  tr --> src
+  src --> gc
+  src --> gt
+  gc --> cm
+  gt --> cm
+  gc --> tx
+  gt --> tx
+  pipe --> fmt
+  fmt --> tx
+  pipe --> cl
+  pipe --> bal
+  up --> acc
+  acc --> cl
+  bal --> cl
+  cl --> sdk[("ynab SDK → YNAB API")]
+  gmail --> gapi[("Gmail API · Google OAuth")]
+  store --> fs[("Firestore (default)")]
+
+  classDef new stroke-dasharray: 6 4,stroke-width:2px
+  class up,auth,ai,st,yo,runner,store,gmail,gapi,fs,gt,tx,fmt new
+</script>
+
+<script type="text/x-mermaid" id="src-u1">
+flowchart LR
+  subgraph web["web/upload.py"]
+    R1["POST /api/parse<br/>api_parse()"]
+    R2["GET /api/plans, /accounts<br/>api_plans(), api_accounts()"]
+    R3["POST /api/starting-balance<br/>api_starting_balance()"]
+    R4["POST /api/upload<br/>api_upload()"]
+  end
+  CLI["pipeline.run_pipeline()<br/>command line"]
+
+  R2 & R3 & R4 --> YA["ynab_auth: get_token()<br/>refresh on expiry"]
+  R1 --> PS["pipeline.parse_statement()"]
+  R2 --> ACC["accounts.get_plans(),<br/>accounts.get_accounts()"]
+  R3 --> SBC["pipeline.starting_balance_check()"]
+  R4 --> IS["pipeline.import_statement()<br/>→ ImportResult"]
+  CLI --> PS
+  CLI --> SBC
+  CLI --> IS
+
+  PS --> SP["Source.parse()<br/>rows"]
+  PS --> ST["Source.to_transactions()<br/>Transaction list"]
+  PS --> TY["ynab_api.format.to_ynab()"]
+  SBC --> FAI["client.find_already_imported()"]
+  SBC --> CSB["balance.check_starting_balance()"]
+  IS --> NASB["pipeline.new_account_starting_balance()"]
+  IS --> GAB["balance.get_account_balance()"]
+  IS --> UT["pipeline.upload_transactions()"]
+  UT --> IT["client.import_transactions()<br/>unapproved, import_id"]
+  IS --> EBC["pipeline.ending_balance_check()"]
+
+  classDef new stroke-dasharray: 6 4,stroke-width:2px
+  class IS,ST,TY,YA new
+</script>
+
+<script type="text/x-mermaid" id="src-u2">
+flowchart LR
+  T["POST /tasks/poll-gmail<br/>auto_import.poll_gmail_task()<br/>OIDC check first, else 403"] --> PA["runner.poll_all()"]
+  PA --> LU["store.list_enabled_users()"]
+  PA --> PU["runner.process_user()<br/>never raises"]
+
+  PU --> GRT["gmail.refresh_access_token()"]
+  PU --> YRT["ynab_oauth.refresh()"]
+  YRT --> SVY["store.save_ynab_tokens()<br/>rotated refresh token"]
+  PU --> PSRC["runner.process_source()<br/>once per mapped wallet"]
+  PU --> LC["store.set_last_checked()"]
+  PSRC --> LM["gmail.list_messages(<br/>Source.email_query)"]
+  PSRC --> RE["store.run_exists()"]
+  PSRC --> PM["runner.process_message()"]
+
+  PM --> GPA["gmail.get_pdf_attachment(<br/>Source.attachment_pattern)"]
+  PM --> PW["runner.pdf_password()<br/>Source.build_password(store.decrypt(…))"]
+  PM --> PS["pipeline.parse_statement()"]
+  PM --> IS["pipeline.import_statement()"]
+  PM --> WR["store.write_run(status)"]
+
+  subgraph page["Settings page · web/auto_import.py"]
+    S1["GET /auto-import"]
+    S2["POST /api/auto-import<br/>save plan + wallet → account"]
+    S3["POST /api/auto-import/test"]
+    S4["POST /api/auto-import/delete"]
+  end
+  S2 --> ENC["store.encrypt(), store.save_user()"]
+  S3 --> TP["runner.test_password()"]
+  S4 --> DEL["store.delete_user(), gmail.revoke()"]
+
+  classDef new stroke-dasharray: 6 4,stroke-width:2px
+  class T,PA,LU,PU,GRT,YRT,SVY,PSRC,LC,LM,RE,PM,GPA,PW,WR,S1,S2,S3,S4,ENC,TP,DEL new
+</script>
+
+<script type="text/x-mermaid" id="src-u3">
+flowchart LR
+  subgraph mod["parsers/&lt;source&gt;.py"]
+    P["parse_transactions(pdf, password)<br/>→ rows, the statement's own columns"]
+    SB["statement_balances(rows)<br/>→ starting, ending"]
+    SU["summary(rows)<br/>→ one line, or None"]
+    TT["to_transactions(rows)<br/>→ list of Transaction"]
+    BP["build_password(inputs)<br/>→ PDF password"]
+  end
+  subgraph reg["sources.py · one Source entry"]
+    K["key, name, columns"]
+    EQ["email_query,<br/>attachment_pattern"]
+    PI["password_inputs"]
+  end
+
+  K -.-> P
+  P --> TT
+  TT --> TX["transaction.py · Transaction<br/>source, key, date, payee,<br/>amount (pesos), memo, flagged"]
+  TX --> Y["ynab_api.format.to_ynab()<br/>milliunits, import_id = make_import_id(source, key)"]
+  Y --> YC["ynab_api.client.import_transactions()"]
+  TX -.->|later| OD["another budgeting app<br/>e.g. Actual Budget, Lunch Money, CSV"]
+  SB --> BC["starting / ending balance checks"]
+  SU --> PG["page and CLI summary line"]
+  EQ --> GM["gmail.list_messages(),<br/>gmail.get_pdf_attachment()"]
+  PI --> BP
+  BP --> RN["runner.pdf_password()"]
+
+  classDef new stroke-dasharray: 6 4,stroke-width:2px
+  class TT,BP,TX,Y,OD,EQ,PI,RN,GM new
+</script>
+
+<script type="text/x-mermaid" id="src-seq-manual">
+sequenceDiagram
+  autonumber
+  actor U as Browser
+  participant W as web/upload.py + ynab_auth.py
+  participant P as pipeline.py
+  participant S as parsers/source module
+  participant Y as ynab_api/*
+  participant YN as YNAB API
+
+  U->>W: GET /oauth/login
+  W-->>U: redirect to app.ynab.com
+  U->>W: GET /oauth/callback?code
+  W->>YN: ynab_oauth.exchange_token()
+  YN-->>W: access + refresh token (kept in STORE)
+  U->>W: POST /api/parse (PDF, password)
+  W->>P: parse_statement()
+  P->>S: parse_transactions() → rows
+  P->>S: to_transactions(rows) → Transactions
+  P->>Y: format.to_ynab() for each
+  P-->>W: rows, YNAB transactions (kept in STORE)
+  W-->>U: preview table, balances
+  U->>W: GET /api/plans, /api/plans/{id}/accounts
+  W->>Y: get_plans(), get_accounts()
+  Y->>YN: GET plans / accounts
+  U->>W: POST /api/starting-balance
+  W->>P: starting_balance_check()
+  P->>Y: find_already_imported(), check_starting_balance()
+  W-->>U: match or warning
+  U->>W: POST /api/upload
+  W->>P: import_statement()
+  P->>Y: new account starting balance, get_account_balance()
+  P->>Y: import_transactions()
+  Y->>YN: POST transactions (unapproved, import_id)
+  P->>Y: ending balance check
+  P-->>W: ImportResult
+  W-->>U: created table, ending check
+  Note over W: hosted: rows and transactions cleared after upload,<br/>whole entry dropped after 30 min idle
+</script>
+
+<script type="text/x-mermaid" id="src-seq-auto">
+sequenceDiagram
+  autonumber
+  participant SC as Cloud Scheduler
+  participant A as web/auto_import.py
+  participant R as autoimport/runner.py
+  participant ST as autoimport/store.py
+  participant GM as autoimport/gmail.py
+  participant GA as Gmail API
+  participant P as pipeline.py
+  participant YN as YNAB API
+
+  SC->>A: POST /tasks/poll-gmail (OIDC token)
+  A->>A: verify OIDC token, else 403
+  A->>R: poll_all()
+  R->>ST: list_enabled_users()
+  loop each user
+    R->>ST: decrypt tokens (MultiFernet, key from app-config)
+    R->>GM: refresh_access_token()
+    R->>YN: ynab_oauth.refresh(), then store.save_ynab_tokens()
+    loop each mapped wallet, e.g. GCash → account 1, GoTyme → account 2
+      R->>GM: list_messages(Source.email_query, after=last_checked)
+      GM->>GA: users.messages.list
+      loop each new message (not in runs)
+        R->>GM: get_pdf_attachment(msg_id, Source.attachment_pattern)
+        GM->>GA: messages.get + attachments.get (only the matching PDF)
+        R->>R: pdf_password(): Source.build_password(decrypted inputs)
+        R->>P: parse_statement(pdf bytes, password, source)
+        alt parsed
+          R->>P: import_statement(mapped account)
+          P->>YN: POST transactions (unapproved, import_id)
+          R->>ST: write_run(ok or balance mismatch)
+        else wrong password, parse error or YNAB error
+          R->>ST: write_run(error)
+        end
+      end
+    end
+    R->>ST: set_last_checked()
+  end
+  A-->>SC: 200
+</script>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+
+  const dark = window.matchMedia("(prefers-color-scheme: dark)");
+
+  function isDark() {
+    const forced = document.documentElement.dataset.theme;
+    return forced ? forced === "dark" : dark.matches;
+  }
+
+  async function renderAll() {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: isDark() ? "dark" : "neutral",
+      flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+      sequence: { useMaxWidth: false, mirrorActors: false },
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    });
+    let n = 0;
+    for (const el of document.querySelectorAll(".diagram[data-src]")) {
+      const src = document.getElementById(el.dataset.src).textContent.trim();
+      try {
+        const { svg } = await mermaid.render(`m${n++}-${Date.now()}`, src);
+        el.innerHTML = svg;
+      } catch (err) {
+        el.innerHTML = "";
+        const p = document.createElement("p");
+        p.className = "error";
+        p.textContent = `Diagram ${el.dataset.src} failed to render: ${err.message || err}`;
+        el.appendChild(p);
+      }
+    }
+  }
+
+  renderAll();
+  dark.addEventListener("change", renderAll);
+</script>
+</body>
+</html>

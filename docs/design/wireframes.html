@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hosted App Wireframes</title>
+<style>
+  :root {
+    --bg: #eceae6;
+    --canvas: #f7f6f3;
+    --paper: #ffffff;
+    --ink: #2b2b2b;
+    --ink-2: #6b6b6b;
+    --ink-3: #9a9a9a;
+    --line: #c9c7c2;
+    --fill: #e4e2dd;
+    --fill-2: #d6d3cd;
+    --note: #fff3b0;
+    --note-ink: #5c4a00;
+    --ok: #2e7d32;
+    --warn: #a15c00;
+    --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161616;
+      --canvas: #1e1e1e;
+      --paper: #262626;
+      --ink: #e6e6e6;
+      --ink-2: #a8a8a8;
+      --ink-3: #7a7a7a;
+      --line: #444;
+      --fill: #333;
+      --fill-2: #3d3d3d;
+      --note: #4a4220;
+      --note-ink: #f4e7a6;
+      --ok: #81c995;
+      --warn: #fdd663;
+      --bad: #f28b82;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161616;
+    --canvas: #1e1e1e;
+    --paper: #262626;
+    --ink: #e6e6e6;
+    --ink-2: #a8a8a8;
+    --ink-3: #7a7a7a;
+    --line: #444;
+    --fill: #333;
+    --fill-2: #3d3d3d;
+    --note: #4a4220;
+    --note-ink: #f4e7a6;
+    --ok: #81c995;
+    --warn: #fdd663;
+    --bad: #f28b82;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .top {
+    max-width: 1180px; margin: 0 auto; padding: 24px 16px 8px;
+  }
+  .top h1 { margin: 0 0 4px; font-size: 22px; }
+  .top p { margin: 0; color: var(--ink-2); max-width: 80ch; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 0; }
+  .tabs button {
+    font: inherit; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--paper); color: var(--ink); cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .stage { max-width: 1180px; margin: 0 auto; padding: 16px 16px 64px; display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
+  .view[hidden] { display: none; }
+  .canvas { background: var(--canvas); border: 1px dashed var(--line); border-radius: 14px; padding: 24px; min-width: 0; }
+  .notes { position: sticky; top: 16px; display: grid; gap: 10px; }
+  .note { background: var(--note); color: var(--note-ink); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .note b.pin { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--note-ink); color: var(--note); font-size: 11px; margin-right: 6px; }
+
+  /* ---- wireframe primitives ---- */
+  .window { background: var(--paper); border: 1.5px solid var(--ink-3); border-radius: 10px; max-width: 820px; margin: 0 auto; }
+  .chrome { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--fill); border-bottom: 1.5px solid var(--ink-3); border-radius: 9px 9px 0 0; }
+  .chrome i { width: 10px; height: 10px; border-radius: 50%; background: var(--fill-2); display: inline-block; }
+  .chrome .url { flex: 1; margin-left: 8px; background: var(--paper); border-radius: 6px; padding: 3px 10px; color: var(--ink-2); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .appbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1.5px solid var(--line); }
+  .appbar h2 { margin: 0; font-size: 18px; }
+  .step { padding: 16px 20px; border-bottom: 1.5px solid var(--line); position: relative; }
+  .step h3 { margin: 0 0 12px; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+  .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ink); font-size: 12px; margin-right: 8px; }
+  .done { color: var(--ok); font-weight: 700; }
+  .row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; align-items: center; margin-bottom: 10px; }
+  .row label { color: var(--ink-2); }
+  .field { border: 1.5px solid var(--ink-3); border-radius: 6px; padding: 7px 10px; background: var(--paper); color: var(--ink-2); min-height: 34px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .field.select::after { content: "▾"; color: var(--ink-3); }
+  .btn { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--ink); border-radius: 6px; padding: 7px 14px; background: var(--ink); color: var(--paper); font-weight: 600; font: inherit; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--ink); }
+  .btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+  .btn[disabled] { opacity: .45; cursor: default; }
+  .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .muted { color: var(--ink-2); }
+  .small { font-size: 12px; }
+  .status { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .msg { padding: 8px 10px; border-radius: 6px; border: 1.5px solid; margin-top: 10px; font-size: 13px; }
+  .msg.ok { border-color: var(--ok); color: var(--ok); }
+  .msg.warn { border-color: var(--warn); color: var(--warn); }
+  .msg.info { border-color: var(--line); color: var(--ink-2); background: var(--canvas); }
+  .table-wrap { overflow-x: auto; border: 1.5px solid var(--line); border-radius: 6px; margin-top: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { background: var(--fill); font-weight: 600; }
+  td.num-c, th.num-c { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  .in { color: var(--ok); } .out { color: var(--bad); }
+  .footer { padding: 14px 20px; color: var(--ink-2); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .footer a { color: inherit; }
+  .pin-tag { position: absolute; right: -11px; top: 12px; width: 22px; height: 22px; border-radius: 50%; background: var(--note-ink); color: var(--note); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin-left: auto; font-size: 12px; font-weight: 400; }
+  .toggle button { font: inherit; border: 0; background: transparent; color: var(--ink-2); padding: 3px 10px; cursor: pointer; }
+  .toggle button[aria-pressed="true"] { background: var(--fill-2); color: var(--ink); }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1.5px solid; white-space: nowrap; }
+  .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); } .badge.bad { color: var(--bad); }
+  .kv { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 12px; }
+  .kv dt { color: var(--ink-2); } .kv dd { margin: 0; }
+
+  /* ---- phone ---- */
+  .phone { width: 375px; max-width: 100%; margin: 0 auto; border: 2px solid var(--ink-3); border-radius: 34px; padding: 14px 10px 18px; background: var(--paper); }
+  .phone .screen { border: 1.5px solid var(--line); border-radius: 22px; overflow: hidden; }
+  .phone .notch { width: 110px; height: 20px; background: var(--fill-2); border-radius: 0 0 12px 12px; margin: -1px auto 0; }
+  .phone .row { grid-template-columns: 1fr; gap: 4px; }
+  .phone .actions .btn { width: 100%; justify-content: center; }
+  .phone .appbar { padding: 12px 14px; }
+  .phone .step { padding: 14px; }
+  .collapsed { display: flex; justify-content: space-between; align-items: center; color: var(--ink-2); }
+
+  @media (max-width: 900px) {
+    .stage { grid-template-columns: 1fr; }
+    .notes { position: static; }
+    .canvas { padding: 12px; }
+    .pin-tag { right: 6px; }
+  }
+  @media (max-width: 520px) {
+    .row { grid-template-columns: 1fr; gap: 4px; }
+    .step, .appbar, .footer { padding-left: 12px; padding-right: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>ph-statement-import · hosted app wireframes</h1>
+  <p>Low-fidelity screens for the GCP version. Hosted mode is OAuth-only, and Gmail auto-import is opt-in and invite-only. The yellow notes explain the numbered pins.</p>
+  <div class="tabs" role="tablist" aria-label="Screens">
+    <button role="tab" aria-selected="true" aria-controls="v-main" id="t-main">W1 · Main page</button>
+    <button role="tab" aria-selected="false" aria-controls="v-auto-off" id="t-auto-off">W2 · Auto-import: set up</button>
+    <button role="tab" aria-selected="false" aria-controls="v-auto-on" id="t-auto-on">W3 · Auto-import: on</button>
+    <button role="tab" aria-selected="false" aria-controls="v-mobile" id="t-mobile">W4 · Mobile</button>
+  </div>
+</div>
+
+<!-- ================= W1 MAIN ================= -->
+<div class="stage view" id="v-main" role="tabpanel" aria-labelledby="t-main">
+  <div class="canvas">
+    <div class="window">
+      <div class="chrome"><i></i><i></i><i></i><span class="url">https://statements.example.com/</span></div>
+      <div class="appbar">
+        <h2>Statement → YNAB Import</h2>
+        <button class="btn ghost" data-go="v-auto-off">Auto-import ▸</button>
+      </div>
+
+      <div class="step">
+        <span class="pin-tag">1</span>
+        <h3><span><span class="num">1</span>Statement</span><span class="done">✓</span></h3>
+        <div class="row"><label>Source</label><div class="field select">GCash</div></div>
+        <div class="row"><label>PDF</label><div class="field"><span>statement_oct.pdf</span><span class="small muted">Choose file…</span></div></div>
+        <div class="row"><label>Password</label><div class="field">••••••••</div></div>
+        <div class="actions"><button class="btn">Parse</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="num-c">Debit</th><th class="num-c">Credit</th><th class="num-c">Balance</th></tr></thead>
+            <tbody>
+              <tr><td>2026-10-01 09:00</td><td>Received GCash from Test Sender</td><td>1000000000001</td><td class="num-c"></td><td class="num-c in">1,000.00</td><td class="num-c">1,500.00</td></tr>
+              <tr><td>2026-10-02 18:50</td><td>Refund from Test Shop</td><td>R1000000000002</td><td class="num-c"></td><td class="num-c in">50.00</td><td class="num-c">1,550.00</td></tr>
+              <tr><td>2026-10-02 18:50</td><td>Payment to Test Shop</td><td>1000000000002</td><td class="num-c out">250.50</td><td class="num-c"></td><td class="num-c">1,299.50</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">3 transactions · starting balance 500.00 · ending balance 1,299.50</p>
+      </div>
+
+      <div class="step">
+        <span class="pin-tag">2</span>
+        <h3><span><span class="num">2</span>YNAB</span>
+          <span class="toggle" role="group" aria-label="Step 2 state">
+            <button aria-pressed="true" data-state="ynab-off">Not connected</button>
+            <button aria-pressed="false" data-state="ynab-on">Connected</button>
+          </span>
+        </h3>
+        <div data-show="ynab-off">
+          <button class="btn">Connect with YNAB login</button>
+          <p class="small muted">You'll sign in on YNAB's own page. This app never sees your YNAB password.</p>
+        </div>
+        <div data-show="ynab-on" hidden>
+          <div class="status"><span class="dot on"></span>Connected to YNAB (OAuth)<span style="flex:1"></span><button class="btn ghost">Disconnect</button></div>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3><span><span class="num">3</span>Plan &amp; Account</span><span class="done">✓</span></h3>
+        <div class="row"><label>Plan</label><div class="field select">My Budget</div></div>
+        <div class="row"><label>Account</label><div class="field select">GCash</div></div>
+        <div class="msg ok">✓ Starting balance matches: YNAB 500.00 = statement 500.00</div>
+      </div>
+
+      <div class="step">
+        <h3><span><span class="num">4</span>Upload</span></h3>
+        <div class="actions"><button class="btn">Upload to YNAB</button></div>
+        <div class="msg ok">✓ 3 created in YNAB (unapproved) · 0 already there · Ending balance matches: 1,299.50</div>
+        <div class="actions" style="margin-top:10px"><button class="btn ghost">Open in YNAB ↗</button></div>
+      </div>
+
+      <div class="footer" style="position:relative">
+        <span class="pin-tag" style="top:10px">3</span>
+        <span>Your PDF is processed in memory and never stored.</span>
+        <span><a href="#">Privacy</a> · <a href="#">Terms</a> · <a href="#">Source code on GitHub</a></span>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <div class="note"><b class="pin">1</b>Same as today. The PDF and its password go to Cloud Run, stay in memory, and are cleared after the upload or after 30 minutes idle.</div>
+    <div class="note"><b class="pin">2</b>Hosted mode has no token field and no "Remember this token" box. YNAB's terms don't allow asking for other people's personal access tokens. Toggle the state to see both.</div>
+    <div class="note"><b class="pin">3</b>Footer links are required: YNAB's OAuth review checks that the privacy policy is shown prominently.</div>
+  </aside>
+</div>
+
+<!-- ================= W2 AUTO-IMPORT SET UP ================= -->
+<div class="stage view" id="v-auto-off" role="tabpanel" aria-labelledby="t-auto-off" hidden>
+  <div class="canvas">
+    <div class="window">
+      <div class="chrome"><i></i><i></i><i></i><span class="url">https://statements.example.com/auto-import</span></div>
+      <div class="appbar">
+        <button class="btn ghost" data-go="v-main">◂ Manual upload</button>
+        <h2>Auto-import from Gmail</h2>
+      </div>
+      <div class="step">
+        <p class="muted" style="margin:0">When a statement email arrives, it's imported to YNAB <b>unapproved</b>, so you still review it there. Invite only.</p>
+      </div>
+      <div class="step">
+        <span class="pin-tag">1</span>
+        <h3><span><span class="num">1</span>Gmail</span></h3>
+        <div class="status"><span class="dot"></span><span class="muted">Not connected</span><span style="flex:1"></span><button class="btn">Connect Gmail</button></div>
+        <p class="small muted">Read-only access. Only emails matching the statement search are opened.</p>
+      </div>
+      <div class="step">
+        <h3><span><span class="num">2</span>YNAB</span></h3>
+        <div class="status"><span class="dot"></span><span class="muted">Not connected</span><span style="flex:1"></span><button class="btn">Connect with YNAB login</button></div>
+      </div>
+      <div class="step">
+        <span class="pin-tag">2</span>
+        <h3><span><span class="num">3</span>YNAB plan</span></h3>
+        <div class="row"><label>Plan</label><div class="field select">My Budget</div></div>
+      </div>
+      <div class="step">
+        <span class="pin-tag">3</span>
+        <h3><span><span class="num">4</span>Map e-wallets to YNAB accounts</span></h3>
+        <div class="table-wrap" style="margin-top:0">
+          <table>
+            <thead><tr><th>E-wallet</th><th>YNAB account in "My Budget"</th><th>To open the PDF</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><b>GCash</b></td>
+                <td><div class="field select">GCash</div></td>
+                <td style="white-space:normal;min-width:300px">
+                  <div style="display:flex;gap:6px">
+                    <div class="field" style="flex:2"><span>Dela Cruz</span><span class="small muted">from Google · edit</span></div>
+                    <div class="field" style="flex:1">Last 4 of mobile</div>
+                  </div>
+                  <div class="small muted" style="margin-top:4px">Asked once. GCash password = last name in lowercase + last 4 digits of your mobile (the email hides them).</div>
+                </td>
+                <td><button class="btn ghost" style="padding:4px 10px">Test</button></td>
+              </tr>
+              <tr>
+                <td><b>GoTyme</b><div class="small muted">Everyday account</div></td>
+                <td><div class="field select">GoTyme Everyday</div></td>
+                <td style="white-space:normal;min-width:300px">
+                  <div class="field"><span class="muted">Date of birth</span><span class="small muted">mm / dd / yyyy</span></div>
+                  <div class="small muted" style="margin-top:4px">Asked once. GoTyme password = date of birth as MMDDYYYY.</div>
+                </td>
+                <td><button class="btn ghost" style="padding:4px 10px">Test</button></td>
+              </tr>
+              <tr style="opacity:.55">
+                <td><b>GoTyme</b><div class="small muted">Savings (GoalSave)</div></td>
+                <td><div class="field select">Coming soon</div></td>
+                <td class="small muted" style="white-space:normal">Same email and password. Needs a sample statement first.</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td><b>Maya</b></td>
+                <td><div class="field select">Don't import</div></td>
+                <td class="muted small">—</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">One row per supported e-wallet or bank account. Each needs its own YNAB account. Maya is an example; it appears once its parser is added.</p>
+        <div class="msg info">ⓘ Statement emails arrive when you request them in the GCash or GoTyme app; each one is imported within 15 minutes. Your connections and password details are stored encrypted until you turn this off.</div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn" disabled>Turn on</button>
+        </div>
+      </div>
+      <div class="footer"><span>Not on the invite list? This page shows "Ask the owner for an invite" instead.</span><span><a href="#">Privacy</a> · <a href="#">Terms</a></span></div>
+    </div>
+  </div>
+  <aside class="notes">
+    <div class="note"><b class="pin">1</b>Google sign-in requests <code>openid email profile gmail.readonly</code>. <code>profile</code> gives the last name used to prefill the GCash password. Users see Google's "unverified app" warning once (fine for up to 100 users). The email must be in <code>ALLOWED_GOOGLE_EMAILS</code>.</div>
+    <div class="note"><b class="pin">2</b>One plan for all wallets. Choosing it loads that plan's accounts into the mapping table below.</div>
+    <div class="note"><b class="pin">3</b>Each supported e-wallet maps to one YNAB account or "Don't import". The GCash email only gives the password rule and masks the last 4 digits. The last name is prefilled from your Google account, so you normally type only the 4 digits, once. GoTyme asks for your date of birth once (its password is MMDDYYYY). Other wallets show whatever their source declares, or a plain password field. "Test" opens that wallet's newest email and shows the row count. Saving rejects two wallets mapped to the same account.</div>
+  </aside>
+</div>
+
+<!-- ================= W3 AUTO-IMPORT ON ================= -->
+<div class="stage view" id="v-auto-on" role="tabpanel" aria-labelledby="t-auto-on" hidden>
+  <div class="canvas">
+    <div class="window">
+      <div class="chrome"><i></i><i></i><i></i><span class="url">https://statements.example.com/auto-import</span></div>
+      <div class="appbar">
+        <button class="btn ghost" data-go="v-main">◂ Manual upload</button>
+        <h2>Auto-import from Gmail</h2>
+      </div>
+      <div class="step">
+        <span class="pin-tag">1</span>
+        <div class="status" style="margin-bottom:12px"><span class="dot on"></span><b>On</b><span class="muted">· checks every 15 min · last checked 10:45 AM</span></div>
+        <dl class="kv">
+          <dt>Gmail</dt><dd>you@gmail.com ✓</dd>
+          <dt>YNAB plan</dt><dd>My Budget ✓</dd>
+          <dt>Wallets</dt><dd>GCash → <b>GCash</b><br>GoTyme Everyday → <b>GoTyme Everyday</b><br><span class="muted">Maya → not imported</span></dd>
+        </dl>
+        <div class="actions"><button class="btn ghost" data-go="v-auto-off">Edit mappings</button></div>
+      </div>
+      <div class="step">
+        <span class="pin-tag">2</span>
+        <h3><span>Recent imports</span><span class="small muted">last 20</span></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Received</th><th>Wallet → account</th><th>Status</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td>Oct 30, 9:02 AM</td><td>GCash → GCash</td><td><span class="badge ok">✓ Imported</span></td><td>38 created · 0 skipped</td></tr>
+              <tr><td>Oct 21, 10:49 PM</td><td>GoTyme Everyday → GoTyme Everyday</td><td><span class="badge ok">✓ Imported</span></td><td>66 created · 0 skipped</td></tr>
+              <tr><td>Sep 30, 9:01 AM</td><td>GCash → GCash</td><td><span class="badge warn">⚠ Balance</span></td><td>41 created · ending off by +12.00</td></tr>
+              <tr><td>Aug 31, 9:00 AM</td><td>GCash → GCash</td><td><span class="badge bad">✗ Password</span></td><td>Couldn't open the PDF · nothing uploaded</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="step" style="border-bottom:0">
+        <span class="pin-tag">3</span>
+        <div class="actions"><button class="btn danger">Turn off and delete my data</button></div>
+      </div>
+      <div class="footer"><span>Imported transactions are unapproved. Review them in YNAB.</span><span><a href="#">Privacy</a> · <a href="#">Terms</a></span></div>
+    </div>
+  </div>
+  <aside class="notes">
+    <div class="note"><b class="pin">1</b>Cloud Scheduler polls every 15 minutes. "Last checked" comes from <code>store.set_last_checked()</code>.</div>
+    <div class="note"><b class="pin">2</b>One row per Gmail message (<code>runs/{gmail_msg_id}</code>), across all wallets, showing which account it went to. An email is never processed twice, and YNAB's <code>import_id</code> also stops duplicates.</div>
+    <div class="note"><b class="pin">3</b>Deletes the Firestore record and run log, and revokes Google access. The YNAB connection can be removed in YNAB → Settings → Connected apps.</div>
+  </aside>
+</div>
+
+<!-- ================= W4 MOBILE ================= -->
+<div class="stage view" id="v-mobile" role="tabpanel" aria-labelledby="t-mobile" hidden>
+  <div class="canvas">
+    <div class="phone">
+      <div class="screen">
+        <div class="notch"></div>
+        <div class="appbar"><h2 style="font-size:16px">Statement → YNAB</h2><span class="muted">☰</span></div>
+        <div class="step">
+          <h3><span><span class="num">1</span>Statement</span></h3>
+          <div class="row"><label>Source</label><div class="field select">GCash</div></div>
+          <div class="row"><label>PDF</label><div class="field"><span class="muted">Choose file…</span></div></div>
+          <div class="row"><label>Password</label><div class="field">••••••••</div></div>
+          <div class="actions"><button class="btn">Parse</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Description</th><th class="num-c">Debit</th><th class="num-c">Credit</th></tr></thead>
+              <tbody>
+                <tr><td>10-01</td><td>Received GCash…</td><td></td><td class="num-c in">1,000.00</td></tr>
+                <tr><td>10-02</td><td>Payment to Test…</td><td class="num-c out">250.50</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small muted">Table scrolls sideways ⇆</p>
+        </div>
+        <div class="step collapsed"><span><span class="num">2</span>YNAB</span><span>▾</span></div>
+        <div class="step collapsed"><span><span class="num">3</span>Plan &amp; Account</span><span>▾</span></div>
+        <div class="step collapsed" style="border-bottom:0"><span><span class="num">4</span>Upload</span><span>▾</span></div>
+        <div class="footer"><span>Privacy · Terms</span></div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    <div class="note">375 px wide. Fields stack under their labels, buttons go full width, and the steps after the current one collapse. The page reuses the same template as desktop, with only CSS changes.</div>
+    <div class="note">Many GCash users have the statement email on their phone. Uploading the PDF straight from the Mail or Files app has to work.</div>
+  </aside>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('[role="tab"]');
+  function show(id) {
+    tabs.forEach(t => t.setAttribute("aria-selected", String(t.getAttribute("aria-controls") === id)));
+    document.querySelectorAll(".view").forEach(v => { v.hidden = v.id !== id; });
+    try { localStorage.setItem("wireframe-tab", id); } catch (e) {}
+  }
+  tabs.forEach(t => t.addEventListener("click", () => show(t.getAttribute("aria-controls"))));
+  document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => {
+    show(b.dataset.go);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }));
+  document.querySelectorAll("[data-state]").forEach(b => b.addEventListener("click", () => {
+    const group = b.closest(".toggle");
+    group.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    const step = b.closest(".step");
+    step.querySelectorAll("[data-show]").forEach(el => { el.hidden = el.dataset.show !== b.dataset.state; });
+  }));
+  try {
+    const saved = localStorage.getItem("wireframe-tab");
+    if (saved && document.getElementById(saved)) show(saved);
+  } catch (e) {}
+</script>
+</body>
+</html>

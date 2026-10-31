@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Stand-in drawn to match this folder's Google product icon style (32-unit strokes, blue + grey). Not an official icon: replace with the official one if you have it. -->
+  <g fill="none" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="72" y="72" width="368" height="104" rx="20" stroke="#4285f4"/>
+    <rect x="72" y="204" width="368" height="104" rx="20" stroke="#9aa0a6"/>
+    <rect x="72" y="336" width="368" height="104" rx="20" stroke="#4285f4"/>
+    <path d="M216 124h80M216 256h80M216 388h80" stroke="#9aa0a6"/>
+  </g>
+</svg>

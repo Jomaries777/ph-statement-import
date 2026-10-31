@@ -1,0 +1,18 @@
+# Secrets
+.env
+*.swp
+.claude/settings.local.json
+
+# Statements: never commit real bank / e-wallet PDFs
+*.pdf
+statements/
+
+# Python
+.venv/
+__pycache__/
+
+# macOS
+.DS_Store
+
+# Browser test screenshots and traces (tests/e2e)
+test-results/
