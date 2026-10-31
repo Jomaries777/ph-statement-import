@@ -4,7 +4,7 @@ Import Philippine e-wallet and bank statement PDFs into your budgeting app. It c
 
 It parses the password-protected statement PDF, checks the running balance, and compares the statement's starting balance with your YNAB account. It then creates the transactions in YNAB, unapproved, so you can review them. Re-uploading the same statement doesn't create duplicates.
 
-Everything runs locally on your machine. The PDF is never written to disk, and your data only goes to YNAB's API.
+Everything runs locally on your machine. The PDF is never written to disk, and your data only goes to YNAB's API (unless you choose to [categorize with Gemini](#optional-categorize-with-gemini)).
 
 ## Getting started
 
@@ -58,6 +58,20 @@ python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick 
 ```
 
 `--source` defaults to `gcash`. The CLI reads the PDF password from that source's variable (`GCASH_PDF_PASSWORD` for GCash), and `YNAB_PLAN_ID` and `YNAB_ACCOUNT_ID`, from `.env`. You can also pass the plan and account as `--plan-id` / `--account-id`.
+
+## Optional: categorize with Gemini
+
+Imported transactions arrive in YNAB without a category unless YNAB already knows the payee. After an import, this script asks Google's Gemini to pick one of **your own** YNAB categories for each uncategorized transaction:
+
+```bash
+python -m statement_etl.categorize --dry-run                       # show Gemini's picks, change nothing
+python -m statement_etl.categorize                                 # set them in YNAB
+python -m statement_etl.categorize --account-id ID --since 2026-10-01  # one account, recent ones only
+```
+
+It needs `BEARER_TOKEN`, `YNAB_PLAN_ID` and `GEMINI_API_KEY` (create one in [Google AI Studio](https://aistudio.google.com/apikey)) in `.env`. `GEMINI_MODEL` is optional. When Gemini isn't sure, it says so, and the transaction is left uncategorized. If Gemini is busy, the script waits and tries again (up to 4 times, about 2 minutes in all) before giving up. Only the category changes: an unapproved transaction stays unapproved, so you still review each one in YNAB. Transfers and split transactions are skipped.
+
+**What goes to Google:** your category and group names, and each uncategorized transaction's date, account name, payee, memo and amount. Not your YNAB token or balances. On Gemini's free tier, Google may use what you send to improve its products ([Gemini API terms](https://ai.google.dev/gemini-api/terms)).
 
 ## Optional: OAuth instead of a token
 
@@ -143,7 +157,9 @@ statement_etl/
 ├── transaction.py  # the neutral Transaction, in no budgeting app's format
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
-├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py
+├── categorize.py   # optional: categorize uncategorized YNAB transactions with Gemini
+├── gemini.py       # Gemini REST client (urllib)
+├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py, categories.py
 ├── autoimport/     # hosted Gmail auto-import: store.py (encrypted Firestore), gmail.py, runner.py
 └── web/            # Flask app, token store, page templates (templates/) and CSS / JS (static/)
 tests/
