@@ -24,6 +24,7 @@ statement_etl/sources.py                                        (format, upload,
 Entry points sit on top of the pipeline:
 - **Pipeline (`statement_etl/pipeline.py`):** Three steps every caller uses: `parse_statement()`, `starting_balance_check()` (shown before the upload), and `import_statement()`, the one place that imports: it sets a new account's Starting Balance, uploads, and checks the ending balance, returning an `ImportResult`. Also the CLI (`python -m statement_etl.pipeline`).
 - **Web app (`statement_etl/web/`):** Local and hosted Flask web UI (`python -m statement_etl.web`), split into blueprints: `upload.py` (the page and the import steps), `ynab_auth.py` (connecting to YNAB), and `auto_import.py` (Gmail auto-import settings, Google sign-in, and the scheduler route, registered only in hosted mode when `GOOGLE_CLIENT_ID` is set). It calls the same three pipeline steps as the CLI and stores personal access tokens in the OS keyring (`token_store.py`) in local mode only.
+- **Categorize (`statement_etl/categorize.py`):** Optional CLI run after an import (`python -m statement_etl.categorize`). Reads the plan's categories and uncategorized transactions (`ynab_api/categories.py`), asks Gemini to pick one per transaction (`gemini.py`), keeps only picks that are real categories, and saves them in one call without approving anything.
 - **Auto-import (`statement_etl/autoimport/`):** Hosted-only background polling for emailed statements (`runner.py`), using an encrypted Firestore settings store (`store.py`) and a `urllib` Gmail REST client (`gmail.py`), calling the same `parse_statement()` and `import_statement()`.
 
 ## Auto-import flow (hosted mode)
@@ -81,7 +82,10 @@ In hosted mode on Google Cloud (`us-west1`, sized to stay inside the monthly fre
 | `statement_etl/ynab_api/format.py` | `to_ynab()`: `Transaction` → YNAB transaction dict; milliunits and deterministic `ETLPH:` `import_id`s |
 | `statement_etl/ynab_api/client.py` | YNAB SDK client setup, duplicate `import_id` lookup, batch transaction upload, and ending balance check |
 | `statement_etl/ynab_api/accounts.py` | Fetching YNAB user info, plans (budgets), and accounts |
+| `statement_etl/ynab_api/categories.py` | The categories a transaction can be given, the plan's uncategorized transactions (no transfers or splits), and setting categories in one call |
 | `statement_etl/ynab_api/balance.py` | Comparing statement balances with YNAB account balances and setting `Starting Balance` on newly created YNAB accounts |
+| `statement_etl/categorize.py` | `categorize_uncategorized()` and `suggest_categories()`: the Gemini prompt, checking its picks, saving them; CLI (`python -m statement_etl.categorize`) |
+| `statement_etl/gemini.py` | `generate_json()`: one Gemini `generateContent` call with a JSON response schema, via `urllib`; errors never contain the API key |
 | `statement_etl/autoimport/store.py` | Encrypted Firestore storage (`MultiFernet` via `ENCRYPTION_KEYS`) for opted-in users' refresh tokens, mappings, password inputs, and `runs` subcollection |
 | `statement_etl/autoimport/gmail.py` | Session-independent Google OAuth and Gmail REST client (`urllib`): consent URL, token exchange/refresh/revoke, paginated search, and in-memory PDF attachment download |
 | `statement_etl/autoimport/runner.py` | `poll_all()` background importer across enabled users and sources, `process_push()` for one user's Gmail push, `start_watch()`, plus `test_password()` for testing password inputs on the newest email without importing |
