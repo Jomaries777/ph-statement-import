@@ -51,7 +51,7 @@ def to_decimal(text):
 
 
 def to_milliunits(amount):
-    """Convert pesos to YNAB milliunits: Decimal("-599.00") -> -599000."""
+    """Convert pesos to YNAB milliunits: Decimal("-249.00") -> -249000."""
     return int(amount * 1000)
 
 
@@ -67,7 +67,7 @@ def make_import_id(source, source_txn_id):
     never creates duplicates. Only the source id is hashed, not the date,
     amount or memo, so later corrections to those still match.
 
-    ("gcash", "0000892003886") -> "ETLPH:" + 30 hex chars  (36 chars, YNAB's max)
+    ("gcash", "1000000000002") -> "ETLPH:" + 30 hex chars  (36 chars, YNAB's max)
     """
     digest = hashlib.sha256(f"{source}:{source_txn_id}".encode()).hexdigest()
     return IMPORT_ID_PREFIX + digest[: 36 - len(IMPORT_ID_PREFIX)]
@@ -102,12 +102,12 @@ def ynab_transaction(date, payee_name, amount, import_id, memo=None, flag_color=
 #
 # Input row example:
 #   {
-#     "Date and Time": "2026-10-20 06:50 AM",
-#     "Description":   "Payment to Apple services, Merchant Transaction Number: MXL09SZD6Xa0",
-#     "Reference No.": "0000892003886",
-#     "Debit":         "599.00",
+#     "Date and Time": "2026-10-05 08:15 AM",
+#     "Description":   "Payment to Sample Store, Merchant Transaction Number: X1",
+#     "Reference No.": "1000000000002",
+#     "Debit":         "249.00",
 #     "Credit":        "",
-#     "Balance":       "4407.56"
+#     "Balance":       "1750.25"
 #   }
 #
 # The payee clean-up (gcash_payee) lives in parsers/gcash.py, which also uses it
@@ -123,7 +123,7 @@ def gcash_to_ynab(row):
     MISSING TRANSACTIONS IN GCASH STATEMENT) are converted too, with a red
     flag. Every row's memo is "GCash Ref: <Reference No.>".
     """
-    # "2026-10-20 06:50 AM" -> datetime
+    # "2026-10-05 08:15 AM" -> datetime
     date = datetime.strptime(row["Date and Time"], "%Y-%m-%d %I:%M %p")
 
     # Money in (Credit) is positive, money out (Debit) is negative.
@@ -131,7 +131,7 @@ def gcash_to_ynab(row):
     amount = to_decimal(row["Credit"]) - to_decimal(row["Debit"])
 
     # Reference No. is unique per transaction; correction rows use a kind
-    # letter + digits (e.g. R0000402323132, M0000123456789), also unique and stable
+    # letter + digits (e.g. R1000000000002, M0000123456789), also unique and stable
     reference = row["Reference No."]
     memo = "GCash Ref: " + reference
     # Correction rows aren't on the statement: flag them red for review

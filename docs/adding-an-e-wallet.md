@@ -61,7 +61,7 @@ Write down:
 
 - **Every column name**, in the order printed. This becomes `COLUMNS`.
 - Which columns hold **money**, and which of those are **money in** and **money out**. Some statements have Debit and Credit columns; others have one signed Amount column.
-- The **date format**, e.g. `2026-10-20 06:50 AM` or `20 Oct 2026`.
+- The **date format**, e.g. `2026-10-05 08:15 AM` or `05 Oct 2026`.
 - A **reference number** per transaction, if there is one.
 - **Summary lines**: totals, starting balance, ending balance.
 - How **long descriptions wrap** onto the next line.

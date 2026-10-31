@@ -81,18 +81,18 @@ COLUMNS = (
     "Balance",
 )
 
-# How the date and time are written at the start of each row: "2026-10-20 06:50 AM"
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")  # "2026-10-20"
-TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")  # "06:50"
+# How the date and time are written at the start of each row: "2026-10-05 08:15 AM"
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")  # "2026-10-05"
+TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")  # "08:15"
 DATE_TIME_FORMAT = "%Y-%m-%d %I:%M %p"  # used to read and to write it back out
 
 # Money amounts: "1,234.50" or "-59.00"
 AMOUNT_RE = re.compile(r"^-?[\d,]+\.\d{2}$")
 
-# GCash reference numbers: 10 or more digits, e.g. "0000892003886"
+# GCash reference numbers: 10 or more digits, e.g. "1000000000002"
 REF_RE = re.compile(r"^\d{10,}$")
 
-# Payee in a description: "Payment to Apple services ..." -> "Apple services ..."
+# Payee in a description: "Payment to Sample Store ..." -> "Sample Store ..."
 GCASH_PAYMENT_RE = re.compile(r"^Payment to\s+(.*)$", re.IGNORECASE)
 
 # Removes the ", Merchant Transaction Number: ..." tail from a payee name
@@ -161,8 +161,8 @@ def _attach_wrapped_lines(rows, other_lines):
 # ROW PARSING - GCash-specific; rewrite these two for another e-wallet / bank
 #
 # GCash table line, left to right:
-#   2026-10-20  06:50  AM  Payment to Apple services ...  0000892003886  599.00  4407.56
-#   date        time   am  description words              reference      amount  balance
+#   2026-10-05  08:15  AM  Payment to Sample Store ...  1000000000002  249.00  1750.25
+#   date        time   am  description words            reference      amount  balance
 # =============================================================================
 
 
@@ -235,7 +235,7 @@ def _to_output_row(row):
 def gcash_payee(description):
     """Get a clean payee name from a GCash description.
 
-    "Payment to Apple services, Merchant Transaction Number: X" -> "Apple services"
+    "Payment to Sample Store, Merchant Transaction Number: X" -> "Sample Store"
     Anything else (e.g. "Received GCash from ...", "Refund from Angkas") is kept
     as it is. Used for "Refund from <payee>" rows and by transform.py.
     """
@@ -346,7 +346,7 @@ def _check_totals(transactions, totals):
 # Statement rows keep their own Reference No. (a split keeps it on the leg that
 # matches the statement's Debit / Credit column). Rows the pipeline adds are
 # "correction rows", with a Reference No. that starts with a letter:
-#   S / R / P + Reference No. of the row they belong to   e.g. R0000402323132
+#   S / R / P + Reference No. of the row they belong to   e.g. R1000000000002
 #   M0000 + 9-digit hash of the statement's first and last Reference No.
 #                                                         e.g. M0000123456789
 # The same statement always gives the same numbers, so re-importing it doesn't
@@ -389,7 +389,7 @@ def _row(date_time, description, reference, amount, balance):
 def _correction_row(kind, description, anchor, amount, balance, reference=None):
     """A row added by the pipeline, belonging to the statement row `anchor`.
 
-    Reference No. is `kind` + the anchor's Reference No. (e.g. R0000402323132),
+    Reference No. is `kind` + the anchor's Reference No. (e.g. R1000000000002),
     unless `reference` is given.
     """
     return _row(
