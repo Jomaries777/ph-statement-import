@@ -88,25 +88,7 @@ Run the commands from the project folder.
 
 ## Contributing
 
-To add an e-wallet or bank, follow [Adding an e-wallet or bank](docs/adding-an-e-wallet.md): a parser, a transformer and one entry in `sources.py`, with no web page changes. The same guide covers changing the web page.
-
-Run the tests before opening a pull request:
-
-```bash
-python -m unittest discover tests
-```
-
-The tests never reach YNAB or your OS secure store, and they don't need a real statement: the PDF, YNAB and the keychain are faked, and any unmocked YNAB call fails the test.
-
-The browser tests in `tests/e2e/` are skipped unless Playwright is installed. To run them too:
-
-```bash
-pip install -r requirements-dev.txt
-python -m playwright install chromium
-REQUIRE_E2E=1 python -m unittest discover tests
-```
-
-GitHub Actions runs every test, browser tests included, on each push and pull request (`.github/workflows/tests.yml`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, test and linter commands, code standards, and pull request guidelines. To add an e-wallet or bank, follow [Adding an e-wallet or bank](docs/adding-an-e-wallet.md). See [docs/architecture.md](docs/architecture.md) for how the modules fit together and [docs/plan/](docs/plan/README.md) for the implementation roadmap.
 
 Never commit a real statement, or names and numbers from one. Keep your PDFs in `statements/`, which is gitignored.
 
