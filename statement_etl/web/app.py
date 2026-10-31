@@ -25,9 +25,12 @@ and their helpers:
     state.py       - STORE, this browser's server-side state
     ynab_oauth.py  - YNAB OAuth token calls (no Flask session)
     config.py      - PORT, the OAuth REDIRECT_URI and HOSTED (hosted mode)
+    limits.py      - rate limits (hosted mode only)
     token_store.py - the token saved in the OS secure store
 The page is templates/index.html, with its CSS and JavaScript in static/app.css
 and static/app.js (no inline code, so a strict Content-Security-Policy works).
+Every response gets security headers (SECURITY_HEADERS below). Hosted mode
+also gets HTTPS-only cookies, rate limits and idle expiry of STORE entries.
 A balance mismatch is only a warning: the upload is always allowed. A newly
 created YNAB account gets its Starting Balance set to the statement's on upload.
 
@@ -64,16 +67,54 @@ import secrets
 import sys
 
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from statement_etl.web import token_store, upload, ynab_auth
 from statement_etl.web.config import HOSTED, PORT, REDIRECT_URI
+from statement_etl.web.limits import limiter
+from statement_etl.web.state import drop_idle_states, error_response
 from statement_etl.web.ynab_oauth import oauth_configured
+
+# On every response, in both modes. The page has no inline script or style
+# (static/app.js and app.css), so the Content-Security-Policy needs no
+# 'unsafe-inline'. form-action allows the redirect to YNAB's login page.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self' https://app.ynab.com"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.register_blueprint(upload.blueprint)
 app.register_blueprint(ynab_auth.blueprint)
+limiter.init_app(app)  # does nothing locally: limits.limiter is on in hosted mode only
+
+if HOSTED:
+    app.config.update(
+        SESSION_COOKIE_SECURE=True, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax"
+    )
+    # Cloud Run terminates HTTPS and adds one X-Forwarded-For / -Proto hop.
+    # Trust exactly that one: more would let a client spoof its IP past the rate limits.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+    app.before_request(drop_idle_states)
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.update(SECURITY_HEADERS)
+    return response
+
+
+@app.errorhandler(429)
+def too_many_requests(_error):
+    """A rate limit in limits.py was hit (hosted mode only)."""
+    return error_response("Too many requests. Wait a minute, then try again.", 429)
 
 
 def main():
