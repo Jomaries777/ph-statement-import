@@ -55,6 +55,10 @@
       No email body, PDF or statement transaction is
       stored — only a run-log entry (message ID, timestamps, source, YNAB account ID, status, and
       created / skipped counts) so an email is never imported twice.</li>
+    <li><strong>Inbox notifications:</strong> So a statement is imported within seconds, Google
+      notifies the app (through Google Cloud Pub/Sub) whenever your inbox changes. A notification
+      holds only your email address and a change number, never an email's content; the app then
+      runs the same statement search. Turning auto-import off stops the notifications.</li>
     <li><strong>What is stored, and for how long:</strong> Because background checks run every
       15 minutes without your browser open, turning on auto-import stores one record for your
       Google account in Google Cloud Firestore (<code>us-west1</code>): your Google account ID and

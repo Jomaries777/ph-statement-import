@@ -114,7 +114,7 @@ In hosted mode with `GOOGLE_CLIENT_ID` set, invited users can open `/auto-import
 1. **Connect Gmail** (`gmail.readonly`, read-only) — only Google accounts listed in `ALLOWED_GOOGLE_EMAILS` (in `APP_CONFIG`) can turn it on.
 2. **Connect YNAB** via YNAB OAuth login.
 3. **Choose one YNAB plan**, map each supported e-wallet (currently **GCash** and **GoTyme**) to its own YNAB account, enter its PDF password inputs once (GCash: last name, prefilled from Google, and the last 4 digits of your mobile; GoTyme: date of birth), and click **Test** to check the newest statement email without importing.
-4. **Turn on** — Cloud Scheduler calls `POST /tasks/poll-gmail` every 15 minutes with a verified OIDC token (`scheduler-invoker@<PROJECT_ID>.iam.gserviceaccount.com`). New matching statement PDFs are read in memory, parsed, and imported **unapproved** via `import_statement()`.
+4. **Turn on** — with `GMAIL_PUSH_TOPIC` set, Gmail tells the app through Pub/Sub when your inbox changes (`POST /tasks/gmail-push`), so a statement is imported within seconds. Cloud Scheduler also calls `POST /tasks/poll-gmail` every 15 minutes, which imports anything a push missed and renews the Gmail watch. Both routes verify a Google OIDC token first. New matching statement PDFs are read in memory, parsed, and imported **unapproved** via `import_statement()`.
 5. **Turn off and delete my data** removes the user's Firestore settings document and run log, revokes the Google token, and signs out of Google.
 
 Refresh tokens and password inputs are encrypted in the app with `MultiFernet` (`ENCRYPTION_KEYS` in `APP_CONFIG`) before they reach Firestore. Setup details: [docs/plan/P5-gmail-auto-import-gcash.md](docs/plan/P5-gmail-auto-import-gcash.md).

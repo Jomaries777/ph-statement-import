@@ -11,6 +11,7 @@ autoimport.runner, google.oauth2.id_token and YNAB OAuth are mocked. All data
 here is made up.
 """
 
+import base64
 import dataclasses
 import json
 import os
@@ -44,6 +45,7 @@ REQUIRE_E2E = os.environ.get("REQUIRE_E2E") == "1"
 
 PROJECT_ID = "test-project"
 SCHEDULER_EMAIL = f"scheduler-invoker@{PROJECT_ID}.iam.gserviceaccount.com"
+PUBSUB_EMAIL = f"pubsub-push@{PROJECT_ID}.iam.gserviceaccount.com"
 GOOGLE_CLIENT_ID = "test-google-client-id.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "test-google-client-secret"
 
@@ -733,6 +735,23 @@ class SaveSettingsTest(AutoImportWebTest):
         self.assertEqual(self.store.decrypt(after_edit["ynab_refresh_token"]), NEW_YNAB_REFRESH)
         self.assertEqual(self.store.decrypt(after_edit["gmail_refresh_token"]), GMAIL_REFRESH_TOKEN)
 
+    def test_saving_starts_gmail_push_for_the_user(self):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+
+        with (
+            mock.patch.object(ynab_oauth, "refresh", return_value=rotated),
+            mock.patch.object(runner, "start_watch") as start_watch,
+        ):
+            response = self.post(valid_settings_payload())
+
+        self.assertEqual(response.status_code, 200)
+        start_watch.assert_called_once()
+        user = start_watch.call_args.args[0]
+        self.assertEqual(user["sub"], SUB)
+        self.assertEqual(self.store.decrypt(user["gmail_refresh_token"]), GMAIL_REFRESH_TOKEN)
+
     def test_failed_ynab_refresh_returns_401_and_clears_session_ynab(self):
         self.sign_in_google()
         self.connect_ynab_oauth()
@@ -843,6 +862,34 @@ class DeleteSettingsTest(AutoImportWebTest):
         with self.client.session_transaction() as sess:
             self.assertNotIn("google_sub", sess)
         self.assertEqual(self.ynab_state()["access_token"], "keep-ynab-session")
+
+    def test_stops_gmail_push_before_revoking_when_a_watch_was_started(self):
+        self.sign_in_google(enabled=True, gmail_watch_expires=datetime.now(UTC))
+        events = []
+
+        with (
+            mock.patch.object(gmail, "refresh_access_token", return_value="gmail-access") as access,
+            mock.patch.object(gmail, "stop", side_effect=lambda t: events.append(("stop", t))),
+            mock.patch.object(gmail, "revoke", side_effect=lambda t: events.append(("revoke", t))),
+        ):
+            response = self.client.post("/api/auto-import/delete")
+
+        self.assertEqual(response.status_code, 200)
+        access.assert_called_once_with(GMAIL_REFRESH_TOKEN)
+        self.assertEqual(events, [("stop", "gmail-access"), ("revoke", GMAIL_REFRESH_TOKEN)])
+
+    def test_a_failed_stop_still_revokes_and_deletes(self):
+        self.sign_in_google(enabled=True, gmail_watch_expires=datetime.now(UTC))
+
+        with (
+            mock.patch.object(gmail, "refresh_access_token", side_effect=gmail.GmailError("down")),
+            mock.patch.object(gmail, "revoke") as revoke,
+        ):
+            response = self.client.post("/api/auto-import/delete")
+
+        self.assertEqual(response.get_json()["revoked"], True)
+        revoke.assert_called_once_with(GMAIL_REFRESH_TOKEN)
+        self.assertIsNone(self.store.get_user(SUB))
 
     def test_revoke_failure_still_finishes_delete_and_returns_warning(self):
         self.sign_in_google(enabled=True)
@@ -981,6 +1028,117 @@ class PollTaskTest(AutoImportWebTest):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), counts)
+
+
+# =============================================================================
+# GMAIL PUSH ROUTE - /tasks/gmail-push
+# =============================================================================
+
+
+def push_body(data):
+    """A Pub/Sub push request body; `data` is the message's payload (dict, or raw text)."""
+    raw = json.dumps(data).encode() if isinstance(data, dict) else data.encode()
+    return {
+        "message": {"data": base64.b64encode(raw).decode(), "messageId": "1"},
+        "subscription": f"projects/{PROJECT_ID}/subscriptions/gmail-push",
+    }
+
+
+class PushTaskTest(AutoImportWebTest):
+    BODY = push_body({"emailAddress": ALLOWED_EMAIL, "historyId": "12345"})
+
+    def push(self, body=BODY, claims=None, token="oidc-jwt-token"):
+        """POST /tasks/gmail-push with a token that verifies to `claims` (Pub/Sub's by default)."""
+        claims = claims or {"email": PUBSUB_EMAIL, "email_verified": True}
+        with mock.patch.object(
+            auto_import.google.oauth2.id_token, "verify_oauth2_token", return_value=claims
+        ) as verify:
+            response = self.client.post(
+                "/tasks/gmail-push",
+                json=body,
+                headers={"Authorization": f"Bearer {token}", "Host": "attacker.example.test"},
+            )
+        return response, verify
+
+    def test_imports_for_the_pushed_address_and_answers_204(self):
+        with mock.patch.object(runner, "process_push", return_value=runner.PUSH_DONE) as process:
+            response, verify = self.push()
+
+        self.assertEqual((response.status_code, response.data), (204, b""))
+        process.assert_called_once_with(ALLOWED_EMAIL)
+        # The audience comes from PUBLIC_URL, never from the request's Host header
+        self.assertEqual(verify.call_args.kwargs["audience"], f"{PUBLIC_URL}/tasks/gmail-push")
+
+    def test_busy_answers_503_so_pubsub_sends_it_again(self):
+        with mock.patch.object(runner, "process_push", return_value=runner.PUSH_BUSY):
+            self.assertEqual(self.push()[0].status_code, 503)
+
+    def test_ignored_and_failed_pushes_answer_204_so_pubsub_does_not_retry(self):
+        for status in (runner.PUSH_IGNORED, runner.PUSH_FAILED):
+            with (
+                self.subTest(status=status),
+                mock.patch.object(runner, "process_push", return_value=status),
+            ):
+                self.assertEqual(self.push()[0].status_code, 204)
+
+    def test_a_message_without_an_address_answers_204_and_imports_nothing(self):
+        bad_bodies = [
+            None,
+            {},
+            {"message": {}},
+            {"message": {"data": "not base64!"}},
+            push_body("not json"),
+            push_body({"historyId": "12345"}),
+            push_body({"emailAddress": 42}),
+            push_body({"emailAddress": "   "}),
+            {"message": {"data": base64.b64encode(b'["a list"]').decode()}},
+        ]
+        with mock.patch.object(runner, "process_push") as process:
+            for body in bad_bodies:
+                with self.subTest(body=body):
+                    self.assertEqual(self.push(body=body)[0].status_code, 204)
+        process.assert_not_called()
+
+    def test_rejects_a_missing_or_wrong_token_before_any_work(self):
+        with mock.patch.object(runner, "process_push") as process:
+            # No token, or not a bearer token
+            self.assertEqual(self.client.post("/tasks/gmail-push", json=self.BODY).status_code, 403)
+            self.assertEqual(self.push(token="")[0].status_code, 403)
+
+            # Signed for another account: the scheduler's token doesn't work here
+            for bad_claims in (
+                {"email": SCHEDULER_EMAIL, "email_verified": True},
+                {"email": ALLOWED_EMAIL, "email_verified": True},
+                {"email": PUBSUB_EMAIL, "email_verified": False},
+            ):
+                with self.subTest(bad_claims=bad_claims):
+                    self.assertEqual(self.push(claims=bad_claims)[0].status_code, 403)
+
+            # A token that doesn't verify (wrong audience, expired, forged)
+            with mock.patch.object(
+                auto_import.google.oauth2.id_token,
+                "verify_oauth2_token",
+                side_effect=ValueError("Wrong audience"),
+            ):
+                response = self.client.post(
+                    "/tasks/gmail-push", json=self.BODY, headers={"Authorization": "Bearer forged"}
+                )
+                self.assertEqual(response.status_code, 403)
+        process.assert_not_called()
+
+    def test_pubsub_token_does_not_work_on_the_poll_route(self):
+        claims = {"email": PUBSUB_EMAIL, "email_verified": True}
+        with (
+            mock.patch.object(
+                auto_import.google.oauth2.id_token, "verify_oauth2_token", return_value=claims
+            ),
+            mock.patch.object(runner, "poll_all") as poll_all,
+        ):
+            response = self.client.post(
+                "/tasks/poll-gmail", headers={"Authorization": "Bearer pubsub-token"}
+            )
+        self.assertEqual(response.status_code, 403)
+        poll_all.assert_not_called()
 
 
 # =============================================================================
