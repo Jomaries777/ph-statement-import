@@ -115,7 +115,7 @@
 
     <section id="d2">
       <h2>D2 · Call flow between .py files</h2>
-      <p>Arrows point from the caller to the module it calls. Everything is under <code>statement_etl/</code>. The web app is split into blueprints, one per job. Parsers never import YNAB code: they return <code>Transaction</code>s, and <code>ynab_api/format.py</code> turns those into YNAB's format.</p>
+      <p>Arrows point from the caller to the module it calls. Everything is under <code>statement_etl/</code>. The web app is split into blueprints, one per job. Parsers never import YNAB code: they return <code>Transaction</code>s, and <code>ynab_api/format.py</code> turns those into YNAB's format. <code>convert.py</code> (formerly <code>transform.py</code>) only picks the source and calls its converter; <code>transaction.py</code> only defines the <code>Transaction</code> shape.</p>
       <div class="card"><div class="diagram" data-src="src-d2"></div></div>
     </section>
 
@@ -180,7 +180,7 @@ flowchart LR
   runner --> pipe
   up --> pipe["pipeline.py<br/>parse_statement · import_statement"]
   cli["pipeline.py main() · CLI"] --> pipe
-  pipe --> tr["transform.py"]
+  pipe --> cv["convert.py<br/>rows → Transactions"]
 
   subgraph SRC["Source · one per e-wallet or bank"]
     src["sources.py<br/>Source registry"]
@@ -198,7 +198,7 @@ flowchart LR
     acc["accounts.py"]
   end
 
-  tr --> src
+  cv --> src
   src --> gc
   src --> gt
   gc --> cm
@@ -217,7 +217,7 @@ flowchart LR
   store --> fs[("Firestore (default)")]
 
   classDef new stroke-dasharray: 6 4,stroke-width:2px
-  class up,auth,ai,st,yo,runner,store,gmail,gapi,fs,gt,tx,fmt new
+  class up,auth,ai,st,yo,runner,store,gmail,gapi,fs,gt,tx,fmt,cv new
 </script>
 
 <script type="text/x-mermaid" id="src-u1">
@@ -240,7 +240,8 @@ flowchart LR
   CLI --> IS
 
   PS --> SP["Source.parse()<br/>rows"]
-  PS --> ST["Source.to_transactions()<br/>Transaction list"]
+  PS --> CV["convert.rows_to_transactions()<br/>picks the source"]
+  CV --> ST["Source.to_transactions()<br/>Transaction list"]
   PS --> TY["ynab_api.format.to_ynab()"]
   SBC --> FAI["client.find_already_imported()"]
   SBC --> CSB["balance.check_starting_balance()"]
@@ -251,7 +252,7 @@ flowchart LR
   IS --> EBC["pipeline.ending_balance_check()"]
 
   classDef new stroke-dasharray: 6 4,stroke-width:2px
-  class IS,ST,TY,YA new
+  class IS,CV,ST,TY,YA new
 </script>
 
 <script type="text/x-mermaid" id="src-u2">
@@ -338,7 +339,7 @@ sequenceDiagram
   U->>W: POST /api/parse (PDF, password)
   W->>P: parse_statement()
   P->>S: parse_transactions() → rows
-  P->>S: to_transactions(rows) → Transactions
+  P->>S: convert.rows_to_transactions() → source's to_transactions(rows) → Transactions
   P->>Y: format.to_ynab() for each
   P-->>W: rows, YNAB transactions (kept in STORE)
   W-->>U: preview table, balances
