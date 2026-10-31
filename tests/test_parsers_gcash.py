@@ -781,6 +781,31 @@ class ToTransactionsTest(unittest.TestCase):
 
 
 # =============================================================================
+# PDF PASSWORD
+# =============================================================================
+
+
+class BuildPasswordTest(unittest.TestCase):
+    def test_last_name_and_mobile_last4(self):
+        self.assertEqual(gcash.build_password("Dela Cruz", "1234"), "delacruz1234")
+
+    def test_input_dict(self):
+        self.assertEqual(
+            gcash.build_password({"last_name": "Dela Cruz", "mobile_last4": "1234"}),
+            "delacruz1234",
+        )
+
+    def test_strips_all_spaces_and_lowercases(self):
+        self.assertEqual(gcash.build_password("  De La   Rosa ", "0099"), "delarosa0099")
+
+    def test_missing_mobile_last4_raises(self):
+        with self.assertRaises(TypeError):
+            gcash.build_password("Dela Cruz")
+        with self.assertRaises(KeyError):
+            gcash.build_password({"last_name": "Dela Cruz"})
+
+
+# =============================================================================
 # COMMAND LINE
 # =============================================================================
 
