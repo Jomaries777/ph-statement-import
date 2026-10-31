@@ -24,12 +24,28 @@ from statement_etl.ynab_api.balance import compare_balance
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
 
 ROWS = [
-    gcash_row("2026-10-01 09:00 AM", "Received GCash from Test Sender", "1000000000001",
-              credit="1,000.00", balance="1,500.00"),
-    gcash_row("2026-10-02 06:50 PM", "Payment to Test Shop", "1000000000002", debit="250.50", balance="1,249.50"),
+    gcash_row(
+        "2026-10-01 09:00 AM",
+        "Received GCash from Test Sender",
+        "1000000000001",
+        credit="1,000.00",
+        balance="1,500.00",
+    ),
+    gcash_row(
+        "2026-10-02 06:50 PM",
+        "Payment to Test Shop",
+        "1000000000002",
+        debit="250.50",
+        balance="1,249.50",
+    ),
 ]
-CORRECTION = gcash_row("2026-10-02 06:50 PM", "Refund from Test Shop", "R1000000000002",
-                       credit="50.00", balance="1,299.50")
+CORRECTION = gcash_row(
+    "2026-10-02 06:50 PM",
+    "Refund from Test Shop",
+    "R1000000000002",
+    credit="50.00",
+    balance="1,299.50",
+)
 TRANSACTIONS = transform(ROWS, "gcash")
 API_ERROR = ynab.ApiException(status=500, reason="Server Error", body='{"error": "boom"}')
 
@@ -70,59 +86,86 @@ class ParseStatementTest(unittest.TestCase):
 
     def test_no_transactions(self):
         for rows in ([], [CORRECTION]):
-            with self.subTest(rows=rows), gcash_parsing(rows):
-                with self.assertRaisesRegex(ValueError, "^no transactions found in the PDF$"):
-                    pipeline.parse_statement("statement.pdf", "")
+            with (
+                self.subTest(rows=rows),
+                gcash_parsing(rows),
+                self.assertRaisesRegex(ValueError, "^no transactions found in the PDF$"),
+            ):
+                pipeline.parse_statement("statement.pdf", "")
 
     def test_unknown_source(self):
         with self.assertRaisesRegex(ValueError, "Unknown source 'nope'"):
             pipeline.parse_statement("statement.pdf", "", source="nope")
 
     def test_parser_errors_are_raised(self):
-        source = dataclasses.replace(SOURCES["gcash"], parse=mock.Mock(side_effect=ValueError("Incorrect PDF password.")))
-        with mock.patch.dict(SOURCES, {"gcash": source}):
-            with self.assertRaisesRegex(ValueError, "Incorrect PDF password."):
-                pipeline.parse_statement("statement.pdf", "wrong")
+        source = dataclasses.replace(
+            SOURCES["gcash"], parse=mock.Mock(side_effect=ValueError("Incorrect PDF password."))
+        )
+        with (
+            mock.patch.dict(SOURCES, {"gcash": source}),
+            self.assertRaisesRegex(ValueError, "Incorrect PDF password."),
+        ):
+            pipeline.parse_statement("statement.pdf", "wrong")
 
 
 class UploadTransactionsTest(unittest.TestCase):
     def test_delegates_to_import_transactions(self):
         with mock.patch.object(pipeline, "import_transactions", return_value="result") as upload:
-            self.assertEqual(pipeline.upload_transactions(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"), "result")
+            self.assertEqual(
+                pipeline.upload_transactions(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"), "result"
+            )
         upload.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token")
 
 
 class BalanceStepsTest(unittest.TestCase):
     def test_starting_balance_check_leaves_out_transactions_already_in_ynab(self):
         already = {TRANSACTIONS[0]["import_id"]}
-        with mock.patch.object(pipeline, "find_already_imported", return_value=already) as find, \
-             mock.patch.object(pipeline, "check_starting_balance", return_value="check") as check:
-            result = pipeline.starting_balance_check(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token")
+        with (
+            mock.patch.object(pipeline, "find_already_imported", return_value=already) as find,
+            mock.patch.object(pipeline, "check_starting_balance", return_value="check") as check,
+        ):
+            result = pipeline.starting_balance_check(
+                ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"
+            )
         self.assertEqual(result, "check")
         find.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token")
         check.assert_called_once_with(
-            Decimal("500.00"),      # statement starting balance
-            Decimal("-250.5"),      # only the payment will be uploaded
-            ACCOUNT_ID, PLAN_ID, "token", already_in_ynab=1, to_upload=1,
+            Decimal("500.00"),  # statement starting balance
+            Decimal("-250.5"),  # only the payment will be uploaded
+            ACCOUNT_ID,
+            PLAN_ID,
+            "token",
+            already_in_ynab=1,
+            to_upload=1,
         )
 
     def test_starting_balance_check_with_nothing_in_ynab(self):
-        with mock.patch.object(pipeline, "find_already_imported", return_value=set()), \
-             mock.patch.object(pipeline, "check_starting_balance") as check:
+        with (
+            mock.patch.object(pipeline, "find_already_imported", return_value=set()),
+            mock.patch.object(pipeline, "check_starting_balance") as check,
+        ):
             pipeline.starting_balance_check(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID)
         self.assertEqual(check.call_args.args[1], Decimal("749.5"))
         self.assertEqual(check.call_args.kwargs, {"already_in_ynab": 0, "to_upload": 2})
 
     def test_new_account_starting_balance(self):
-        with mock.patch.object(pipeline, "set_new_account_starting_balance", return_value="set") as set_balance:
-            self.assertEqual(pipeline.new_account_starting_balance(ROWS, ACCOUNT_ID, PLAN_ID, "token"), "set")
+        with mock.patch.object(
+            pipeline, "set_new_account_starting_balance", return_value="set"
+        ) as set_balance:
+            self.assertEqual(
+                pipeline.new_account_starting_balance(ROWS, ACCOUNT_ID, PLAN_ID, "token"), "set"
+            )
         set_balance.assert_called_once_with(Decimal("500.00"), ACCOUNT_ID, PLAN_ID, "token")
 
     def test_ending_balance_check(self):
         with mock.patch.object(pipeline, "check_ending_balance", return_value="check") as check:
-            result = pipeline.ending_balance_check(ROWS, ACCOUNT_ID, PLAN_ID, "token", Decimal("10"))
+            result = pipeline.ending_balance_check(
+                ROWS, ACCOUNT_ID, PLAN_ID, "token", Decimal("10")
+            )
         self.assertEqual(result, "check")
-        check.assert_called_once_with(Decimal("1249.50"), ACCOUNT_ID, PLAN_ID, "token", Decimal("10"))
+        check.assert_called_once_with(
+            Decimal("1249.50"), ACCOUNT_ID, PLAN_ID, "token", Decimal("10")
+        )
 
 
 # =============================================================================
@@ -147,16 +190,21 @@ class PrintTableTest(unittest.TestCase):
             right_aligned=("Amount",),
             max_width=10,
         )
-        self.assertEqual(output, "\n".join([
-            "",
-            "Name        Amount",
-            "----------  ------",
-            "a             1.00",
-            "abcdefghi…  100.00",
-            "                  ",
-            "",
-            "",
-        ]))
+        self.assertEqual(
+            output,
+            "\n".join(
+                [
+                    "",
+                    "Name        Amount",
+                    "----------  ------",
+                    "a             1.00",
+                    "abcdefghi…  100.00",
+                    "                  ",
+                    "",
+                    "",
+                ]
+            ),
+        )
 
 
 class FailTest(unittest.TestCase):
@@ -175,8 +223,15 @@ class FailTest(unittest.TestCase):
 
 def starting_check(ynab_before="500.00", new_account=None, already=0):
     before = Decimal(ynab_before)
-    return compare_balance("starting", Decimal("500.00"), before, before + Decimal("749.50"),
-                           new_account, already, 2 - already)
+    return compare_balance(
+        "starting",
+        Decimal("500.00"),
+        before,
+        before + Decimal("749.50"),
+        new_account,
+        already,
+        2 - already,
+    )
 
 
 def ending_check(ynab_after="1249.50", ynab_before=Decimal("500.00")):
@@ -184,8 +239,15 @@ def ending_check(ynab_after="1249.50", ynab_before=Decimal("500.00")):
 
 
 UPLOAD_RESULT = SimpleNamespace(
-    transactions=[ynab_txn(var_date=date(2026, 10, 2), payee_name="Test Shop", category_name=None,
-                           memo="GCash Ref: 1000000000002", amount=-250500)],
+    transactions=[
+        ynab_txn(
+            var_date=date(2026, 10, 2),
+            payee_name="Test Shop",
+            category_name=None,
+            memo="GCash Ref: 1000000000002",
+            amount=-250500,
+        )
+    ],
     duplicate_import_ids=["ETLPH:already"],
 )
 
@@ -253,7 +315,9 @@ class RunPipelineTest(unittest.TestCase):
         self.start.assert_called_once_with(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, source="gcash")
         self.new_account.assert_not_called()
         self.upload.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID)
-        self.end.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, ynab_before=Decimal("500.00"), source="gcash")
+        self.end.assert_called_once_with(
+            ROWS, ACCOUNT_ID, PLAN_ID, ynab_before=Decimal("500.00"), source="gcash"
+        )
         for text in (
             "STEP 2: STARTING BALANCE\nStarting balance matches YNAB: 500.00",
             "STEP 3: IMPORT",
@@ -287,7 +351,9 @@ class RunPipelineTest(unittest.TestCase):
         self.assertNotIn("Review and approve", out)
 
     def test_new_account_gets_its_starting_balance_set(self):
-        self.start.return_value = starting_check(ynab_before="0.00", new_account={"current": Decimal("0")})
+        self.start.return_value = starting_check(
+            ynab_before="0.00", new_account={"current": Decimal("0")}
+        )
         self.new_account.return_value = {"from": Decimal("0"), "to": Decimal("500.00")}
         _, out, _ = self.run_pipeline()
         self.new_account.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, source="gcash")
@@ -295,7 +361,9 @@ class RunPipelineTest(unittest.TestCase):
         self.assertEqual(self.end.call_args.kwargs["ynab_before"], Decimal("500.00"))
 
     def test_new_account_that_got_other_transactions_is_compared_normally(self):
-        self.start.return_value = starting_check(ynab_before="0.00", new_account={"current": Decimal("0")})
+        self.start.return_value = starting_check(
+            ynab_before="0.00", new_account={"current": Decimal("0")}
+        )
         self.new_account.return_value = None
         _, out, _ = self.run_pipeline()
         self.assertIn("WARNING: Starting balance does not match YNAB. You can still import.", out)
@@ -312,28 +380,39 @@ class RunPipelineTest(unittest.TestCase):
         self.start.return_value = starting_check(new_account={"current": Decimal("0")})
         self.new_account.side_effect = API_ERROR
         _, err = self.run_failing()
-        self.assertIn("ERROR: Could not set the Starting Balance: YNAB returned 500 Server Error", err)
+        self.assertIn(
+            "ERROR: Could not set the Starting Balance: YNAB returned 500 Server Error", err
+        )
         self.upload.assert_not_called()
 
     def test_import_error_exits(self):
         self.upload.side_effect = API_ERROR
         _, err = self.run_failing()
-        self.assertIn('ERROR: Import failed: YNAB returned 500 Server Error\n{"error": "boom"}', err)
+        self.assertIn(
+            'ERROR: Import failed: YNAB returned 500 Server Error\n{"error": "boom"}', err
+        )
         self.end.assert_not_called()
 
     def test_ending_check_error_is_only_a_warning(self):
         self.end.side_effect = API_ERROR
         result, out, _ = self.run_pipeline()
         self.assertEqual(result, TRANSACTIONS)
-        self.assertIn("WARNING: could not read the YNAB balance after the upload: YNAB returned 500 Server Error", out)
+        self.assertIn(
+            "WARNING: could not read the YNAB balance after the upload:"
+            " YNAB returned 500 Server Error",
+            out,
+        )
 
 
 class MainTest(unittest.TestCase):
     def run_main(self, args, env):
         _, stderr, stack = capture()
-        with stack, mock.patch.dict("os.environ", env, clear=True), \
-             mock.patch("sys.argv", ["pipeline", *args]), \
-             mock.patch.object(pipeline, "run_pipeline") as run:
+        with (
+            stack,
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch("sys.argv", ["pipeline", *args]),
+            mock.patch.object(pipeline, "run_pipeline") as run,
+        ):
             try:
                 pipeline.main()
                 code = None
@@ -349,7 +428,9 @@ class MainTest(unittest.TestCase):
     }
 
     def test_dry_run_needs_only_the_password(self):
-        run, code, _ = self.run_main(["statement.pdf", "--dry-run"], {"GCASH_PDF_PASSWORD": "secret"})
+        run, code, _ = self.run_main(
+            ["statement.pdf", "--dry-run"], {"GCASH_PDF_PASSWORD": "secret"}
+        )
         self.assertIsNone(code)
         run.assert_called_once_with("statement.pdf", "secret", None, None, True, "gcash")
 
@@ -360,9 +441,20 @@ class MainTest(unittest.TestCase):
 
     def test_command_line_ids_win(self):
         run, _, _ = self.run_main(
-            ["statement.pdf", "--source", "gcash", "--plan-id", "plan-x", "--account-id", "account-x"], self.FULL_ENV
+            [
+                "statement.pdf",
+                "--source",
+                "gcash",
+                "--plan-id",
+                "plan-x",
+                "--account-id",
+                "account-x",
+            ],
+            self.FULL_ENV,
         )
-        run.assert_called_once_with("statement.pdf", "secret", "account-x", "plan-x", False, "gcash")
+        run.assert_called_once_with(
+            "statement.pdf", "secret", "account-x", "plan-x", False, "gcash"
+        )
 
     def test_missing_settings(self):
         cases = {
@@ -380,7 +472,9 @@ class MainTest(unittest.TestCase):
                 run.assert_not_called()
 
     def test_unknown_source(self):
-        run, code, err = self.run_main(["statement.pdf", "--source", "nope", "--dry-run"], self.FULL_ENV)
+        run, code, err = self.run_main(
+            ["statement.pdf", "--source", "nope", "--dry-run"], self.FULL_ENV
+        )
         self.assertEqual(code, 2)
         self.assertIn("invalid choice: 'nope'", err)
         run.assert_not_called()

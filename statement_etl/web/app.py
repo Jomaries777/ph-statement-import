@@ -54,7 +54,7 @@ import urllib.request
 import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 from flask import Flask, jsonify, redirect, render_template, request, session
-from statement_etl.ynab_api.accounts import get_accounts, get_plans, get_user
+
 from statement_etl.pipeline import (
     ending_balance_check,
     new_account_starting_balance,
@@ -63,9 +63,13 @@ from statement_etl.pipeline import (
     upload_transactions,
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES
-from statement_etl.ynab_api.balance import balance_check_message, get_account_balance, new_account_message
-
 from statement_etl.web import token_store
+from statement_etl.ynab_api.accounts import get_accounts, get_plans, get_user
+from statement_etl.ynab_api.balance import (
+    balance_check_message,
+    get_account_balance,
+    new_account_message,
+)
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -146,9 +150,7 @@ def _refresh(state):
     if not state.get("refresh_token"):
         return False
     try:
-        token = _exchange_token(
-            grant_type="refresh_token", refresh_token=state["refresh_token"]
-        )
+        token = _exchange_token(grant_type="refresh_token", refresh_token=state["refresh_token"])
     except (urllib.error.URLError, KeyError, ValueError):
         _clear_tokens(state)
         return False
@@ -209,9 +211,7 @@ def oauth_callback():
     ):
         return redirect("/?oauth_error=state_mismatch")
     try:
-        token = _exchange_token(
-            grant_type="authorization_code", code=request.args.get("code", "")
-        )
+        token = _exchange_token(grant_type="authorization_code", code=request.args.get("code", ""))
     except (urllib.error.URLError, ValueError):
         return redirect("/?oauth_error=token_exchange_failed")
     _store_tokens(_state(), token)
@@ -250,9 +250,7 @@ def api_token():
     try:
         get_user(token)
     except ynab.exceptions.UnauthorizedException:
-        return _error(
-            "YNAB rejected this token. Copy it again from YNAB Developer Settings.", 401
-        )
+        return _error("YNAB rejected this token. Copy it again from YNAB Developer Settings.", 401)
     except ynab.exceptions.ApiException as e:
         return _error(f"YNAB returned {e.status}: {_error_detail(e)}", 502)
 
@@ -326,8 +324,7 @@ def _ynab_call(fn):
                     )
                 else:
                     message = (
-                        "YNAB rejected your personal access token (revoked?). "
-                        "Enter a new one."
+                        "YNAB rejected your personal access token (revoked?). Enter a new one."
                     )
                 return None, _error(message, 401, reconnect=True)
             if attempt == 1 and _refresh(state):
@@ -342,9 +339,7 @@ def _ynab_call(fn):
         except ynab.exceptions.BadRequestException as e:
             return None, _error(f"YNAB: {_error_detail(e)}", 400)
         except ynab.exceptions.ApiException as e:
-            return None, _error(
-                f"YNAB returned {e.status}: {_error_detail(e)}", 502
-            )
+            return None, _error(f"YNAB returned {e.status}: {_error_detail(e)}", 502)
     return None, _error("YNAB request failed.", 502)
 
 
@@ -355,9 +350,7 @@ def _ynab_call(fn):
 
 @app.get("/")
 def index():
-    return render_template(
-        "index.html", sources=SOURCES.values(), default_source=DEFAULT_SOURCE
-    )
+    return render_template("index.html", sources=SOURCES.values(), default_source=DEFAULT_SOURCE)
 
 
 @app.get("/api/status")
@@ -529,9 +522,7 @@ def api_upload():
         return err
 
     # YNAB balance just before the upload, for the ending-balance message
-    ynab_before, err = _ynab_call(
-        lambda token: get_account_balance(plan_id, account_id, token)
-    )
+    ynab_before, err = _ynab_call(lambda token: get_account_balance(plan_id, account_id, token))
     if err:
         return err
 

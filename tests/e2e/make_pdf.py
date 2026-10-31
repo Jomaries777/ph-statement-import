@@ -43,23 +43,35 @@ FONT_SIZE = 7
 DATE_X = 30
 DESC_X = 110
 REF_X = 330
-DEBIT_X1 = 440    # right edge of the "Debit" label and debit amounts
-CREDIT_X1 = 500   # right edge of the "Credit" label and credit amounts
+DEBIT_X1 = 440  # right edge of the "Debit" label and debit amounts
+CREDIT_X1 = 500  # right edge of the "Credit" label and credit amounts
 BALANCE_X1 = 570  # right edge of the "Balance" label and balances
 
 TITLE_TOP = 50
 HEADER_TOP = 90
-ROW_GAP = 24      # distance between table lines
-WRAP_GAP = 9      # a wrapped description line sits this far below its row
+ROW_GAP = 24  # distance between table lines
+WRAP_GAP = 9  # a wrapped description line sits this far below its row
 
 # Helvetica widths (1/1000 of the font size) of the characters that get
 # right-aligned: amounts and the Debit / Credit / Balance labels
 WIDTHS = {
     **dict.fromkeys("0123456789", 556),
-    ".": 278, ",": 278, "-": 333,
-    "B": 667, "C": 722, "D": 722,
-    "a": 556, "b": 556, "c": 500, "d": 556, "e": 556,
-    "i": 222, "l": 222, "n": 556, "r": 333, "t": 278,
+    ".": 278,
+    ",": 278,
+    "-": 333,
+    "B": 667,
+    "C": 722,
+    "D": 722,
+    "a": 556,
+    "b": 556,
+    "c": 500,
+    "d": 556,
+    "e": 556,
+    "i": 222,
+    "l": 222,
+    "n": 556,
+    "r": 333,
+    "t": 278,
 }
 
 
@@ -75,15 +87,31 @@ def _width(text):
 BALANCED_STARTING = "1000.00"
 BALANCED_ENDING = "1250.00"
 BALANCED_ROWS = [
-    Row("2025-09-01 08:15 AM", "Received GCash from Sample Sender", "9990000000001",
-        "", "500.00", "1500.00"),
-    Row("2025-09-02 12:40 PM",
+    Row(
+        "2025-09-01 08:15 AM",
+        "Received GCash from Sample Sender",
+        "9990000000001",
+        "",
+        "500.00",
+        "1500.00",
+    ),
+    Row(
+        "2025-09-02 12:40 PM",
         "Payment to Sample Coffee Shop,\nMerchant Transaction Number: TEST0000001",
-        "9990000000002", "150.25", "", "1349.75"),
-    Row("2025-09-03 06:05 PM", "Cash-in from Test Bank", "9990000000003",
-        "", "250.00", "1599.75"),
-    Row("2025-09-05 09:30 AM", "Payment to Example Groceries", "9990000000004",
-        "349.75", "", "1250.00"),
+        "9990000000002",
+        "150.25",
+        "",
+        "1349.75",
+    ),
+    Row("2025-09-03 06:05 PM", "Cash-in from Test Bank", "9990000000003", "", "250.00", "1599.75"),
+    Row(
+        "2025-09-05 09:30 AM",
+        "Payment to Example Groceries",
+        "9990000000004",
+        "349.75",
+        "",
+        "1250.00",
+    ),
 ]
 
 # Doesn't add up. The parser adds three correction rows:
@@ -93,14 +121,31 @@ BALANCED_ROWS = [
 GAP_STARTING = "1000.00"
 GAP_ENDING = "1400.00"
 GAP_ROWS = [
-    Row("2025-09-01 08:15 AM", "Received GCash from Sample Sender", "9990000000011",
-        "", "500.00", "1600.00"),
-    Row("2025-09-02 12:40 PM", "Payment to Sample Coffee Shop", "9990000000012",
-        "200.00", "", "1400.00"),
-    Row("2025-09-03 06:05 PM", "Payment to Example Groceries", "9990000000013",
-        "100.00", "", "1350.00"),
-    Row("2025-09-04 09:30 AM", "Cash-in from Test Bank", "9990000000014",
-        "", "100.00", "1400.00"),
+    Row(
+        "2025-09-01 08:15 AM",
+        "Received GCash from Sample Sender",
+        "9990000000011",
+        "",
+        "500.00",
+        "1600.00",
+    ),
+    Row(
+        "2025-09-02 12:40 PM",
+        "Payment to Sample Coffee Shop",
+        "9990000000012",
+        "200.00",
+        "",
+        "1400.00",
+    ),
+    Row(
+        "2025-09-03 06:05 PM",
+        "Payment to Example Groceries",
+        "9990000000013",
+        "100.00",
+        "",
+        "1350.00",
+    ),
+    Row("2025-09-04 09:30 AM", "Cash-in from Test Bank", "9990000000014", "", "100.00", "1400.00"),
 ]
 
 
@@ -179,7 +224,8 @@ def _pdf_bytes(items):
     top is measured from the top of the page, like pdfplumber's "top".
     """
     content = "".join(
-        f"BT /F1 {FONT_SIZE} Tf {x:.2f} {PAGE_HEIGHT - top - FONT_SIZE:.2f} Td ({_escape(text)}) Tj ET\n"
+        f"BT /F1 {FONT_SIZE} Tf {x:.2f} {PAGE_HEIGHT - top - FONT_SIZE:.2f}"
+        f" Td ({_escape(text)}) Tj ET\n"
         for x, top, text in items
     ).encode("latin-1")
     objects = [

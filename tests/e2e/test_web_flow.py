@@ -64,8 +64,16 @@ class WebFlowTest(unittest.TestCase):
         make_pdf.make_statement(
             cls.extended_pdf,
             make_pdf.BALANCED_ROWS
-            + [make_pdf.Row("2025-09-06 07:45 PM", "Payment to Sample Bakery",
-                            "9990000000005", "50.00", "", "1200.00")],
+            + [
+                make_pdf.Row(
+                    "2025-09-06 07:45 PM",
+                    "Payment to Sample Bakery",
+                    "9990000000005",
+                    "50.00",
+                    "",
+                    "1200.00",
+                )
+            ],
             make_pdf.BALANCED_STARTING,
             "1200.00",
         )
@@ -212,9 +220,7 @@ class WebFlowTest(unittest.TestCase):
         self.assertEqual(len(created), 4)
         self.assertEqual(self.ynab.balance(account), 1_250_000)
         self.assertFalse(any(t.approved for t in created))
-        self.assertEqual(
-            [t.amount for t in created], [500_000, -150_250, 250_000, -349_750]
-        )
+        self.assertEqual([t.amount for t in created], [500_000, -150_250, 250_000, -349_750])
 
     def test_reupload_skips_what_is_already_in_ynab(self):
         page = self.page
@@ -258,19 +264,20 @@ class WebFlowTest(unittest.TestCase):
         account = fake_ynab.EXISTING_ACCOUNT_ID
         self.parse(self.gap_pdf)
         expect(page.locator("#parse-msg")).to_have_text(
-            "Parsing successful: 4 GCash transactions from with_gap.pdf "
-            "(+3 balance corrections)"
+            "Parsing successful: 4 GCash transactions from with_gap.pdf (+3 balance corrections)"
         )
         warning = page.locator("#balance-msg")
         expect(warning).to_be_visible()
         expect(warning.locator("strong")).to_have_text(
             "⚠ Balance does not add up — 3 correction rows added"
         )
-        expect(warning.locator("dt")).to_have_text([
-            "2025-09-01 08:15 AM · STARTING BALANCE CORRECTION",
-            "2025-09-03 06:05 PM · Refund from Sample Coffee Shop",
-            "2025-09-04 09:30 AM · MISSING TRANSACTIONS IN GCASH STATEMENT",
-        ])
+        expect(warning.locator("dt")).to_have_text(
+            [
+                "2025-09-01 08:15 AM · STARTING BALANCE CORRECTION",
+                "2025-09-03 06:05 PM · Refund from Sample Coffee Shop",
+                "2025-09-04 09:30 AM · MISSING TRANSACTIONS IN GCASH STATEMENT",
+            ]
+        )
         expect(warning.locator("dd")).to_have_text(["+100.00", "+50.00", "-50.00"])
         expect(self.preview_rows()).to_have_count(7)
         missing = page.locator("#preview-table tbody tr.missing")
@@ -318,7 +325,8 @@ class WebFlowTest(unittest.TestCase):
         expect(page.locator("#end-check")).to_have_text("✓ Ending balance matches YNAB: 1,250.00")
 
         starting = [
-            t for t in self.ynab.transactions(account)
+            t
+            for t in self.ynab.transactions(account)
             if t.payee_name == fake_ynab.STARTING_BALANCE_PAYEE
         ]
         self.assertEqual([t.amount for t in starting], [1_000_000])
@@ -341,11 +349,16 @@ class WebFlowTest(unittest.TestCase):
 
     def test_not_a_pdf_shows_an_error(self):
         page = self.page
-        page.set_input_files("#pdf", [{
-            "name": "notes.pdf",
-            "mimeType": "application/pdf",
-            "buffer": b"This is a text file, not a PDF.",
-        }])
+        page.set_input_files(
+            "#pdf",
+            [
+                {
+                    "name": "notes.pdf",
+                    "mimeType": "application/pdf",
+                    "buffer": b"This is a text file, not a PDF.",
+                }
+            ],
+        )
         page.click("#parse-btn")
         expect(page.locator("#parse-msg")).to_contain_text("Could not read the PDF")
         expect(page.locator("#parse-msg")).to_have_class(re.compile(r"\berr\b"))

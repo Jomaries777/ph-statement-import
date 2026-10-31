@@ -54,7 +54,7 @@ import sys, getpass, pdfplumber
 
 with pdfplumber.open(sys.argv[1], password=getpass.getpass("PDF password: ")) as pdf:
     for word in pdf.pages[0].extract_words():
-        print(f'{word["x0"]:7.1f} {word["x1"]:7.1f} {word["top"]:7.1f}  {word["text"]}')
+        print(f"{word['x0']:7.1f} {word['x1']:7.1f} {word['top']:7.1f}  {word['text']}")
 ```
 
 Write down:
@@ -108,8 +108,8 @@ In `statement_etl/transform.py`, add `maya_to_ynab(row)` next to `gcash_to_ynab`
 ```python
 def maya_to_ynab(row):
     """Convert one Maya row into a YNAB transaction."""
-    date = datetime.strptime(row["Date"], "%d/%m/%Y")      # Maya's own column names
-    amount = to_decimal(row["Amount"])                      # pesos; negative = money out
+    date = datetime.strptime(row["Date"], "%d/%m/%Y")  # Maya's own column names
+    amount = to_decimal(row["Amount"])  # pesos; negative = money out
     reference = row["Reference ID"]
     return ynab_transaction(
         date=date,

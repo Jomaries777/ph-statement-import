@@ -28,20 +28,26 @@ class OpenPdfTest(unittest.TestCase):
 
     def test_wrong_password(self):
         error = PdfminerException(PDFPasswordIncorrect())
-        with mock.patch.object(common.pdfplumber, "open", side_effect=error):
-            with self.assertRaisesRegex(ValueError, "^Incorrect PDF password.$"):
-                common.open_pdf("statement.pdf", "wrong")
+        with (
+            mock.patch.object(common.pdfplumber, "open", side_effect=error),
+            self.assertRaisesRegex(ValueError, "^Incorrect PDF password.$"),
+        ):
+            common.open_pdf("statement.pdf", "wrong")
 
     def test_other_pdf_errors_are_raised_as_they_are(self):
         error = PdfminerException("broken file")
-        with mock.patch.object(common.pdfplumber, "open", side_effect=error):
-            with self.assertRaises(PdfminerException):
-                common.open_pdf("statement.pdf")
+        with (
+            mock.patch.object(common.pdfplumber, "open", side_effect=error),
+            self.assertRaises(PdfminerException),
+        ):
+            common.open_pdf("statement.pdf")
 
     def test_empty_pdfminer_error_is_raised_as_it_is(self):
-        with mock.patch.object(common.pdfplumber, "open", side_effect=PdfminerException()):
-            with self.assertRaises(PdfminerException):
-                common.open_pdf("statement.pdf")
+        with (
+            mock.patch.object(common.pdfplumber, "open", side_effect=PdfminerException()),
+            self.assertRaises(PdfminerException),
+        ):
+            common.open_pdf("statement.pdf")
 
 
 class GroupLinesTest(unittest.TestCase):
@@ -58,7 +64,9 @@ class GroupLinesTest(unittest.TestCase):
         just_inside = common.LINE_TOLERANCE - 0.1
         lines = common.group_lines([word("a", 10, top=100), word("b", 20, top=100 + just_inside)])
         self.assertEqual(len(lines), 1)
-        lines = common.group_lines([word("a", 10, top=100), word("b", 20, top=100 + common.LINE_TOLERANCE)])
+        lines = common.group_lines(
+            [word("a", 10, top=100), word("b", 20, top=100 + common.LINE_TOLERANCE)]
+        )
         self.assertEqual(len(lines), 2)
 
     def test_lines_are_sorted_top_to_bottom_and_left_to_right(self):
@@ -69,8 +77,8 @@ class GroupLinesTest(unittest.TestCase):
             word("second-a", 10, top=150),
         ]
         lines = common.group_lines(words)
-        self.assertEqual([l["text"] for l in lines], ["first", "second-a second-b", "third"])
-        self.assertEqual([l["top"] for l in lines], [100, 150, 200])
+        self.assertEqual([line["text"] for line in lines], ["first", "second-a second-b", "third"])
+        self.assertEqual([line["top"] for line in lines], [100, 150, 200])
 
     def test_words_are_kept(self):
         w = word("Debit", 410, top=180)

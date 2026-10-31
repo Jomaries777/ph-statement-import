@@ -100,7 +100,9 @@ class TokenTest(unittest.TestCase):
         with using(fake):
             self.assertIsNone(token_store.load_token())
             self.assertTrue(token_store.save_token("test-token"))
-            self.assertEqual(fake.passwords, {("statement-etl-ph", "ynab-personal-access-token"): "test-token"})
+            self.assertEqual(
+                fake.passwords, {("statement-etl-ph", "ynab-personal-access-token"): "test-token"}
+            )
             self.assertEqual(token_store.load_token(), "test-token")
             token_store.delete_token()
             self.assertIsNone(token_store.load_token())

@@ -110,9 +110,7 @@ def import_transactions(transactions, account_id, plan_id, access_token=None):
     return api_response.data
 
 
-def check_ending_balance(
-    ending_balance, account_id, plan_id, access_token=None, ynab_before=None
-):
+def check_ending_balance(ending_balance, account_id, plan_id, access_token=None, ynab_before=None):
     """After the upload: does the YNAB account balance equal the statement's
     ending balance?
 
@@ -130,11 +128,7 @@ def check_ending_balance(
     because ynab_api.balance imports this module (ynab_client).
     """
     with ynab_client(access_token) as api_client:
-        account = (
-            ynab.AccountsApi(api_client)
-            .get_account_by_id(plan_id, account_id)
-            .data.account
-        )
+        account = ynab.AccountsApi(api_client).get_account_by_id(plan_id, account_id).data.account
     ynab_after = Decimal(account.balance) / 1000  # milliunits -> currency units
     difference = ynab_after - ending_balance
     return {

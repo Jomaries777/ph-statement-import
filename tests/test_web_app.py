@@ -19,7 +19,6 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest import mock
 
-import ynab
 from ynab import exceptions
 
 from statement_etl.transform import transform
@@ -28,10 +27,27 @@ from statement_etl.ynab_api.balance import compare_balance
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
 
 ROWS = [
-    gcash_row("2026-10-01 09:00 AM", "Received GCash from Test Sender", "1000000000001",
-              credit="1,000.00", balance="1,500.00"),
-    gcash_row("2026-10-02 06:50 PM", "Refund from Test Shop", "R1000000000002", credit="50.00", balance="1,550.00"),
-    gcash_row("2026-10-02 06:50 PM", "Payment to Test Shop", "1000000000002", debit="250.50", balance="1,299.50"),
+    gcash_row(
+        "2026-10-01 09:00 AM",
+        "Received GCash from Test Sender",
+        "1000000000001",
+        credit="1,000.00",
+        balance="1,500.00",
+    ),
+    gcash_row(
+        "2026-10-02 06:50 PM",
+        "Refund from Test Shop",
+        "R1000000000002",
+        credit="50.00",
+        balance="1,550.00",
+    ),
+    gcash_row(
+        "2026-10-02 06:50 PM",
+        "Payment to Test Shop",
+        "1000000000002",
+        debit="250.50",
+        balance="1,299.50",
+    ),
 ]
 TRANSACTIONS = transform(ROWS, "gcash")
 TARGET = {"plan_id": PLAN_ID, "account_id": ACCOUNT_ID}
@@ -83,7 +99,9 @@ class WebTest(unittest.TestCase):
         return self.connected(source="gcash", rows=ROWS, transactions=TRANSACTIONS, **state)
 
     def oauth_env(self):
-        self.patch_dict(os.environ, {"YNAB_CLIENT_ID": "client-id", "YNAB_CLIENT_SECRET": "client-secret"})
+        self.patch_dict(
+            os.environ, {"YNAB_CLIENT_ID": "client-id", "YNAB_CLIENT_SECRET": "client-secret"}
+        )
 
 
 # =============================================================================
@@ -101,15 +119,18 @@ class IndexTest(WebTest):
 
 class StatusTest(WebTest):
     def test_not_connected(self):
-        self.assertEqual(self.client.get("/api/status").get_json(), {
-            "connected": False,
-            "connect_error": None,
-            "token_kind": None,
-            "oauth_configured": False,
-            "remember_available": False,
-            "store_name": None,
-            "parsed": None,
-        })
+        self.assertEqual(
+            self.client.get("/api/status").get_json(),
+            {
+                "connected": False,
+                "connect_error": None,
+                "token_kind": None,
+                "oauth_configured": False,
+                "remember_available": False,
+                "store_name": None,
+                "parsed": None,
+            },
+        )
 
     def test_saved_token_connects_by_itself(self):
         self.load_token.return_value = "saved-token"
@@ -138,7 +159,9 @@ class StatusTest(WebTest):
 
     def test_parsed_statement_is_restored(self):
         self.set_state(parsed={"filename": "statement.pdf"})
-        self.assertEqual(self.client.get("/api/status").get_json()["parsed"], {"filename": "statement.pdf"})
+        self.assertEqual(
+            self.client.get("/api/status").get_json()["parsed"], {"filename": "statement.pdf"}
+        )
 
 
 # =============================================================================
@@ -155,7 +178,9 @@ class TokenTest(WebTest):
             with self.subTest(body=body):
                 response = self.post(body) if body is not None else self.client.post("/api/token")
                 self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.get_json()["error"], "Enter your YNAB personal access token.")
+                self.assertEqual(
+                    response.get_json()["error"], "Enter your YNAB personal access token."
+                )
 
     def test_rejected_token(self):
         with mock.patch.object(web, "get_user", side_effect=unauthorized()):
@@ -164,7 +189,9 @@ class TokenTest(WebTest):
         self.assertIn("YNAB rejected this token", response.get_json()["error"])
 
     def test_ynab_down(self):
-        error = exceptions.ApiException(status=500, reason="Server Error", body='{"error": {"detail": "try later"}}')
+        error = exceptions.ApiException(
+            status=500, reason="Server Error", body='{"error": {"detail": "try later"}}'
+        )
         with mock.patch.object(web, "get_user", side_effect=error):
             response = self.post({"token": "test-token"})
         self.assertEqual(response.status_code, 502)
@@ -174,8 +201,10 @@ class TokenTest(WebTest):
         with mock.patch.object(web, "get_user") as get_user:
             response = self.post({"token": "  test-token  ", "remember": True})
         get_user.assert_called_once_with("test-token")
-        self.assertEqual(response.get_json(),
-                         {"connected": True, "token_kind": "personal", "saved": False, "save_error": None})
+        self.assertEqual(
+            response.get_json(),
+            {"connected": True, "token_kind": "personal", "saved": False, "save_error": None},
+        )
         self.save_token.assert_not_called()  # no secure store
         state = self.state()
         self.assertEqual((state["access_token"], state["token_kind"]), ("test-token", "personal"))
@@ -201,11 +230,19 @@ class TokenTest(WebTest):
         with mock.patch.object(web, "get_user"):
             body = self.post({"token": "test-token", "remember": True}).get_json()
         self.assertEqual(body["token_kind"], "personal")
-        self.assertEqual(body["save_error"],
-                         "Couldn't save the token in the Test Store; it will be used for this session only.")
+        self.assertEqual(
+            body["save_error"],
+            "Couldn't save the token in the Test Store; it will be used for this session only.",
+        )
 
     def test_replaces_oauth_and_disconnect(self):
-        self.set_state(access_token="oauth-token", token_kind="oauth", refresh_token="rt", expires_at=1, skip_saved=True)
+        self.set_state(
+            access_token="oauth-token",
+            token_kind="oauth",
+            refresh_token="rt",
+            expires_at=1,
+            skip_saved=True,
+        )
         with mock.patch.object(web, "get_user"):
             self.post({"token": "test-token"})
         state = self.state()
@@ -232,12 +269,15 @@ class OAuthTest(WebTest):
         query = urllib.parse.parse_qs(url.query)
         with self.client.session_transaction() as session:
             state = session["oauth_state"]
-        self.assertEqual(query, {
-            "client_id": ["client-id"],
-            "redirect_uri": [web.REDIRECT_URI],
-            "response_type": ["code"],
-            "state": [state],
-        })
+        self.assertEqual(
+            query,
+            {
+                "client_id": ["client-id"],
+                "redirect_uri": [web.REDIRECT_URI],
+                "response_type": ["code"],
+                "state": [state],
+            },
+        )
 
     def callback(self, query, session_state="state-1"):
         with self.client.session_transaction() as session:
@@ -251,9 +291,11 @@ class OAuthTest(WebTest):
         self.assertEqual(response.location, "/?oauth_error=access%20denied")
 
     def test_callback_state_mismatch(self):
-        for query, session_state in (({"state": "other", "code": "c"}, "state-1"),
-                                     ({"code": "c"}, "state-1"),
-                                     ({"state": "state-1", "code": "c"}, None)):
+        for query, session_state in (
+            ({"state": "other", "code": "c"}, "state-1"),
+            ({"code": "c"}, "state-1"),
+            ({"state": "state-1", "code": "c"}, None),
+        ):
             with self.subTest(query=query, session_state=session_state):
                 with mock.patch.object(web, "_exchange_token") as exchange:
                     response = self.callback(query, session_state)
@@ -272,29 +314,37 @@ class OAuthTest(WebTest):
         self.assertEqual(response.location, "/")
         exchange.assert_called_once_with(grant_type="authorization_code", code="code-1")
         state = self.state()
-        self.assertEqual((state["access_token"], state["refresh_token"], state["token_kind"]),
-                         ("oauth-token", "rt", "oauth"))
+        self.assertEqual(
+            (state["access_token"], state["refresh_token"], state["token_kind"]),
+            ("oauth-token", "rt", "oauth"),
+        )
         self.assertAlmostEqual(state["expires_at"], time.time() + 7200, delta=5)
         with self.client.session_transaction() as session:
             self.assertNotIn("oauth_state", session)  # used once
 
     def test_exchange_token_request(self):
         self.oauth_env()
-        with mock.patch.object(web.urllib.request, "urlopen",
-                               return_value=io.BytesIO(b'{"access_token": "oauth-token"}')) as urlopen:
+        with mock.patch.object(
+            web.urllib.request,
+            "urlopen",
+            return_value=io.BytesIO(b'{"access_token": "oauth-token"}'),
+        ) as urlopen:
             token = web._exchange_token(grant_type="refresh_token", refresh_token="rt")
         self.assertEqual(token, {"access_token": "oauth-token"})
         url = urlopen.call_args.args[0]
         body = urllib.parse.parse_qs(urlopen.call_args.kwargs["data"].decode())
         self.assertEqual(url, web.YNAB_TOKEN_URL)
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 30)
-        self.assertEqual(body, {
-            "client_id": ["client-id"],
-            "client_secret": ["client-secret"],
-            "redirect_uri": [web.REDIRECT_URI],
-            "grant_type": ["refresh_token"],
-            "refresh_token": ["rt"],
-        })
+        self.assertEqual(
+            body,
+            {
+                "client_id": ["client-id"],
+                "client_secret": ["client-secret"],
+                "redirect_uri": [web.REDIRECT_URI],
+                "grant_type": ["refresh_token"],
+                "refresh_token": ["rt"],
+            },
+        )
 
 
 class LogoutTest(WebTest):
@@ -319,7 +369,9 @@ class GetTokenTest(WebTest):
     def test_personal_and_saved_tokens_never_refresh(self):
         for kind in ("personal", "saved"):
             with self.subTest(kind), mock.patch.object(web, "_exchange_token") as exchange:
-                self.assertEqual(web.get_token({"access_token": "t", "token_kind": kind, "expires_at": 0}), "t")
+                self.assertEqual(
+                    web.get_token({"access_token": "t", "token_kind": kind, "expires_at": 0}), "t"
+                )
                 exchange.assert_not_called()
 
     def test_loads_the_saved_token(self):
@@ -333,20 +385,36 @@ class GetTokenTest(WebTest):
         self.assertIsNone(web.get_token({}))
 
     def test_oauth_token_still_valid(self):
-        state = {"access_token": "oauth-token", "token_kind": "oauth", "expires_at": time.time() + 3600}
+        state = {
+            "access_token": "oauth-token",
+            "token_kind": "oauth",
+            "expires_at": time.time() + 3600,
+        }
         with mock.patch.object(web, "_exchange_token") as exchange:
             self.assertEqual(web.get_token(state), "oauth-token")
         exchange.assert_not_called()
 
     def test_oauth_token_about_to_expire_is_refreshed(self):
-        state = {"access_token": "old", "token_kind": "oauth", "refresh_token": "rt", "expires_at": time.time() + 30}
-        with mock.patch.object(web, "_exchange_token", return_value={"access_token": "new", "expires_in": 60}) as exchange:
+        state = {
+            "access_token": "old",
+            "token_kind": "oauth",
+            "refresh_token": "rt",
+            "expires_at": time.time() + 30,
+        }
+        with mock.patch.object(
+            web, "_exchange_token", return_value={"access_token": "new", "expires_in": 60}
+        ) as exchange:
             self.assertEqual(web.get_token(state), "new")
         exchange.assert_called_once_with(grant_type="refresh_token", refresh_token="rt")
         self.assertEqual(state["refresh_token"], "rt")  # kept when YNAB doesn't send a new one
 
     def test_failed_refresh_disconnects(self):
-        state = {"access_token": "old", "token_kind": "oauth", "refresh_token": "rt", "expires_at": 0}
+        state = {
+            "access_token": "old",
+            "token_kind": "oauth",
+            "refresh_token": "rt",
+            "expires_at": 0,
+        }
         with mock.patch.object(web, "_exchange_token", side_effect=urllib.error.URLError("down")):
             self.assertIsNone(web.get_token(state))
         self.assertEqual(state, {})
@@ -370,7 +438,9 @@ class YnabCallTest(WebTest):
     def test_not_connected(self):
         response, get_plans = self.plans([[]])
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.get_json(), {"error": "Connect to YNAB first.", "reconnect": True})
+        self.assertEqual(
+            response.get_json(), {"error": "Connect to YNAB first.", "reconnect": True}
+        )
         get_plans.assert_not_called()
 
     def test_success(self):
@@ -384,9 +454,13 @@ class YnabCallTest(WebTest):
         self.connected("personal")
         response, _ = self.plans(unauthorized())
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.get_json(), {
-            "error": "YNAB rejected your personal access token (revoked?). Enter a new one.", "reconnect": True,
-        })
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "YNAB rejected your personal access token (revoked?). Enter a new one.",
+                "reconnect": True,
+            },
+        )
         self.assertEqual(self.state(), {})
         self.delete_token.assert_not_called()
 
@@ -401,25 +475,43 @@ class YnabCallTest(WebTest):
         with mock.patch.object(web, "_exchange_token", return_value={"access_token": "new-token"}):
             response, get_plans = self.plans([unauthorized(), ["plan"]])
         self.assertEqual(response.get_json(), ["plan"])
-        self.assertEqual(get_plans.call_args_list, [mock.call("test-token"), mock.call("new-token")])
+        self.assertEqual(
+            get_plans.call_args_list, [mock.call("test-token"), mock.call("new-token")]
+        )
 
     def test_oauth_rejected_after_refresh(self):
         self.connected("oauth", refresh_token="rt", expires_at=time.time() + 3600)
         with mock.patch.object(web, "_exchange_token", return_value={"access_token": "new-token"}):
             response, get_plans = self.plans([unauthorized(), unauthorized()])
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.get_json()["error"], "Your YNAB session expired. Reconnect to YNAB.")
+        self.assertEqual(
+            response.get_json()["error"], "Your YNAB session expired. Reconnect to YNAB."
+        )
         self.assertEqual(get_plans.call_count, 2)
         self.assertNotIn("access_token", self.state())
 
     def test_other_errors(self):
         self.connected()
         cases = [
-            (exceptions.NotFoundException(status=404, reason="Not Found"), 404, "Plan or account not found."),
-            (exceptions.BadRequestException(status=400, reason="Bad Request",
-                                            data=SimpleNamespace(error=SimpleNamespace(detail="bad date"))),
-             400, "YNAB: bad date"),
-            (exceptions.ApiException(status=503, reason="Unavailable"), 502, "YNAB returned 503: Unavailable"),
+            (
+                exceptions.NotFoundException(status=404, reason="Not Found"),
+                404,
+                "Plan or account not found.",
+            ),
+            (
+                exceptions.BadRequestException(
+                    status=400,
+                    reason="Bad Request",
+                    data=SimpleNamespace(error=SimpleNamespace(detail="bad date")),
+                ),
+                400,
+                "YNAB: bad date",
+            ),
+            (
+                exceptions.ApiException(status=503, reason="Unavailable"),
+                502,
+                "YNAB returned 503: Unavailable",
+            ),
         ]
         for error, status, message in cases:
             with self.subTest(status=status):
@@ -428,8 +520,12 @@ class YnabCallTest(WebTest):
                 self.assertEqual(response.get_json()["error"], message)
 
     def test_error_detail(self):
-        with_data = exceptions.ApiException(status=400, reason="r", data=SimpleNamespace(error=SimpleNamespace(detail="from data")))
-        with_body = exceptions.ApiException(status=400, reason="r", body='{"error": {"detail": "from body"}}')
+        with_data = exceptions.ApiException(
+            status=400, reason="r", data=SimpleNamespace(error=SimpleNamespace(detail="from data"))
+        )
+        with_body = exceptions.ApiException(
+            status=400, reason="r", body='{"error": {"detail": "from body"}}'
+        )
         bad_body = exceptions.ApiException(status=400, reason="the reason", body="<html>")
         nothing = exceptions.ApiException(status=400)
         self.assertEqual(web._error_detail(with_data), "from data")
@@ -439,7 +535,9 @@ class YnabCallTest(WebTest):
 
     def test_accounts(self):
         self.connected()
-        accounts = [{"id": ACCOUNT_ID, "name": "Test Wallet", "type": "checking", "balance": "₱0.00"}]
+        accounts = [
+            {"id": ACCOUNT_ID, "name": "Test Wallet", "type": "checking", "balance": "₱0.00"}
+        ]
         with mock.patch.object(web, "get_accounts", return_value=accounts) as get_accounts:
             response = self.client.get(f"/api/plans/{PLAN_ID}/accounts")
         self.assertEqual(response.get_json(), accounts)
@@ -461,7 +559,9 @@ class ParseTest(WebTest):
     def test_unknown_source(self):
         response = self.post(self.pdf(source="nope"))
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"], "Unknown source 'nope'. Known sources: gcash")
+        self.assertEqual(
+            response.get_json()["error"], "Unknown source 'nope'. Known sources: gcash"
+        )
 
     def test_no_file(self):
         response = self.post({"password": "secret"})
@@ -474,7 +574,10 @@ class ParseTest(WebTest):
             (RuntimeError("not a PDF"), "Could not read the PDF: not a PDF"),
         ]
         for error, message in cases:
-            with self.subTest(message), mock.patch.object(web, "parse_statement", side_effect=error):
+            with (
+                self.subTest(message),
+                mock.patch.object(web, "parse_statement", side_effect=error),
+            ):
                 response = self.post(self.pdf())
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.get_json()["error"], message)
@@ -484,34 +587,56 @@ class ParseTest(WebTest):
             response = self.post(self.pdf())
         self.assertEqual(response.status_code, 200)
         pdf, password, source = parse.call_args.args
-        self.assertEqual((pdf.read(), password, source), (b"%PDF-test", "secret", "gcash"))  # default source
+        self.assertEqual(
+            (pdf.read(), password, source), (b"%PDF-test", "secret", "gcash")
+        )  # default source
 
         parsed = response.get_json()
-        self.assertEqual(parsed, {
-            "source": "gcash",
-            "source_name": "GCash",
-            "filename": "statement.pdf",
-            "columns": ["Date and Time", "Description", "Reference No.", "Debit", "Credit", "Balance"],
-            "rows": [[row[c] for c in parsed["columns"]] for row in ROWS],
-            "amount_columns": ["Debit", "Credit", "Balance"],
-            "money_in_columns": ["Credit"],
-            "money_out_columns": ["Debit"],
-            "text_column": "Description",
-            "correction_rows": [1],
-            "summary": "Total debit 250.50 · Total credit 1,000.00 · matches statement ✓",
-            "statement_count": 2,
-            "count": 3,
-            "corrections": [{"date_time": "2026-10-02 06:50 PM", "description": "Refund from Test Shop",
-                             "reference": "R1000000000002", "amount": "+50.00"}],
-            "balance_warning": parsed["balance_warning"],
-            "starting_balance": "500.00",
-            "ending_balance": "1,299.50",
-        })
-        self.assertTrue(parsed["balance_warning"].startswith("Balance does not add up: 1 correction row(s)"))
+        self.assertEqual(
+            parsed,
+            {
+                "source": "gcash",
+                "source_name": "GCash",
+                "filename": "statement.pdf",
+                "columns": [
+                    "Date and Time",
+                    "Description",
+                    "Reference No.",
+                    "Debit",
+                    "Credit",
+                    "Balance",
+                ],
+                "rows": [[row[c] for c in parsed["columns"]] for row in ROWS],
+                "amount_columns": ["Debit", "Credit", "Balance"],
+                "money_in_columns": ["Credit"],
+                "money_out_columns": ["Debit"],
+                "text_column": "Description",
+                "correction_rows": [1],
+                "summary": "Total debit 250.50 · Total credit 1,000.00 · matches statement ✓",
+                "statement_count": 2,
+                "count": 3,
+                "corrections": [
+                    {
+                        "date_time": "2026-10-02 06:50 PM",
+                        "description": "Refund from Test Shop",
+                        "reference": "R1000000000002",
+                        "amount": "+50.00",
+                    }
+                ],
+                "balance_warning": parsed["balance_warning"],
+                "starting_balance": "500.00",
+                "ending_balance": "1,299.50",
+            },
+        )
+        self.assertTrue(
+            parsed["balance_warning"].startswith("Balance does not add up: 1 correction row(s)")
+        )
 
         state = self.state()
-        self.assertEqual((state["source"], state["rows"], state["transactions"], state["parsed"]),
-                         ("gcash", ROWS, TRANSACTIONS, parsed))
+        self.assertEqual(
+            (state["source"], state["rows"], state["transactions"], state["parsed"]),
+            ("gcash", ROWS, TRANSACTIONS, parsed),
+        )
         self.assertEqual(self.client.get("/api/status").get_json()["parsed"], parsed)
 
 
@@ -521,7 +646,9 @@ class ParseTest(WebTest):
 
 
 def starting_check(**kwargs):
-    return compare_balance("starting", Decimal("500"), Decimal("1234.5"), Decimal("2033.5"), **kwargs)
+    return compare_balance(
+        "starting", Decimal("500"), Decimal("1234.5"), Decimal("2033.5"), **kwargs
+    )
 
 
 class CheckJsonTest(unittest.TestCase):
@@ -532,24 +659,36 @@ class CheckJsonTest(unittest.TestCase):
 
     def test_check_json(self):
         check = starting_check(already_in_ynab=1, to_upload=2)
-        self.assertEqual(web._check_json(check), {
-            "kind": "starting",
-            "matches": False,
-            "new_account": False,
-            "statement": "500.00",
-            "ynab_before": "1,234.50",
-            "ynab_after": "2,033.50",
-            "difference": "+734.50",
-            "already_in_ynab": 1,
-            "to_upload": 2,
-            "message": web.balance_check_message(check),
-        })
+        self.assertEqual(
+            web._check_json(check),
+            {
+                "kind": "starting",
+                "matches": False,
+                "new_account": False,
+                "statement": "500.00",
+                "ynab_before": "1,234.50",
+                "ynab_after": "2,033.50",
+                "difference": "+734.50",
+                "already_in_ynab": 1,
+                "to_upload": 2,
+                "message": web.balance_check_message(check),
+            },
+        )
 
     def test_ending_check_json(self):
-        check = {"kind": "ending", "statement": Decimal("1"), "ynab_before": None, "ynab_after": Decimal("1"),
-                 "difference": Decimal("0"), "matches": True, "new_account": None}
+        check = {
+            "kind": "ending",
+            "statement": Decimal("1"),
+            "ynab_before": None,
+            "ynab_after": Decimal("1"),
+            "difference": Decimal("0"),
+            "matches": True,
+            "new_account": None,
+        }
         result = web._check_json(check)
-        self.assertEqual((result["ynab_before"], result["already_in_ynab"], result["to_upload"]), (None, 0, None))
+        self.assertEqual(
+            (result["ynab_before"], result["already_in_ynab"], result["to_upload"]), (None, 0, None)
+        )
         self.assertEqual(result["difference"], "+0.00")
 
 
@@ -581,7 +720,9 @@ class StartingBalanceTest(WebTest):
         with mock.patch.object(web, "starting_balance_check", return_value=check) as start:
             response = self.post(TARGET)
         self.assertEqual(response.get_json(), web._check_json(check))
-        start.assert_called_once_with(ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash")
+        start.assert_called_once_with(
+            ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash"
+        )
 
 
 class UploadTest(WebTest):
@@ -589,16 +730,33 @@ class UploadTest(WebTest):
         super().setUp()
         self.new_account = self.patch(web, "new_account_starting_balance", return_value=None)
         self.balance = self.patch(web, "get_account_balance", return_value=Decimal("500"))
-        self.upload = self.patch(web, "upload_transactions", return_value=SimpleNamespace(
-            transactions=[
-                ynab_txn(var_date="2026-10-01", payee_name="Received GCash from Test Sender",
-                         category_name="Ready to Assign", memo="GCash Ref: 1000000000001", amount=1000000),
-                ynab_txn(var_date="2026-10-02", payee_name=None, category_name=None, memo=None, amount=50000,
-                         flag_color=SimpleNamespace(value="red")),
-            ],
-            duplicate_import_ids=["ETLPH:already"],
-        ))
-        self.ending = compare_balance("ending", Decimal("1299.5"), Decimal("500"), Decimal("1299.5"))
+        self.upload = self.patch(
+            web,
+            "upload_transactions",
+            return_value=SimpleNamespace(
+                transactions=[
+                    ynab_txn(
+                        var_date="2026-10-01",
+                        payee_name="Received GCash from Test Sender",
+                        category_name="Ready to Assign",
+                        memo="GCash Ref: 1000000000001",
+                        amount=1000000,
+                    ),
+                    ynab_txn(
+                        var_date="2026-10-02",
+                        payee_name=None,
+                        category_name=None,
+                        memo=None,
+                        amount=50000,
+                        flag_color=SimpleNamespace(value="red"),
+                    ),
+                ],
+                duplicate_import_ids=["ETLPH:already"],
+            ),
+        )
+        self.ending = compare_balance(
+            "ending", Decimal("1299.5"), Decimal("500"), Decimal("1299.5")
+        )
         self.end = self.patch(web, "ending_balance_check", return_value=self.ending)
 
     def post(self, body=TARGET):
@@ -621,29 +779,52 @@ class UploadTest(WebTest):
         self.parsed()
         response = self.post()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {
-            "created": [
-                {"date": "2026-10-01", "payee": "Received GCash from Test Sender", "category": "Ready to Assign",
-                 "memo": "GCash Ref: 1000000000001", "amount": 1000000, "flag": ""},
-                {"date": "2026-10-02", "payee": "", "category": "Uncategorized", "memo": "", "amount": 50000,
-                 "flag": "red"},
-            ],
-            "skipped": 1,
-            "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
-            "ending_check": web._check_json(self.ending),
-            "ending_check_error": None,
-            "new_account_message": None,
-        })
-        self.new_account.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash")
+        self.assertEqual(
+            response.get_json(),
+            {
+                "created": [
+                    {
+                        "date": "2026-10-01",
+                        "payee": "Received GCash from Test Sender",
+                        "category": "Ready to Assign",
+                        "memo": "GCash Ref: 1000000000001",
+                        "amount": 1000000,
+                        "flag": "",
+                    },
+                    {
+                        "date": "2026-10-02",
+                        "payee": "",
+                        "category": "Uncategorized",
+                        "memo": "",
+                        "amount": 50000,
+                        "flag": "red",
+                    },
+                ],
+                "skipped": 1,
+                "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
+                "ending_check": web._check_json(self.ending),
+                "ending_check_error": None,
+                "new_account_message": None,
+            },
+        )
+        self.new_account.assert_called_once_with(
+            ROWS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash"
+        )
         self.balance.assert_called_once_with(PLAN_ID, ACCOUNT_ID, "test-token")
         self.upload.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token")
-        self.end.assert_called_once_with(ROWS, ACCOUNT_ID, PLAN_ID, "test-token", Decimal("500"), source="gcash")
+        self.end.assert_called_once_with(
+            ROWS, ACCOUNT_ID, PLAN_ID, "test-token", Decimal("500"), source="gcash"
+        )
 
     def test_new_account(self):
         self.parsed()
         self.new_account.return_value = {"from": Decimal("0"), "to": Decimal("500")}
         message = self.post().get_json()["new_account_message"]
-        self.assertEqual(message, "New YNAB account: Starting Balance set from 0.00 to 500.00 (the statement starting balance).")
+        self.assertEqual(
+            message,
+            "New YNAB account: Starting Balance set from 0.00 to 500.00"
+            " (the statement starting balance).",
+        )
 
     def test_nothing_created(self):
         self.parsed()

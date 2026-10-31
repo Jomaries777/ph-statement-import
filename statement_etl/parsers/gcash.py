@@ -54,6 +54,7 @@ import sys
 from datetime import datetime
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
+
 from statement_etl.parsers.common import group_lines, open_pdf, to_decimal
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
@@ -95,17 +96,13 @@ REF_RE = re.compile(r"^\d{10,}$")
 GCASH_PAYMENT_RE = re.compile(r"^Payment to\s+(.*)$", re.IGNORECASE)
 
 # Removes the ", Merchant Transaction Number: ..." tail from a payee name
-GCASH_MERCHANT_SUFFIX_RE = re.compile(
-    r",\s*Merchant Transaction Number:.*$", re.IGNORECASE
-)
+GCASH_MERCHANT_SUFFIX_RE = re.compile(r",\s*Merchant Transaction Number:.*$", re.IGNORECASE)
 
 # Statement totals, used to check nothing was missed: "Total Debit 9,321.00"
 TOTAL_RE = re.compile(r"^Total (Debit|Credit)\s+([\d,]+\.\d{2})$", re.IGNORECASE)
 
 # Opening / closing balance lines: "STARTING BALANCE 0.00", "ENDING BALANCE 5924.56"
-BALANCE_RE = re.compile(
-    r"^(STARTING|ENDING) BALANCE\s+(-?[\d,]+\.\d{2})$", re.IGNORECASE
-)
+BALANCE_RE = re.compile(r"^(STARTING|ENDING) BALANCE\s+(-?[\d,]+\.\d{2})$", re.IGNORECASE)
 
 # Summary lines inside the table that are not transactions
 SUMMARY_RE = re.compile(
@@ -154,9 +151,7 @@ def _attach_wrapped_lines(rows, other_lines):
     desc_left = min(r["desc_left"] for r in rows)
     desc_right = max(r["desc_right"] for r in rows)
     for line in other_lines:
-        words = [
-            w for w in line["words"] if w["x0"] >= desc_left and w["x1"] <= desc_right
-        ]
+        words = [w for w in line["words"] if w["x0"] >= desc_left and w["x1"] <= desc_right]
         if words:
             nearest = min(rows, key=lambda r: abs(r["top"] - line["top"]))
             nearest["desc_words"].extend(words)
@@ -209,9 +204,7 @@ def _parse_transaction_line(line, debit_x, credit_x):
     amt = amounts[-2]
     is_debit = abs(amt["x1"] - debit_x) < abs(amt["x1"] - credit_x)
 
-    date_time = datetime.strptime(
-        " ".join(w["text"] for w in words[:3]), DATE_TIME_FORMAT
-    )
+    date_time = datetime.strptime(" ".join(w["text"] for w in words[:3]), DATE_TIME_FORMAT)
     return {
         "top": line["top"],
         "desc_left": words[2]["x1"],
@@ -270,9 +263,7 @@ def parse_transactions(pdf_path, password=""):
 
     with open_pdf(pdf_path, password) as pdf:
         for page in pdf.pages:
-            lines = group_lines(
-                page.extract_words(keep_blank_chars=False, use_text_flow=False)
-            )
+            lines = group_lines(page.extract_words(keep_blank_chars=False, use_text_flow=False))
 
             # Find the Debit / Credit columns; skip pages before the table starts
             columns = _find_columns(lines) or columns
@@ -331,9 +322,7 @@ def _check_totals(transactions, totals):
     credit = sum(to_decimal(t["Credit"]) for t in transactions)
     for name, parsed in (("debit", debit), ("credit", credit)):
         if name in totals and totals[name] != parsed:
-            raise ValueError(
-                f"parsed total {name} {parsed} != statement total {totals[name]}"
-            )
+            raise ValueError(f"parsed total {name} {parsed} != statement total {totals[name]}")
 
 
 # =============================================================================
@@ -375,8 +364,8 @@ START_DESCRIPTION = "STARTING BALANCE CORRECTION"
 MISSING_DESCRIPTION = "MISSING TRANSACTIONS IN GCASH STATEMENT"
 
 # Reference No. prefixes of correction rows (see the header above)
-START_KIND = "S"    # starting balance correction
-REFUND_KIND = "R"   # "Refund from <payee>" added by the pipeline
+START_KIND = "S"  # starting balance correction
+REFUND_KIND = "R"  # "Refund from <payee>" added by the pipeline
 PAYMENT_KIND = "P"  # "Payment to <payee>" added by a split
 MISSING_KIND = "M"  # missing transactions at the end
 CORRECTION_KINDS = (START_KIND, REFUND_KIND, PAYMENT_KIND, MISSING_KIND)
@@ -436,7 +425,13 @@ def _split_zero_balance(row, previous):
 
     if row["Debit"]:
         # Statement shows the payment; the refund is what's missing
-        payment = _row(row["Date and Time"], row["Description"], row["Reference No."], -amount, previous - amount)
+        payment = _row(
+            row["Date and Time"],
+            row["Description"],
+            row["Reference No."],
+            -amount,
+            previous - amount,
+        )
         refund = _correction_row(REFUND_KIND, refund_text, row, amount, previous)
     else:
         # Statement shows the money coming back; the payment is what's missing
@@ -463,9 +458,9 @@ def _correct_balances(transactions, balances):
 
     result = []
     previous = balances.get("starting")  # running balance before the current row
-    checked_any = False                  # has any row's balance been checked yet?
+    checked_any = False  # has any row's balance been checked yet?
     # Who an unlisted refund most likely came from (used in step 3):
-    last_split_payee = None    # payee of the last 0.00-balance row (e.g. Angkas)
+    last_split_payee = None  # payee of the last 0.00-balance row (e.g. Angkas)
     last_payment_payee = None  # payee of the last "Payment to ..." row
     for row in transactions:
         credit = to_decimal(row["Credit"])
@@ -493,9 +488,7 @@ def _correct_balances(transactions, balances):
                 #    not the row where the gap shows up.
                 payee = last_split_payee or last_payment_payee or gcash_payee(row["Description"])
                 refund_text = f"Refund from {payee}"
-                result.append(
-                    _correction_row(REFUND_KIND, refund_text, row, gap, previous + gap)
-                )
+                result.append(_correction_row(REFUND_KIND, refund_text, row, gap, previous + gap))
             # 4. gap < 0 (money left without a row): left for the MISSING row below
             checked_any = True
 
@@ -512,8 +505,11 @@ def _correct_balances(transactions, balances):
         if difference:
             result.append(
                 _correction_row(
-                    MISSING_KIND, MISSING_DESCRIPTION, transactions[-1],
-                    difference, balances["ending"],
+                    MISSING_KIND,
+                    MISSING_DESCRIPTION,
+                    transactions[-1],
+                    difference,
+                    balances["ending"],
                     reference=_missing_reference(transactions),
                 )
             )
@@ -556,8 +552,7 @@ def balance_warning(rows):
         f"total {total:+,.2f}. They are uploaded to YNAB, flagged red for review."
     ]
     lines += [
-        f"  {c['date_time']}  {c['description']:<40} {c['amount']:>+12,.2f}"
-        for c in corrections
+        f"  {c['date_time']}  {c['description']:<40} {c['amount']:>+12,.2f}" for c in corrections
     ]
     return "\n".join(lines)
 
@@ -576,9 +571,7 @@ def statement_balances(rows):
         return {}
     first, last = rows[0], rows[-1]
     starting = (
-        to_decimal(first["Balance"])
-        - to_decimal(first["Credit"])
-        + to_decimal(first["Debit"])
+        to_decimal(first["Balance"]) - to_decimal(first["Credit"]) + to_decimal(first["Debit"])
     )
     return {"starting": starting, "ending": to_decimal(last["Balance"])}
 
@@ -608,11 +601,7 @@ def main():
     ap.add_argument("-o", "--output", help="Write JSON here instead of stdout")
     args = ap.parse_args()
 
-    password = (
-        args.password
-        if args.password is not None
-        else getpass.getpass("PDF password: ")
-    )
+    password = args.password if args.password is not None else getpass.getpass("PDF password: ")
 
     # 2. Parsing: open the PDF with the password and read the transaction table
     transactions = parse_transactions(args.pdf, password)
@@ -625,9 +614,7 @@ def main():
     if args.output:
         with open(args.output, "w") as f:
             f.write(out + "\n")
-        print(
-            f"Wrote {len(transactions)} transactions to {args.output}", file=sys.stderr
-        )
+        print(f"Wrote {len(transactions)} transactions to {args.output}", file=sys.stderr)
     else:
         print(out)
 

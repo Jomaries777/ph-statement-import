@@ -12,6 +12,7 @@ Environment:
 
 import ynab
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
+
 from statement_etl.ynab_api.client import ynab_client
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell

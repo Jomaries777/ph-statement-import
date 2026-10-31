@@ -18,7 +18,12 @@ CHAR_WIDTH = 5  # every fake word is 5 points wide per character
 
 def word(text, x0, top=100.0):
     """One pdfplumber word starting at x0."""
-    return {"text": text, "x0": float(x0), "x1": float(x0 + CHAR_WIDTH * len(text)), "top": float(top)}
+    return {
+        "text": text,
+        "x0": float(x0),
+        "x1": float(x0 + CHAR_WIDTH * len(text)),
+        "top": float(top),
+    }
 
 
 def right_word(text, x1, top=100.0):
@@ -60,9 +65,9 @@ class FakePDF:
 # GCASH TABLE LAYOUT - x positions of each column on a fake GCash page
 # =============================================================================
 
-DESC_X = 130     # Description starts here (after the AM/PM word)
-REF_X = 330      # Reference No. starts here
-DEBIT_X1 = 450   # right edge of the "Debit" label and debit amounts
+DESC_X = 130  # Description starts here (after the AM/PM word)
+REF_X = 330  # Reference No. starts here
+DEBIT_X1 = 450  # right edge of the "Debit" label and debit amounts
 CREDIT_X1 = 510  # right edge of the "Credit" label and credit amounts
 BALANCE_X1 = 580  # right edge of the "Balance" label and balances
 
@@ -71,9 +76,16 @@ def gcash_header(top):
     """The table header line of a GCash page."""
     return (
         words_from("Date and Time", 20, top)
-        + [word("Description", DESC_X, top), word("Reference", REF_X, top), word("No.", REF_X + 50, top)]
-        + [right_word("Debit", DEBIT_X1, top), right_word("Credit", CREDIT_X1, top),
-           right_word("Balance", BALANCE_X1, top)]
+        + [
+            word("Description", DESC_X, top),
+            word("Reference", REF_X, top),
+            word("No.", REF_X + 50, top),
+        ]
+        + [
+            right_word("Debit", DEBIT_X1, top),
+            right_word("Credit", CREDIT_X1, top),
+            right_word("Balance", BALANCE_X1, top),
+        ]
     )
 
 

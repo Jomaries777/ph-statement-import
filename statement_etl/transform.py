@@ -182,12 +182,8 @@ def transform(rows, source):
 
 def main():
     # 1. Read the command-line options
-    ap = argparse.ArgumentParser(
-        description="Transform parsed rows into YNAB transactions."
-    )
-    ap.add_argument(
-        "input", help="JSON file written by a parser (e.g. parsers/gcash.py -o)"
-    )
+    ap = argparse.ArgumentParser(description="Transform parsed rows into YNAB transactions.")
+    ap.add_argument("input", help="JSON file written by a parser (e.g. parsers/gcash.py -o)")
     ap.add_argument(
         "--source",
         required=True,
@@ -209,9 +205,7 @@ def main():
     if args.output:
         with open(args.output, "w") as f:
             f.write(out + "\n")
-        print(
-            f"Wrote {len(transactions)} transactions to {args.output}", file=sys.stderr
-        )
+        print(f"Wrote {len(transactions)} transactions to {args.output}", file=sys.stderr)
     else:
         print(out)
 

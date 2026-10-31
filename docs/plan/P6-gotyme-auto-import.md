@@ -37,10 +37,12 @@ GoTyme shows up as a row in the `/auto-import` mapping table, so a GoTyme statem
   ```
 - [ ] `sources.py`, on the `gotyme` entry:
   ```python
-  email_query='from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" has:attachment filename:pdf',
-  attachment_pattern=r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",
-  password_inputs=("birth_date",),
-  build_password=gotyme.build_password,
+  email_query = (
+      'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" has:attachment filename:pdf',
+  )
+  attachment_pattern = (r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",)
+  password_inputs = (("birth_date",),)
+  build_password = (gotyme.build_password,)
   ```
 - [ ] `static/auto_import.js` and the template: an input named `birth_date` shows as a **date field** labelled "Date of birth", with the hint "GoTyme password = date of birth as MMDDYYYY".
   - If P5 renders inputs generically by name, add `birth_date` to the input-type map; don't add a GoTyme special case.
