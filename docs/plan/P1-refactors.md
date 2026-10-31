@@ -8,27 +8,31 @@ Remove duplication **before** the new features copy it a third time, so each job
 
 - **One import function.** The CLI, the web upload and (in P5) the Gmail runner all call `pipeline.import_statement()`. Today `run_pipeline()` and `api_upload()` each run the same four steps by hand.
 - **One registry per source, and no YNAB inside sources.** A source turns its rows into neutral `Transaction`s (`to_transactions`, registered once on `Source`). YNAB formatting lives in `ynab_api/`. Today `transform.py` imports from `parsers/gcash.py` and keeps a second registry, `TRANSFORMERS`, that a test keeps in sync with `SOURCES`. The split also leaves room for other budgeting apps later.
+- **Module names that say what they do.** `transform.py` becomes `convert.py`: all it has left to do is pick the source and call its converter, and the old name was easy to confuse with the new `transaction.py`.
 - **Smaller web modules.** `web/app.py` (601 lines) is split into Flask Blueprints by job.
 
-**Nothing users can see changes:** the same URLs, page behavior and CLI output, and **the same `import_id` for every transaction**. If import_ids changed, YNAB would import duplicates.
+**Nothing users can see changes:** the same URLs, page behavior and CLI output, and **the same `import_id` for every transaction**. If import_ids changed, YNAB would import duplicates. The one exception is a developer command: `python -m statement_etl.transform` becomes `python -m statement_etl.convert`, with the same options and the same output.
 
 ## Before you start
 
 - P0 merged: `main` protected, `test` and `lint` checks required.
-- Save the current CLI output to compare against at the end of each PR (Verification). You need a real GCash statement in `statements/`, which is never committed.
+- [x] **Baseline saved (Oct 31, 2026).** The current output for a real GCash statement is in `statements/` (gitignored, never committed): `before-pipeline.txt` (dry run), `before-rows.json` (25 parsed rows) and `before-transform.json` (25 YNAB transactions with their `import_id`s). If you need to make it again on `main` before PR 1:
   ```bash
-  mkdir -p /tmp/p1-baseline
-  python -m statement_etl.pipeline statements/<gcash>.pdf --dry-run > /tmp/p1-baseline/dry-run.txt
-  python -m statement_etl.parsers.gcash statements/<gcash>.pdf -o /tmp/p1-baseline/rows.json
-  python -m statement_etl.transform /tmp/p1-baseline/rows.json --source gcash > /tmp/p1-baseline/ynab.json
+  source .venv/bin/activate
+  read -rs "GCASH_PDF_PASSWORD?GCash PDF password: " && export GCASH_PDF_PASSWORD && echo
+  python -m statement_etl.pipeline statements/<gcash>.pdf --dry-run > statements/before-pipeline.txt
+  python -m statement_etl.parsers.gcash statements/<gcash>.pdf -o statements/before-rows.json
+  python -m statement_etl.transform statements/before-rows.json --source gcash -o statements/before-transform.json
   ```
-  These commands prompt for the PDF password or read it from `.env`. Check each tool's `--help` for its exact options.
+  - `<gcash>` is your statement's file name, e.g. `enc-09XXXXX_….pdf`.
+  - The pipeline reads the password only from `GCASH_PDF_PASSWORD`; the parser asks for it again.
+  - Run them in one terminal tab, so the venv and the password variable are both set.
 
 ## Steps
 
 ### PR 1: `refactor/import-statement`, "refactor: share one import function between the CLI and the web app"
 
-- [ ] **First, pin an import_id.** In `tests/test_transform.py`, add a test that `make_import_id("gcash", "1000000000002")` equals its exact current string. Run it once, then copy the value into the test. This must pass before and after every P1 PR.
+- [ ] **First, pin an import_id.** In `tests/test_transform.py`, add a test that `make_import_id("gcash", "1000000000002")` equals its exact current string. Run it once, then copy the value into the test. This must pass before and after every P1 PR (PR 2 moves it to `tests/test_ynab_format.py`).
 - [ ] In `statement_etl/pipeline.py`, add next to the other pipeline steps:
   ```python
   @dataclass
@@ -72,9 +76,21 @@ Remove duplication **before** the new features copy it a third time, so each job
 Splits the pipeline into three parts, so a new e-wallet and a new budgeting app (tracker) can each be added without touching the other:
 
 ```
-Source (GCash, GoTyme, …)  →  Transaction (neutral)  →  YNAB (today's only destination)
-parsers/<source>.py           statement_etl/transaction.py   statement_etl/ynab_api/
+Source (GCash, GoTyme, …)          →  Transaction (neutral)          →  YNAB (today's only destination)
+parsers/<source>.py                    statement_etl/transaction.py      statement_etl/ynab_api/format.py
+  parse_transactions → rows              the data shape only               to_ynab(transaction)
+  to_transactions(rows)
+                    ↑
+statement_etl/convert.py: rows_to_transactions(rows, source) picks the source and calls its to_transactions
 ```
+
+What each module is, so the names don't get mixed up:
+
+| Module | Is | Holds |
+|---|---|---|
+| `transaction.py` | a **data shape** | the `Transaction` dataclass; no logic |
+| `convert.py` (was `transform.py`) | a **step** | `rows_to_transactions(rows, source)`, plus a CLI that prints the YNAB JSON |
+| `ynab_api/format.py` | YNAB's **format** | milliunits, `import_id`, `to_ynab()` |
 
 - [ ] New `statement_etl/transaction.py`, with a module docstring explaining the three parts:
   ```python
@@ -92,7 +108,7 @@ parsers/<source>.py           statement_etl/transaction.py   statement_etl/ynab_
   ```
   No milliunits and no `ETLPH:` prefix here. Those are YNAB's format.
 - [ ] New `statement_etl/ynab_api/format.py`: the YNAB side of the boundary. `ynab_api/` (with `client.py`, `accounts.py` and `balance.py`) is already the YNAB package; its `__init__` docstring now calls it "the YNAB destination".
-  - **Move** from `transform.py` without changing them: `to_milliunits`, `IMPORT_ID_PREFIX`, `make_import_id`, `ynab_transaction`.
+  - **Move** from `transform.py` without changing them: `to_milliunits`, `IMPORT_ID_PREFIX` (with its "never rename" comment), `make_import_id`, `ynab_transaction`.
   - Add `to_ynab(transaction) -> dict`:
     ```python
     ynab_transaction(
@@ -113,24 +129,25 @@ parsers/<source>.py           statement_etl/transaction.py   statement_etl/ynab_
   - Add a **required** field `to_transactions: Callable`, documented as "rows -> list[Transaction]".
   - The `gcash` entry gets `to_transactions=gcash.to_transactions`.
   - Remove the docstring line saying transformers are registered separately.
-- [ ] `statement_etl/transform.py`:
-  - `transform(rows, source) -> list[Transaction]` becomes `get_source(source).to_transactions(rows)`. The "Unknown source" error now comes from `get_source()`.
+- [ ] **Rename `transform.py` to `convert.py`** with `git mv statement_etl/transform.py statement_etl/convert.py`, so `git log --follow` keeps its history. What's left in it:
+  - `rows_to_transactions(rows, source) -> list[Transaction]`: `return get_source(source).to_transactions(rows)`. It replaces `transform()`. The "Unknown source" error now comes from `get_source()`.
   - Delete `TRANSFORMERS`.
-  - The `python -m statement_etl.transform` CLI keeps **printing the same YNAB JSON** (`[to_ynab(t) for t in …]`), so P1's output diff stays empty. `--source` choices come from `SOURCES`.
-  - Update the module docstring: point "How to add a new e-wallet" to `docs/adding-an-e-wallet.md`, and add one line on the three parts.
-- [ ] `pipeline.parse_statement()`: returns `(rows, [to_ynab(t) for t in transform(rows, source)])`. Everything after it (web state, `import_statement()`, the YNAB client) still gets the same YNAB dicts, so nothing downstream changes.
+  - `main()`: `python -m statement_etl.convert rows.json --source gcash [-o out.json]` keeps **printing the same YNAB JSON** as the old `transform` CLI (`[to_ynab(t) for t in rows_to_transactions(...)]`), so P1's output diff stays empty. `--source` choices come from `SOURCES`.
+  - Module docstring, first line: "ph-statement-import - turn a statement's parsed rows into neutral Transactions, using the source's own converter." Then usage, one line on the three parts, and a pointer to `docs/adding-an-e-wallet.md`.
+  - Afterwards `grep -rn "statement_etl.transform\|import transform\|transform(" statement_etl tests` finds nothing.
+- [ ] `pipeline.parse_statement()`: returns `(rows, [to_ynab(t) for t in rows_to_transactions(rows, source)])`. Everything after it (web state, `import_statement()`, the YNAB client) still gets the same YNAB dicts, so nothing downstream changes.
 - [ ] **Don't build more than this.** No `Destination` registry, tracker picker or per-tracker settings until a second tracker is actually being added. Until then they'd be code that readers have to skip. `docs/architecture.md` explains where a second tracker would go.
-- [ ] Tests:
-  - `tests/test_transform.py`:
-    - YNAB helper tests import from `ynab_api.format`
-    - GCash tests check `gcash.to_transactions([PAYMENT])` gives the expected `Transaction`
-    - **and** that `to_ynab()` of it equals today's expected dict, field for field, including `import_id`
+- [ ] Tests, one file per module (the README's rule):
+  - `tests/test_ynab_format.py` (new): `to_milliunits`, `make_import_id` (including the pinned id from PR 1), `ynab_transaction`, and `to_ynab()` of a `Transaction`.
+  - `tests/test_parsers_gcash.py`: `gcash.to_transactions([PAYMENT])` gives the expected `Transaction`, **and** `to_ynab()` of it equals today's expected dict, field for field, including `import_id`.
+  - `tests/test_convert.py`: `git mv tests/test_transform.py tests/test_convert.py`, then keep only what's about `convert.py`: `rows_to_transactions` picks the right source, an unknown source raises, and the CLI prints the same YNAB JSON as before.
   - `tests/test_sources.py`: replace the `SOURCES` vs `TRANSFORMERS` test with "every `Source` has a callable `to_transactions`".
   - Fix any other imports that `python -m unittest discover tests` reports.
-- [ ] `docs/adding-an-e-wallet.md`:
-  - A new source is now **one parser module** (`parse_transactions`, `statement_balances`, `summary`, `to_transactions`) **plus one `Source` entry**.
-  - It returns `Transaction`s and never needs to know about YNAB.
-  - Remove the `TRANSFORMERS` step.
+- [ ] Docs:
+  - `docs/adding-an-e-wallet.md`: a new source is now **one parser module** (`parse_transactions`, `statement_balances`, `summary`, `to_transactions`) **plus one `Source` entry**. It returns `Transaction`s and never needs to know about YNAB. Remove the `TRANSFORMERS` step and every mention of `transform.py`.
+  - `docs/architecture.md`: the three parts and the module table above.
+  - README "Project layout": replace the `transform.py` line with `transaction.py` (the neutral Transaction) and `convert.py` (rows → Transactions, using the source's converter), and add `format.py` under `ynab_api/`.
+  - CONTRIBUTING, Money: drop "(currently `transform.py` until P1)".
 
 ### PR 3: `refactor/web-blueprints`, "refactor: split the web app into blueprints"
 
@@ -175,30 +192,36 @@ New tests:
   - calling it twice with the same rows creates nothing the second time (fake YNAB from `tests/fakes.py`)
 - every `Source` has a callable `to_transactions`
 - a GCash row → `Transaction` → `to_ynab()` gives exactly today's YNAB dict
+- `rows_to_transactions` picks the source; the `convert` CLI prints the same JSON as the old `transform` CLI
 - every route is unchanged after the blueprint split
 
 ## Done when
 
 - All tests and lint pass.
-- **CLI output is unchanged.** After each PR, run the commands from "Before you start" again into `/tmp/p1-after/` and compare:
+- **CLI output is unchanged.** After each PR, in one terminal tab with the venv and `GCASH_PDF_PASSWORD` set (see "Before you start"), make the "after" files and compare:
   ```bash
-  diff /tmp/p1-baseline/dry-run.txt /tmp/p1-after/dry-run.txt
-  diff /tmp/p1-baseline/ynab.json   /tmp/p1-after/ynab.json
+  python -m statement_etl.pipeline statements/<gcash>.pdf --dry-run > statements/after-pipeline.txt
+  python -m statement_etl.parsers.gcash statements/<gcash>.pdf -o statements/after-rows.json
+  python -m statement_etl.convert statements/after-rows.json --source gcash -o statements/after-transform.json
+  diff statements/before-pipeline.txt statements/after-pipeline.txt
+  diff statements/before-rows.json statements/after-rows.json
+  diff statements/before-transform.json statements/after-transform.json
   ```
-  Both diffs must be empty, including every `import_id`.
+  After PR 1, use `statement_etl.transform` in the third command; `convert` exists from PR 2. All three diffs must be empty, including every `import_id`.
 - One real upload through the local web page to a **test YNAB account** works: created, skipped, and both balance messages.
-- `grep -rn TRANSFORMERS statement_etl tests docs` finds nothing.
+- `grep -rn TRANSFORMERS statement_etl tests docs` finds nothing, and `grep -rn "transform.py\|statement_etl.transform" statement_etl tests README.md CONTRIBUTING.md docs/architecture.md docs/adding-an-e-wallet.md` finds nothing.
 
 ## Docs to update
 
-`docs/architecture.md` (the Source → Transaction → YNAB parts, the pipeline entry point, the web modules), `docs/adding-an-e-wallet.md`, the module docstrings of `pipeline.py` and `transform.py`, and `docs/design/diagrams.html` D2 if P0 didn't already show the final module names.
+`docs/architecture.md` (the Source → Transaction → YNAB parts, `convert.py`, the pipeline entry point, the web modules), `docs/adding-an-e-wallet.md`, README "Project layout", CONTRIBUTING (Money), the module docstrings of `pipeline.py` and `convert.py`, and `docs/design/diagrams.html` if a name differs from what it shows.
 
 ## Risks and rollback
 
 | Risk | Sign | What to do |
 |---|---|---|
-| `import_id`s change | The pinned test or the `ynab.json` diff fails | Stop. Check `Transaction.key` and `ynab_api.format.to_ynab`, and undo whatever changed the id. Never merge with a diff in import_ids. |
-| CLI output text changes | The `dry-run.txt` diff isn't empty | Fix the print code in `run_pipeline()` until the diff is empty. |
+| `import_id`s change | The pinned test or the `before-transform.json` diff fails | Stop. Check `Transaction.key` and `ynab_api.format.to_ynab`, and undo whatever changed the id. Never merge with a diff in import_ids. |
+| CLI output text changes | The `before-pipeline.txt` diff isn't empty | Fix the print code in `run_pipeline()` until the diff is empty. |
+| Something still calls the old name | `ModuleNotFoundError: statement_etl.transform`, or a doc still says `transform.py` | Run the two `grep`s from "Done when" and fix every hit. |
 | Token refresh retries `import_statement()` twice | A double "Starting Balance" in a test account | Check that `new_account_starting_balance()` does nothing when the balance already matches; add a test. |
 | A test patches the wrong module after the split | The test calls the real YNAB, and the safety net in `tests/__init__.py` fails it | Patch the module that calls the name, as listed in PR 3. |
 
