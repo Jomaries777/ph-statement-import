@@ -90,7 +90,7 @@ SECURITY_HEADERS = {
 
 # The privacy and terms pages: change the date with every change to them
 LEGAL_LAST_UPDATED = "31 October 2026"
-CONTACT_EMAIL = "<CONTACT_EMAIL>"  # placeholder: set when the app goes live (P4)
+CONTACT_EMAIL = "froze.settle-1p@icloud.com"
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
