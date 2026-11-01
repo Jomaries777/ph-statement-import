@@ -23,7 +23,9 @@ everything comes from the user's stored settings (store.py):
         process_message(...)    1. the PDF attachment, in memory only
                                 2. the PDF password, built from the user's inputs
                                 3. parse it (pipeline.parse_statement)
-                                4. import it, unapproved (pipeline.import_statement)
+                                4. import it, unapproved (pipeline.import_statement),
+                                   then, if the user turned it on, let Gemini pick
+                                   categories for what it created (categorize.py)
                                 5. record the run, with its status
     start_watch(user)         - start Gmail push now, when auto-import is turned on
     run_lock_held()           - hold the run lock outside a run, e.g. to refresh the
@@ -65,11 +67,13 @@ from datetime import UTC, datetime, timedelta
 
 import ynab
 
-from statement_etl import pipeline
+from statement_etl import gemini, pipeline
 from statement_etl.autoimport import gmail, store
+from statement_etl.categorize import categorize_transactions
 from statement_etl.parsers.common import PasswordError, StatementError
 from statement_etl.sources import SOURCES, Source, get_source
 from statement_etl.web import ynab_oauth
+from statement_etl.ynab_api.categories import uncategorized_created
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +97,10 @@ SEARCH_OVERLAP = timedelta(hours=1)
 # Cloud Run ends the request after 60 seconds. Users not reached in time are
 # checked first in the next poll (poll_all() starts with the longest-unchecked).
 TIME_BUDGET_SECONDS = 40
+
+# How long Gemini gets to categorize one import (categorize_transactions()'s
+# deadline), so the run still ends within Cloud Run's 60 seconds
+CATEGORIZE_SECONDS = 20
 
 # One run at a time: a push and a poll can arrive together, and two YNAB
 # refreshes with the same single-use refresh token would fail one of them.
@@ -237,7 +245,11 @@ def process_user(user: dict) -> int:
     if new_emails:
         ynab_tokens = ynab_oauth.refresh(store.decrypt(user["ynab_refresh_token"]))
         store.save_ynab_tokens(user["sub"], ynab_tokens)
-        progress = Progress(user["sub"], new_emails)
+        progress = Progress(
+            user["sub"],
+            new_emails,
+            categorize=bool(user.get("categorize") and os.environ.get("GEMINI_API_KEY")),
+        )
         try:
             for source, mapping, msg_id in new_emails:
                 process_message(
@@ -367,12 +379,39 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
 
     result["created"] = len(imported.created)
     result["skipped"] = imported.skipped
+    _categorize(user, imported.created, ynab_token, result, progress)
     if imported.ending_check is None:  # the upload worked; only the check after it failed
         result["message"] = "Imported, but YNAB's balance couldn't be checked."
     elif not imported.ending_check["matches"]:
         result["message"] = "The YNAB balance doesn't match the statement's ending balance."
         return BALANCE_MISMATCH
     return OK
+
+
+def _categorize(user, created, ynab_token, result, progress) -> None:
+    """Step 4, after the import: Gemini picks categories for what it created,
+    if the user turned it on. Fills in result["categorized"], or
+    result["categorize_error"]; never fails the import, which is done."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not (user.get("categorize") and api_key):
+        return
+    transactions = uncategorized_created(created)
+    if not transactions:
+        result["categorized"] = 0
+        return
+    progress.report(pipeline.STEP_CATEGORIZE, {})
+    try:
+        _, result["categorized"] = categorize_transactions(
+            user["plan_id"],
+            transactions,
+            api_key,
+            ynab_token,
+            deadline=time.monotonic() + CATEGORIZE_SECONDS,
+        )
+    except gemini.GeminiError as e:  # its message never has the key in it
+        result["categorize_error"] = str(e)
+    except ynab.ApiException as e:
+        result["categorize_error"] = f"{_reason(e)}."
 
 
 class Progress:
@@ -384,14 +423,16 @@ class Progress:
 
     The document's "progress" field (store.set_progress()) is written only when
     the step changes, so reading a 5-page PDF is one write, not five:
-        {"emails": [{"source": "gcash", "account_name": "GCash", "received_at": ...}],
+        {"categorize": False,
+         "emails": [{"source": "gcash", "account_name": "GCash", "received_at": ...}],
          "index": 0, "step": "upload", "rows": 72, "started_at": ..., "updated_at": ...}
     process_user() removes it when the run ends (store.clear_progress()).
     """
 
-    def __init__(self, sub: str, emails: list):
+    def __init__(self, sub: str, emails: list, categorize: bool = False):
         self.sub = sub
         self.record = {
+            "categorize": categorize,  # the page lists Gemini's step only then
             "emails": [
                 {"source": source.key, "account_name": mapping.get("account_name", "")}
                 for source, mapping, _msg_id in emails

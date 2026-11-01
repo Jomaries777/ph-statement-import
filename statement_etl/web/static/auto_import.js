@@ -283,6 +283,8 @@ async function saveSettings() {
         plan_name: planName,
         mappings,
         password_inputs: passwordInputs,
+        // only on the page when the server can categorize
+        categorize: !!($("categorize") && $("categorize").checked),
       }),
     });
     window.location.href = "/auto-import";

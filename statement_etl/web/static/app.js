@@ -3,8 +3,9 @@
 const $ = (id) => document.getElementById(id);
 // toUpload: how many transactions YNAB will really add (from the starting
 // balance check; null until checked). 0 disables the Upload button.
+// categorizeAvailable: /api/status says Gemini can categorize after the upload.
 const state = { parsed: null, connected: false, plans: [], uploading: false, startCheckId: 0,
-                toUpload: null };
+                toUpload: null, categorizeAvailable: false };
 
 // ---- small helpers ---------------------------------------------------------
 
@@ -171,6 +172,7 @@ function showParsed(parsed) {
   message("upload-skipped", "");
   showBalanceCheck("end-check", null);
   show($("upload-progress"), false);
+  message("categorize-msg", "");
   refreshSteps();
   checkStartingBalance();
 }
@@ -420,16 +422,17 @@ async function checkStartingBalance() {
 }
 
 // ④ checklist: the steps done before the click, then import_statement()'s
-// (pipeline.py: "upload", then "end_balance"). step: the one it's on, or null
-// once finished.
-function showUploadSteps(step, count, startedAt, failed = false) {
+// (pipeline.py: "upload", then "end_balance"), then "categorize" when ticked.
+// step: the one it's on, or null once finished.
+function showUploadSteps({ step, count, startedAt, categorize, failed = false }) {
   const steps = [[`Statement read: ${state.parsed.statement_count} rows`,
                   `Statement read: ${state.parsed.statement_count} rows`]];
   if (state.toUpload !== null) steps.push(["Starting balance check", "Starting balance checked"]);
-  const uploadAt = steps.length;
+  const at = { upload: steps.length, end_balance: steps.length + 1, categorize: steps.length + 2 };
   steps.push([`Uploading ${count} transactions to YNAB`, `Uploaded ${count} transactions to YNAB`],
              ["Checking the ending balance", "Ending balance checked"]);
-  const current = step === null ? steps.length : step === "end_balance" ? uploadAt + 1 : uploadAt;
+  if (categorize) steps.push(["Categorizing with Gemini", "Categorized with Gemini"]);
+  const current = step === null ? steps.length : at[step] ?? at.upload;
   renderSteps($("upload-steps"), steps, current, failed);
   $("upload-bar").max = steps.length;
   $("upload-bar").value = current;
@@ -439,48 +442,82 @@ function showUploadSteps(step, count, startedAt, failed = false) {
   show($("upload-progress"));
 }
 
+// The transactions the upload created, with the categories YNAB (or Gemini) gave them
+function showCreated(created, ynabUrl) {
+  renderTable($("results-table"), ["Date", "Payee", "Category", "Memo", "Amount"],
+    created.map((t) => [t.date, t.payee, t.category, t.memo, formatAmount(t.amount)]),
+    (h, v) => h === "Amount" ? "amt " + (String(v).startsWith("-") ? "neg" : "pos")
+            : h === "Payee" || h === "Memo" ? "desc" : "");
+  // Highlight the flagged balance-correction rows, like in the preview
+  created.forEach((t, i) => {
+    if (t.flag) $("results-table").tBodies[0].rows[i].classList.add("missing");
+  });
+  $("ynab-link").href = ynabUrl;
+  show($("results"));
+}
+
+// "Categorize new transactions with Gemini": shown only when the server can
+// (hosted mode with a Gemini key); remembered in this browser
+const CATEGORIZE_KEY = "categorize-with-gemini";
+
+function wantsCategorize() {
+  return state.categorizeAvailable && $("categorize").checked;
+}
+
+$("categorize").addEventListener("change", () => {
+  try { localStorage.setItem(CATEGORIZE_KEY, $("categorize").checked ? "yes" : "no"); }
+  catch (_) { /* private window: it just isn't remembered */ }
+});
+
+// After the upload: Gemini picks categories for what it created (upload.py
+// /api/categorize). The import is done either way; returns false on an error.
+async function categorizeCreated(uploaded) {
+  try {
+    const res = await api("/api/categorize", { method: "POST" });
+    message("categorize-msg", `Gemini categorized ${res.categorized} of ${res.total} new ` +
+      "transactions. The others stay uncategorized.", "ok");
+    showCreated(uploaded.created.map((t) => ({ ...t, category: res.categories[t.id] || t.category })),
+      uploaded.ynab_url);
+    return true;
+  } catch (err) {
+    message("categorize-msg", err.message);
+    return false;
+  }
+}
+
 $("upload-btn").addEventListener("click", async () => {
   state.uploading = true;
   $("upload-btn").textContent = "Uploading…";
   refreshSteps();
   message("upload-msg", "");
   message("upload-skipped", "");
+  message("categorize-msg", "");
   showBalanceCheck("end-check", null);
   show($("results"), false);
-  const startedAt = Date.now();
-  let step = "upload";
-  let count = state.toUpload ?? state.parsed.count;
-  showUploadSteps(step, count, startedAt);
-  const stop = pollProgress((progress) => {
-    step = progress.step;
+  const progress = { step: "upload", count: state.toUpload ?? state.parsed.count,
+                     startedAt: Date.now(), categorize: wantsCategorize() };
+  showUploadSteps(progress);
+  const stop = pollProgress((answer) => {
+    progress.step = answer.step;
     // Without a starting balance check, all of them are sent (YNAB skips the
     // ones it already has)
-    if (state.toUpload === null && progress.detail && progress.detail.count !== undefined) {
-      count = progress.detail.count;
+    if (state.toUpload === null && answer.detail && answer.detail.count !== undefined) {
+      progress.count = answer.detail.count;
     }
-    showUploadSteps(step, count, startedAt);
+    showUploadSteps(progress);
   });
   try {
     const res = await api("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan_id: $("plan").value, account_id: $("account").value }),
+      body: JSON.stringify({ plan_id: $("plan").value, account_id: $("account").value,
+                             categorize: progress.categorize }),
     });
+    stop();
     message("upload-msg",
       `Import successful: ${res.created.length} transactions created in YNAB (unapproved)`, "ok");
     if (res.skipped) message("upload-skipped", `Skipped ${res.skipped} already imported`, "info");
-    if (res.created.length) {
-      renderTable($("results-table"), ["Date", "Payee", "Category", "Memo", "Amount"],
-        res.created.map((t) => [t.date, t.payee, t.category, t.memo, formatAmount(t.amount)]),
-        (h, v) => h === "Amount" ? "amt " + (String(v).startsWith("-") ? "neg" : "pos")
-                : h === "Payee" || h === "Memo" ? "desc" : "");
-      // Highlight the flagged balance-correction rows, like in the preview
-      res.created.forEach((t, i) => {
-        if (t.flag) $("results-table").tBodies[0].rows[i].classList.add("missing");
-      });
-      $("ynab-link").href = res.ynab_url;
-      show($("results"));
-    }
+    if (res.created.length) showCreated(res.created, res.ynab_url);
     $("card-upload").classList.add("complete");
     // Everything is in YNAB now: uploading again would add nothing
     state.toUpload = 0;
@@ -489,11 +526,16 @@ $("upload-btn").addEventListener("click", async () => {
     // After the upload: YNAB balance vs. the statement's ending balance
     showBalanceCheck("end-check", res.ending_check,
       res.ending_check_error && `Could not check the ending balance: ${res.ending_check_error}`);
-    stop();
-    showUploadSteps(null, count, startedAt);
+    let categorized = true;
+    if (progress.categorize && res.to_categorize) {
+      showUploadSteps({ ...progress, step: "categorize" });
+      categorized = await categorizeCreated(res);
+    }
+    if (categorized) showUploadSteps({ ...progress, step: null });
+    else showUploadSteps({ ...progress, step: "categorize", failed: true });
   } catch (err) {
     stop();
-    showUploadSteps(step, count, startedAt, true);
+    showUploadSteps({ ...progress, failed: true });
     handleYnabError(err, "upload-msg");
   } finally {
     stop();
@@ -522,6 +564,10 @@ $("upload-btn").addEventListener("click", async () => {
           "never in this folder or the browser.";
       }
     }
+    state.categorizeAvailable = status.categorize_available;
+    show($("categorize-row"), status.categorize_available);
+    try { $("categorize").checked = localStorage.getItem(CATEGORIZE_KEY) === "yes"; }
+    catch (_) { /* private window: unticked */ }
     if (status.token_kind) setTokenKind(status.token_kind);
     if (status.parsed) showParsed(status.parsed);
     setConnected(status.connected, status.connect_error);

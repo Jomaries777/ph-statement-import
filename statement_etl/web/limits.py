@@ -3,6 +3,7 @@ ph-statement-import - rate limits for hosted mode (Flask-Limiter).
 
     limiter            - set up in app.py; on only in hosted mode (config.HOSTED)
     PARSE_LIMIT        - POST /api/parse, the most expensive request (reads a PDF)
+    CATEGORIZE_LIMIT   - POST /api/categorize (asks Gemini, on the server's key)
     OAUTH_LIMIT        - /oauth/login, /oauth/callback and /oauth/logout
     AUTO_IMPORT_LIMIT  - /google/* and /api/auto-import*
 
@@ -20,6 +21,7 @@ from flask_limiter.util import get_remote_address
 from statement_etl.web.config import HOSTED
 
 PARSE_LIMIT = "10 per minute"
+CATEGORIZE_LIMIT = "5 per minute"
 OAUTH_LIMIT = "20 per minute"
 AUTO_IMPORT_LIMIT = "20 per minute"
 

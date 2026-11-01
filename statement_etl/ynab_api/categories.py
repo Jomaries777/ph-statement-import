@@ -4,6 +4,7 @@ ph-statement-import - YNAB categories, and the transactions that don't have one 
 Used by categorize.py, which asks Gemini to pick each transaction's category:
     get_categories()                 - the categories a transaction can be given
     get_uncategorized_transactions() - transactions with no category yet
+    uncategorized_created()          - the ones an import just created with no category
     set_categories()                 - give transactions their category, in one call
 
 Requirements:
@@ -25,6 +26,9 @@ READY_TO_ASSIGN = "Inflow: Ready to Assign"
 
 # YNAB moves money into these by itself when a credit card is used
 CREDIT_CARD_PAYMENTS_GROUP = "Credit Card Payments"
+
+# YNAB's name for "no category yet", which some transactions carry with an id
+UNCATEGORIZED = "Uncategorized"
 
 
 def get_categories(plan_id, access_token=None) -> list[dict]:
@@ -79,17 +83,41 @@ def get_uncategorized_transactions(
             response = api.get_transactions(plan_id, since_date=since_date, type="uncategorized")
 
     return [
-        {
-            "id": t.id,
-            "date": str(t.var_date),
-            "account": t.account_name,
-            "payee": t.payee_name or "",
-            "memo": t.memo or "",
-            "amount": Decimal(t.amount) / 1000,
-        }
+        transaction_dict(t)
         for t in response.data.transactions
         if not (t.deleted or t.transfer_account_id or t.subtransactions)
     ]
+
+
+def uncategorized_created(created) -> list[dict]:
+    """The transactions an import just created that still need a category.
+
+    created - YNAB TransactionDetails, e.g. pipeline.ImportResult.created
+    Returns them as transaction_dict()s. Left out, like in
+    get_uncategorized_transactions(): ones YNAB already gave a category (a
+    payee rule), transfers and splits; also the rows flagged red, which are
+    balance corrections (e.g. MISSING TRANSACTIONS), not real purchases.
+    """
+    return [
+        transaction_dict(t)
+        for t in created
+        if (t.category_id is None or t.category_name == UNCATEGORIZED)
+        and not (t.deleted or t.transfer_account_id or t.subtransactions or t.flag_color)
+    ]
+
+
+def transaction_dict(t) -> dict:
+    """What categorize.py needs of a YNAB transaction:
+    {"id", "date", "account", "payee", "memo", "amount"}, amount in pesos as a
+    Decimal: -249000 milliunits -> Decimal("-249")."""
+    return {
+        "id": t.id,
+        "date": str(t.var_date),
+        "account": t.account_name,
+        "payee": t.payee_name or "",
+        "memo": t.memo or "",
+        "amount": Decimal(t.amount) / 1000,
+    }
 
 
 def set_categories(plan_id, category_ids, access_token=None) -> int:

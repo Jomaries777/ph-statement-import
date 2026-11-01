@@ -9,6 +9,8 @@ Routes, in the order the page uses them:
     GET  /api/plans/<plan_id>/accounts  - ③ the Account dropdown
     POST /api/starting-balance          - ④ check before the upload
     POST /api/upload                    - ④ upload, then the ending balance check
+    POST /api/categorize                - ④ hosted, opt-in: Gemini categorizes what
+                                          the upload created (categorize.py)
     GET  /api/progress                  - the step ① or ④ is on, asked while it runs
 
 While /api/parse or /api/upload runs, pipeline's on_step callback keeps the
@@ -23,9 +25,13 @@ and import_statement(), the same functions as the command line.
 """
 
 import io
+import os
+import time
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
+from statement_etl.categorize import MIN_CONFIDENCE, categorize_transactions, category_label
+from statement_etl.gemini import GeminiError
 from statement_etl.parsers.common import StatementError
 from statement_etl.pipeline import (
     import_statement,
@@ -34,8 +40,8 @@ from statement_etl.pipeline import (
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES
 from statement_etl.web import token_store
-from statement_etl.web.config import HOSTED
-from statement_etl.web.limits import PARSE_LIMIT, limiter
+from statement_etl.web.config import CATEGORIZE_AVAILABLE, HOSTED
+from statement_etl.web.limits import CATEGORIZE_LIMIT, PARSE_LIMIT, limiter
 from statement_etl.web.state import error_response, session_state
 from statement_etl.web.ynab_auth import api_error_message, get_token, ynab_call
 from statement_etl.web.ynab_oauth import oauth_configured
@@ -44,8 +50,13 @@ from statement_etl.ynab_api.balance import (
     balance_check_message,
     new_account_message,
 )
+from statement_etl.ynab_api.categories import uncategorized_created
 
 blueprint = Blueprint("upload", __name__)
+
+# /api/categorize must answer within Cloud Run's 60 seconds; Gemini gets this
+# long, and reading the categories and saving the picks the rest
+CATEGORIZE_SECONDS = 40
 
 
 @blueprint.get("/")
@@ -56,6 +67,7 @@ def index():
         default_source=DEFAULT_SOURCE,
         # hosted mode: no personal access token field, only "Connect with YNAB login"
         token_allowed=not HOSTED,
+        min_confidence=MIN_CONFIDENCE,
     )
 
 
@@ -83,6 +95,8 @@ def api_status():
             # and never in hosted mode (the server's store would be shared)
             "remember_available": not HOSTED and token_store.available(),
             "store_name": None if HOSTED else token_store.store_name(),
+            # show "Categorize new transactions with Gemini" (hosted, with a Gemini key)
+            "categorize_available": CATEGORIZE_AVAILABLE,
             "parsed": state.get("parsed"),
         }
     )
@@ -238,6 +252,9 @@ def api_upload():
     statement's. After: the YNAB balance is compared with the statement's
     ending balance (a warning only). In hosted mode the statement is then
     dropped from the server: it's in YNAB now.
+
+    With "categorize": true (the page's opt-in, hosted mode), what it created
+    with no category is kept for POST /api/categorize; "to_categorize" says how many.
     """
     state = session_state()
     transactions = state.get("transactions")
@@ -273,8 +290,17 @@ def api_upload():
         for key in ("source", "rows", "transactions", "parsed"):
             state.pop(key, None)
 
+    # Only this upload's transactions, never anything else in the plan
+    state.pop("to_categorize", None)
+    to_categorize = []
+    if CATEGORIZE_AVAILABLE and body.get("categorize") is True:
+        to_categorize = uncategorized_created(imported.created)
+        if to_categorize:
+            state["to_categorize"] = {"plan_id": plan_id, "transactions": to_categorize}
+
     created = [
         {
+            "id": t.id,  # so the page can show the categories /api/categorize picks
             "date": str(t.var_date),
             "payee": t.payee_name or "",
             "category": t.category_name or "Uncategorized",
@@ -294,6 +320,7 @@ def api_upload():
         {
             "created": created,
             "skipped": imported.skipped,
+            "to_categorize": len(to_categorize),
             "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
             "ending_check": ending_check,
             "ending_check_error": ending_error,
@@ -301,5 +328,53 @@ def api_upload():
             "new_account_message": (
                 new_account_message(imported.new_account) if imported.new_account else None
             ),
+        }
+    )
+
+
+@blueprint.post("/api/categorize")
+@limiter.limit(CATEGORIZE_LIMIT)
+def api_categorize():
+    """④ after an upload with "Categorize" ticked: Gemini picks the categories.
+
+    POST /api/categorize
+    -> {"categorized": 240, "total": 286, "categories": {"<txn id>": "Everyday / Groceries"}}
+
+    Hosted mode with GEMINI_API_KEY only (404 otherwise). Only the transactions
+    the last upload created with no category (state["to_categorize"]), and
+    only picks Gemini is at least categorize.MIN_CONFIDENCE sure of; the
+    others stay uncategorized. They're forgotten afterwards, also on an error:
+    the import itself is done either way.
+    """
+    if not CATEGORIZE_AVAILABLE:
+        return error_response("Not found.", 404)
+    pending = session_state().pop("to_categorize", None)
+    if not pending:
+        return error_response("Nothing to categorize: upload a statement first.", 400)
+
+    deadline = time.monotonic() + CATEGORIZE_SECONDS
+    try:
+        result, err = ynab_call(
+            lambda token: categorize_transactions(
+                pending["plan_id"],
+                pending["transactions"],
+                os.environ["GEMINI_API_KEY"],
+                token,
+                deadline=deadline,
+            )
+        )
+    except GeminiError as e:  # its message never has the key in it
+        current_app.logger.warning("Categorize failed: %s", e)
+        return error_response(f"Imported, but not categorized: {e}", 502)
+    if err:
+        return err
+    suggestions, updated = result
+    return jsonify(
+        {
+            "categorized": updated,
+            "total": len(suggestions),
+            "categories": {
+                s.transaction["id"]: category_label(s.category) for s in suggestions if s.category
+            },
         }
     )

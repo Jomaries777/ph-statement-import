@@ -98,6 +98,15 @@
     <p id="upload-summary" class="muted">Parse a statement, connect to YNAB and choose an account.</p>
     <!-- Before the upload: YNAB balance vs. statement starting balance (warning only) -->
     <div id="start-check" class="msg hidden"></div>
+    <!-- Hosted mode with a Gemini key only (/api/status categorize_available) -->
+    <div id="categorize-row" class="hidden">
+      <label class="check"><input id="categorize" type="checkbox">
+        Categorize new transactions with Gemini</label>
+      <p class="small-note muted">Sends each new transaction's date, account, payee, memo
+        and amount, and your category names, to Google Gemini. Only categories Gemini is at
+        least {{ min_confidence }}% sure of are set; the others stay uncategorized.
+        <a href="/privacy">Privacy</a></p>
+    </div>
     <div class="actions"><button id="upload-btn" type="button" disabled>Upload to YNAB</button></div>
     <!-- While uploading (and after): the steps, from /api/progress (app.js) -->
     <div id="upload-progress" class="hidden">
@@ -109,6 +118,7 @@
     <!-- After the upload: YNAB balance vs. statement ending balance (warning only) -->
     <div id="end-check" class="msg hidden"></div>
     <div id="upload-skipped" class="msg info hidden"></div>
+    <div id="categorize-msg" class="msg hidden"></div>
     <div id="results" class="hidden">
       <div class="table-wrap"><table id="results-table"></table></div>
       <div class="actions spaced">

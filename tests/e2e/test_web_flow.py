@@ -217,6 +217,7 @@ class WebFlowTest(BrowserTest):
         )
         expect(page.locator("#upload-btn")).to_have_text("Upload 4 transactions to YNAB")
         expect(page.locator("#upload-btn")).to_be_enabled()
+        expect(page.locator("#categorize-row")).to_be_hidden()  # hosted mode only
         self.upload()
         expect(page.locator("#upload-msg")).to_have_text(
             "Import successful: 4 transactions created in YNAB (unapproved)"

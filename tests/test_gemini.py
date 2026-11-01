@@ -148,6 +148,44 @@ class RetryTest(MockedUrlopenTest):
         )
         self.assertEqual(caught.exception.status, 503)
 
+    def test_no_deadline_uses_the_full_timeout(self):
+        self.urlopen.return_value = gemini_answer("[]")
+        gemini.generate_json("x", SCHEMA, API_KEY)
+        self.assertEqual(self.urlopen.call_args.kwargs["timeout"], gemini.TIMEOUT_SECONDS)
+
+    def test_a_deadline_cuts_the_timeout(self):
+        self.urlopen.return_value = gemini_answer("[]")
+        with mock.patch.object(gemini.time, "monotonic", return_value=100.0):
+            gemini.generate_json("x", SCHEMA, API_KEY, deadline=130.0)
+        self.assertEqual(self.urlopen.call_args.kwargs["timeout"], 30.0)
+
+    def test_a_deadline_skips_waits_that_would_pass_it(self):
+        # The first wait (5 s) fits in the 12 s left; the second (15 s) doesn't
+        self.urlopen.side_effect = [http_error(503, self.BUSY) for _ in range(2)]
+        clock = iter([100.0, 100.0, 105.0, 105.0])
+        with (
+            mock.patch.object(gemini.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertLogs(gemini.log, "WARNING"),
+            self.assertRaises(GeminiError) as caught,
+        ):
+            gemini.generate_json("x", SCHEMA, API_KEY, deadline=112.0)
+        self.assertEqual(self.urlopen.call_count, 2)
+        self.sleep.assert_called_once_with(gemini.RETRY_WAITS[0])
+        self.assertTrue(str(caught.exception).endswith("(tried 2 times)"))
+
+    def test_a_deadline_already_passed_asks_no_one(self):
+        with (
+            mock.patch.object(gemini.time, "monotonic", return_value=200.0),
+            self.assertRaisesRegex(GeminiError, "Gemini ran out of time."),
+        ):
+            gemini.generate_json("x", SCHEMA, API_KEY, deadline=130.0)
+        self.urlopen.assert_not_called()
+
+    def test_timeout(self):
+        self.urlopen.side_effect = TimeoutError("timed out")
+        with self.assertRaisesRegex(GeminiError, "Gemini took too long to answer."):
+            gemini.generate_json("x", SCHEMA, API_KEY)
+
     def test_other_errors_are_not_retried(self):
         self.urlopen.side_effect = http_error(400, {"error": {"message": "API key not valid."}})
 

@@ -53,9 +53,13 @@ class SuggestCategoriesTest(unittest.TestCase):
 
     def test_maps_each_pick_back_to_its_category(self):
         self.generate_json.return_value = [
-            {"index": 0, "category": "Everyday / Groceries"},
-            {"index": 1, "category": "Internal Master Category / Inflow: Ready to Assign"},
-            {"index": 2, "category": "unsure"},
+            {"index": 0, "category": "Everyday / Groceries", "confidence": 95},
+            {
+                "index": 1,
+                "category": "Internal Master Category / Inflow: Ready to Assign",
+                "confidence": 90,
+            },
+            {"index": 2, "category": "unsure", "confidence": 10},
         ]
 
         suggestions = categorize.suggest_categories(
@@ -88,11 +92,39 @@ class SuggestCategoriesTest(unittest.TestCase):
             ],
         )
         self.assertEqual((api_key, model), (API_KEY, "test-model"))
+        self.assertEqual(schema["items"]["required"], ["index", "category", "confidence"])
+        self.assertIn("from 0 to 100", prompt)
+
+    def test_leaves_picks_below_min_confidence_uncategorized(self):
+        self.assertEqual(categorize.MIN_CONFIDENCE, 80)
+        cases = [(80, "c-food"), (79, None), (None, None), ("high", None), (True, None)]
+        for confidence, expected in cases:
+            with self.subTest(confidence=confidence):
+                pick = {"index": 0, "category": "Everyday / Groceries"}
+                if confidence is not None:
+                    pick["confidence"] = confidence
+                self.generate_json.return_value = [pick]
+
+                [suggestion] = categorize.suggest_categories([SHOP], CATEGORIES, API_KEY)
+
+                self.assertEqual(suggestion.category and suggestion.category["id"], expected)
+
+    def test_keeps_the_confidence(self):
+        self.generate_json.return_value = [
+            {"index": 0, "category": "Everyday / Groceries", "confidence": 60}
+        ]
+        [suggestion] = categorize.suggest_categories([SHOP], CATEGORIES, API_KEY)
+        self.assertEqual((suggestion.category, suggestion.confidence), (None, 60))
+
+    def test_passes_the_deadline_to_gemini(self):
+        self.generate_json.return_value = []
+        categorize.suggest_categories([SHOP], CATEGORIES, API_KEY, deadline=123.0)
+        self.assertEqual(self.generate_json.call_args.kwargs["deadline"], 123.0)
 
     def test_ignores_made_up_categories_and_indexes(self):
         self.generate_json.return_value = [
-            {"index": 0, "category": "Everyday / Snacks"},  # not a category
-            {"index": 7, "category": "Everyday / Groceries"},  # no such transaction
+            {"index": 0, "category": "Everyday / Snacks", "confidence": 99},  # not a category
+            {"index": 7, "category": "Everyday / Groceries", "confidence": 99},  # no such row
             "not a pick",
         ]
 
@@ -102,8 +134,8 @@ class SuggestCategoriesTest(unittest.TestCase):
 
     def test_asks_in_batches(self):
         many = [transaction(f"t{i}", "Test Grocery", "-1.00") for i in range(250)]
-        self.generate_json.side_effect = lambda prompt, *args: [
-            {"index": i, "category": "Everyday / Groceries"}
+        self.generate_json.side_effect = lambda prompt, *args, **kwargs: [
+            {"index": i, "category": "Everyday / Groceries", "confidence": 90}
             for i in range(len(json.loads(prompt.split("Transactions (JSON):\n")[1])))
         ]
 
@@ -127,8 +159,8 @@ class CategorizeUncategorizedTest(unittest.TestCase):
         self.set_categories = self.patch("set_categories", return_value=1)
         self.generate_json = self.patch("generate_json", target=categorize.gemini)
         self.generate_json.return_value = [
-            {"index": 0, "category": "Everyday / Groceries"},
-            {"index": 1, "category": "unsure"},
+            {"index": 0, "category": "Everyday / Groceries", "confidence": 90},
+            {"index": 1, "category": "unsure", "confidence": 0},
         ]
 
     def patch(self, name, target=categorize, **kwargs):
@@ -171,6 +203,22 @@ class CategorizeUncategorizedTest(unittest.TestCase):
             categorize.categorize_uncategorized(PLAN_ID, API_KEY)
         self.set_categories.assert_not_called()
 
+    def test_given_transactions_only(self):
+        # After an import: only what it created, never the plan's other uncategorized ones
+        suggestions, updated = categorize.categorize_transactions(
+            PLAN_ID, [SHOP, MYSTERY], API_KEY, "page-token", deadline=99.0
+        )
+
+        self.assertEqual((len(suggestions), updated), (2, 1))
+        self.get_transactions.assert_not_called()
+        self.set_categories.assert_called_once_with(PLAN_ID, {"t1": "c-food"}, "page-token")
+        self.assertEqual(self.generate_json.call_args.kwargs["deadline"], 99.0)
+
+    def test_no_transactions_asks_no_one(self):
+        self.assertEqual(categorize.categorize_transactions(PLAN_ID, [], API_KEY), ([], 0))
+        self.get_categories.assert_not_called()
+        self.generate_json.assert_not_called()
+
 
 class MainTest(unittest.TestCase):
     ENV = {"BEARER_TOKEN": "test-token", "GEMINI_API_KEY": API_KEY, "YNAB_PLAN_ID": PLAN_ID}
@@ -187,8 +235,8 @@ class MainTest(unittest.TestCase):
 
     def test_prints_each_pick(self):
         suggestions = [
-            categorize.Suggestion(SHOP, CATEGORIES[1]),
-            categorize.Suggestion(MYSTERY, None),
+            categorize.Suggestion(SHOP, CATEGORIES[1], 92),
+            categorize.Suggestion(MYSTERY, None, 40),
         ]
         with mock.patch.object(
             categorize, "categorize_uncategorized", return_value=(suggestions, 1)
@@ -199,6 +247,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(str(run.call_args.kwargs["since_date"]), "2026-10-01")
         self.assertIn("Everyday / Groceries", output)
         self.assertIn("(unsure, left as is)", output)
+        self.assertIn("92%", output)
         self.assertIn("Categorized 1 of 2 transactions in YNAB.", output)
 
     def test_dry_run_says_nothing_changed(self):
