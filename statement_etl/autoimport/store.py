@@ -6,7 +6,7 @@ Google account that turns it on it keeps everything a run needs. One Firestore
 document per account, in the project's (default) database:
 
     auto_import_users/{google_sub}
-        email, enabled, last_checked
+        email, enabled, last_checked, runs_cleared_at
         gmail_refresh_token   (encrypted)
         ynab_refresh_token    (encrypted)
         plan_id, plan_name
@@ -233,12 +233,23 @@ def write_run(sub: str, msg_id: str, source_key: str, **result) -> None:
     _run_document(sub, msg_id, source_key).set(record)
 
 
-def list_runs(sub: str, limit: int = 20) -> list[dict]:
-    """The user's newest runs first, at most `limit`, for the run log on the page."""
-    query = (
-        _user_document(sub)
-        .collection(RUNS)
-        .order_by("ran_at", direction=firestore.Query.DESCENDING)
-        .limit(limit)
-    )
+def list_runs(sub: str, limit: int = 20, after: datetime | None = None) -> list[dict]:
+    """The user's newest runs first, at most `limit`, for the run log on the page.
+
+    after - only runs after this time, e.g. the user's runs_cleared_at
+    """
+    query = _user_document(sub).collection(RUNS)
+    if after is not None:
+        query = query.where(filter=firestore.FieldFilter("ran_at", ">", after))
+    query = query.order_by("ran_at", direction=firestore.Query.DESCENDING).limit(limit)
     return [snapshot.to_dict() for snapshot in query.stream()]
+
+
+def clear_runs(sub: str) -> None:
+    """Hide the user's runs so far from the run log ("Clear" on the page).
+
+    The runs stay stored: they're also the list of emails already imported
+    (run_exists()), and deleting them could import an email again.
+    "Turn off and delete" (delete_user()) removes them for good.
+    """
+    save_user(sub, runs_cleared_at=datetime.now(UTC))

@@ -15,6 +15,7 @@ these routes:
     POST /api/auto-import/ynab-session - connect this browser to YNAB with the saved
                                     refresh token, for "Edit mappings"
     POST /api/auto-import/delete  - delete stored data, revoke Gmail, sign out
+    POST /api/auto-import/runs/clear - hide the run log so far (runs stay stored)
     POST /tasks/poll-gmail        - Cloud Scheduler hook, every 15 minutes (OIDC token
                                     verified first)
     POST /tasks/gmail-push        - Pub/Sub push when a user's inbox changes (OIDC token
@@ -322,7 +323,15 @@ def page():
     gmail_connected = bool(user and user.get("gmail_refresh_token"))
     enabled = bool(gmail_connected and user.get("enabled"))
     mappings = (user or {}).get("mappings") or {}
-    runs = [format_run(r, mappings) for r in store.list_runs(user["sub"], limit=20)] if user else []
+    runs_cleared_at = (user or {}).get("runs_cleared_at")
+    runs = (
+        [
+            format_run(r, mappings)
+            for r in store.list_runs(user["sub"], limit=20, after=runs_cleared_at)
+        ]
+        if user
+        else []
+    )
     last_checked = (
         _format_time(user.get("last_checked"), "%b %d, %I:%M %p PHT")
         if user and user.get("last_checked")
@@ -342,6 +351,7 @@ def page():
         last_checked=last_checked,
         sources=_source_rows(user),
         runs=runs,
+        runs_cleared=bool(runs_cleared_at),
         google_error=_google_error_text(request.args.get("google_error")),
     )
 
@@ -675,6 +685,25 @@ def test_source_password():
         current_app.logger.warning("Could not test statement PDF: %s", type(e).__name__)
         return error_response("Could not read the statement PDF.", 400)
     return jsonify({"ok": ok, "message": message})
+
+
+@blueprint.post("/api/auto-import/runs/clear")
+@limiter.limit(AUTO_IMPORT_LIMIT)
+def clear_runs():
+    """Hide the runs so far from Recent imports.
+
+    The runs stay stored, so an email already imported is never imported
+    again (see store.clear_runs()).
+
+    POST /api/auto-import/runs/clear -> {"cleared": True}
+    """
+    user = _current_user()
+    if not user:
+        return error_response("Connect Gmail first.", 401)
+    if not is_email_allowed(user.get("email", "")):
+        return error_response("This Google account is not on the invite list.", 403)
+    store.clear_runs(user["sub"])
+    return jsonify({"cleared": True})
 
 
 @blueprint.post("/api/auto-import/delete")

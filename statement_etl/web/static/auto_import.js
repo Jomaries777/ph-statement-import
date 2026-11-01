@@ -332,6 +332,21 @@ async function deleteAllData() {
   }
 }
 
+async function clearRuns() {
+  const ok = window.confirm(
+    "Hide these imports from the list? Emails already imported won't be imported again.",
+  );
+  if (!ok) return;
+  $("clear-runs-btn").disabled = true;
+  try {
+    await api("/api/auto-import/runs/clear", { method: "POST" });
+    window.location.href = "/auto-import";
+  } catch (err) {
+    message("runs-msg", err.message, "err");
+    $("clear-runs-btn").disabled = false;
+  }
+}
+
 // ---- wire up events & initialize -------------------------------------------
 
 if ($("auto-setup-view")) {
@@ -362,6 +377,9 @@ if ($("auto-setup-view")) {
   }
   if ($("delete-btn")) {
     $("delete-btn").addEventListener("click", deleteAllData);
+  }
+  if ($("clear-runs-btn")) {
+    $("clear-runs-btn").addEventListener("click", clearRuns);
   }
 
   sourceRows().forEach((row) => {

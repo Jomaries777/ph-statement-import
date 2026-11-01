@@ -61,7 +61,16 @@
     </section>
 
     <section id="card-runs" class="card">
-      <h2><span>Recent imports</span><span class="muted">last 20</span></h2>
+      <h2>
+        <span>Recent imports</span>
+        <span class="actions no-margin">
+          <span class="muted">last 20</span>
+          {%- if runs %}
+          <button id="clear-runs-btn" class="secondary small-btn" type="button">Clear</button>
+          {%- endif %}
+        </span>
+      </h2>
+      <div id="runs-msg" class="msg hidden"></div>
       {%- if runs %}
       <div class="table-wrap">
         <table id="runs-table">
@@ -87,6 +96,8 @@
           </tbody>
         </table>
       </div>
+      {%- elif runs_cleared %}
+      <p class="muted no-margin">No imports since you cleared the list.</p>
       {%- else %}
       <p class="muted no-margin">No statement emails imported yet. Request a statement in your
         e-wallet or bank app and it will appear here within 15 minutes.</p>
