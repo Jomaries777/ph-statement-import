@@ -428,10 +428,10 @@ def summary(rows: list[dict[str, str]]) -> str:
 # in the same statement with the same four values (almost always 0).
 # YNAB's import_id is make_import_id("gotyme", key) (ynab_api/format.py).
 #
-# The memo ends with the GoTyme Ref: transaction_ref("gotyme", key), the hash
-# part of that import_id, so searching it in YNAB finds the row:
+# The memo is the GoTyme Ref: transaction_ref("gotyme", key), the hash part
+# of that import_id, so searching it in YNAB finds the row:
 #   key    "28 Oct 2026|0.00|500.00|3568.34|0"
-#   memo   "GoTyme: Card payment at SHOPEE PH, Card •••• 1234 | Ref: 9ac288af95f6925425a5154d159507"
+#   memo   "GoTyme Ref: 9ac288af95f6925425a5154d159507"
 # =============================================================================
 
 
@@ -481,7 +481,7 @@ def to_transactions(rows: list[dict[str, str]]) -> list[Transaction]:
                 date=datetime.strptime(row["Date"], DATE_FORMAT).date(),
                 payee=gotyme_payee(row["Details"]),
                 amount=amount,
-                memo=f"GoTyme: {row['Details']} | Ref: {transaction_ref('gotyme', key)}",
+                memo=f"GoTyme Ref: {transaction_ref('gotyme', key)}",
                 flagged=False,
             )
         )

@@ -259,8 +259,7 @@ class GoTymeTest(unittest.TestCase):
                 date=date(2026, 10, 5),
                 payee="SHOPEE PH",
                 amount=Decimal("-249.00"),
-                memo="GoTyme: Card payment at SHOPEE PH, Card •••• 1234"
-                " | Ref: 447d649bcac761c22c6a2807652d43",
+                memo="GoTyme Ref: 447d649bcac761c22c6a2807652d43",
                 flagged=False,
             ),
         )
@@ -271,8 +270,7 @@ class GoTymeTest(unittest.TestCase):
                 "payee_name": "SHOPEE PH",
                 "import_id": make_import_id("gotyme", expected_key),
                 "amount": -249000,
-                "memo": "GoTyme: Card payment at SHOPEE PH, Card •••• 1234"
-                " | Ref: 447d649bcac761c22c6a2807652d43",
+                "memo": "GoTyme Ref: 447d649bcac761c22c6a2807652d43",
                 "flag_color": None,
             },
         )
