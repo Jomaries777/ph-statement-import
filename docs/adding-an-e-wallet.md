@@ -14,7 +14,7 @@ A new source is **one parser module plus one `Source` entry**, with tests. It ne
 
 ```
 statement PDF
-   │  parsers/maya.py      parse_transactions(pdf, password)
+   │  parsers/maya.py      parse_transactions(pdf, password, on_page)
    ▼
 rows, exactly as printed   [{"Date": "01/10/2026", "Details": "...", "Amount": "-50.00", ...}, ...]
    │  parsers/maya.py      to_transactions(rows)   (called by convert.rows_to_transactions)
@@ -91,7 +91,7 @@ Your parser must also provide these functions for the `Source` entry:
 
 | Function | Returns | Used for |
 |---|---|---|
-| `parse_transactions(pdf, password)` | list of row dicts | everything. `pdf` is a file path or a file object (the web upload). Raise `StatementError` (from `parsers/common.py`) with a clear message for a wrong password or a misread statement. The web page shows that message as it is. |
+| `parse_transactions(pdf, password, on_page=None)` | list of row dicts | everything. `pdf` is a file path or a file object (the web upload). Call `on_page(page, pages)` at the start of each page, if given: the page and the run log show it as progress. Raise `StatementError` (from `parsers/common.py`) with a clear message for a wrong password or a misread statement. The web page shows that message as it is. |
 | `statement_balances(rows)` | `{"starting": Decimal, "ending": Decimal}` | the YNAB balance checks before and after the upload |
 | `to_transactions(rows)` | list of `Transaction`s, one per row | the upload. See step 4. |
 | `summary(rows)` *(optional)* | one line of text, or `None` | shown under the parsed rows, e.g. "Total debit … · Total credit … · matches statement ✓" |

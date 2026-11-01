@@ -219,7 +219,9 @@ class PollTest(RunnerTest):
         self.import_statement.assert_called_once()
         rows, transactions, account_id, plan_id, token = self.import_statement.call_args.args
         self.assertEqual((account_id, plan_id, token), (ACCOUNT_ID, PLAN_ID, "ynab-access-1"))
-        self.assertEqual(self.import_statement.call_args.kwargs, {"source": "gcash"})
+        self.assertEqual(
+            self.import_statement.call_args.kwargs, {"source": "gcash", "on_step": mock.ANY}
+        )
         self.assertEqual(len(transactions), len(make_pdf.BALANCED_ROWS))  # the real parser ran
         run = self.runs()["msg-1:gcash"]
         self.assertEqual((run["status"], run["created"], run["skipped"]), (runner.OK, 4, 0))
@@ -320,7 +322,7 @@ class GoTymeTest(RunnerTest):
         gotyme = dataclasses.replace(sources.SOURCES["gotyme"], parse=self.parse)
         self.enterContext(mock.patch.dict(sources.SOURCES, gotyme=gotyme))
 
-    def parse(self, pdf, password):
+    def parse(self, pdf, password, on_page=None):
         self.parsed.append((pdf.read(), password))
         return [dict(row) for row in self.ROWS]
 
@@ -473,6 +475,81 @@ class RetryTest(RunnerTest):
         self.import_statement.side_effect = None
         runner.poll_all()
         self.assertEqual(self.runs()["msg-1:gcash"]["status"], runner.OK)
+
+
+# =============================================================================
+# PROGRESS - what the page shows while a run imports
+# =============================================================================
+
+
+class ProgressTest(RunnerTest):
+    def importing(self, error=None):
+        """import_statement() that reports its steps, then fails with `error` if given."""
+
+        def import_statement(*args, on_step, **kwargs):
+            on_step(pipeline.STEP_UPLOAD, {"count": 4})
+            if error:
+                raise error
+            on_step(pipeline.STEP_END_BALANCE, {})
+            return imported()
+
+        return import_statement
+
+    def test_each_step_is_shown_once_then_cleared(self):
+        self.add_user()
+        self.gmail.add("msg-1")
+        self.gmail.add("msg-2", received=NEW + timedelta(minutes=1))
+        self.import_statement.side_effect = self.importing()
+
+        runner.poll_all()
+
+        history = self.store.progress_history
+        steps = [runner.STEP_DOWNLOAD, pipeline.STEP_READ, pipeline.STEP_UPLOAD]
+        steps.append(pipeline.STEP_END_BALANCE)
+        # One write per step (the PDF's pages don't each write), for each email
+        self.assertEqual(
+            [(p["index"], p["step"]) for p in history],
+            [(0, s) for s in steps] + [(1, s) for s in steps],
+        )
+        self.assertEqual(history[0]["emails"][0]["account_name"], "GCash")
+        self.assertEqual(history[0]["emails"][0]["received_at"], NEW)
+        self.assertEqual(history[2]["rows"], 4)
+        self.assertIsNone(self.store.get_user(SUB)["progress"])
+
+        run = self.runs()["msg-1:gcash"]
+        self.assertEqual(run["step"], pipeline.STEP_END_BALANCE)
+        self.assertIsInstance(run["duration_seconds"], int)
+
+    def test_a_failed_run_records_the_step_it_stopped_at(self):
+        self.add_user()
+        self.gmail.add("msg-1")
+        error = ynab.ApiException(status=400, reason="Bad Request")
+        self.import_statement.side_effect = self.importing(error)
+
+        runner.poll_all()
+
+        run = self.runs()["msg-1:gcash"]
+        self.assertEqual((run["status"], run["step"]), (runner.YNAB_ERROR, pipeline.STEP_UPLOAD))
+        self.assertIsNone(self.store.get_user(SUB)["progress"])
+
+    def test_progress_is_cleared_when_a_run_raises(self):
+        self.add_user()
+        self.gmail.add("msg-1")
+        busy = ynab.ApiException(status=503, reason="Unavailable")
+        self.import_statement.side_effect = self.importing(busy)
+
+        with self.assertLogs(runner.log, "WARNING"):
+            runner.poll_all()
+
+        self.assertEqual(self.runs(), {})
+        self.assertTrue(self.store.progress_history)
+        self.assertIsNone(self.store.get_user(SUB)["progress"])
+
+    def test_nothing_is_written_when_there_is_nothing_to_import(self):
+        self.add_user()
+        runner.poll_all()
+        self.assertEqual(self.store.progress_history, [])
+        self.assertNotIn("progress", self.store.get_user(SUB))
 
 
 # =============================================================================

@@ -20,12 +20,12 @@ import time
 import unittest
 import urllib.error
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 import google.auth.exceptions
 
-from statement_etl import sources
+from statement_etl import pipeline, sources
 from statement_etl.autoimport import gmail, runner
 from statement_etl.web import app as web
 from statement_etl.web import auto_import, config, token_store, ynab_oauth
@@ -75,6 +75,7 @@ AUTO_IMPORT_ENV = {
 
 AUTO_IMPORT_ROUTES = (
     ("GET", "/auto-import"),
+    ("GET", "/auto-import/runs"),
     ("GET", "/google/login"),
     ("GET", "/google/callback"),
     ("POST", "/api/auto-import"),
@@ -392,7 +393,7 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn('id="auto-setup-view" class="hidden">', html)
         self.assertIn("Oct 31, 09:15 AM PHT", html)
         self.assertIn("My Budget ✓", html)
-        self.assertIn("<td>GCash</td>\n              <td>GCash Wallet</td>", html)
+        self.assertRegex(html, r"<td>GCash</td>\s*<td>GCash Wallet</td>")
         self.assertIn("⚠ Balance", html)
         self.assertIn("21 created · 1 skipped · Balance note", html)
         self.assertIn("✓ Imported", html)
@@ -778,6 +779,88 @@ class SaveSettingsTest(AutoImportWebTest):
         self.assertNotIn("access_token", self.ynab_state())
         self.assertNotIn("refresh_token", self.ynab_state())
         self.assertFalse(self.store.get_user(SUB)["enabled"])
+
+
+# =============================================================================
+# PROGRESS - the import running now, at the top of Recent imports
+# =============================================================================
+
+
+class RunProgressTest(AutoImportWebTest):
+    def progress(self, updated_ago=timedelta(seconds=2)):
+        now = datetime.now(UTC)
+        return {
+            "emails": [
+                {"source": "gcash", "account_name": "GCash1", "received_at": now},
+                {"source": "gotyme", "account_name": "GoTyme2"},
+            ],
+            "index": 0,
+            "step": pipeline.STEP_UPLOAD,
+            "rows": 72,
+            "started_at": now - timedelta(seconds=12),
+            "updated_at": now - updated_ago,
+        }
+
+    def recent_imports(self):
+        response = self.client.get("/auto-import/runs")
+        self.assertEqual(response.status_code, 200)
+        return response.data.decode()
+
+    def test_the_running_import_shows_its_steps_and_whats_waiting(self):
+        self.sign_in_google(enabled=True, progress=self.progress())
+
+        html = self.recent_imports()
+
+        self.assertIn('data-running="true"', html)
+        self.assertIn("Importing 1 of 2 new statement emails", html)
+        self.assertIn("⟳ Importing", html)
+        self.assertIn('<li class="done">PDF downloaded</li>', html)
+        self.assertIn('<li class="done">72 rows read</li>', html)
+        self.assertIn('<li class="now">Uploading to YNAB</li>', html)
+        self.assertIn('<li class="todo">Checking the balance</li>', html)
+        self.assertIn('<progress max="4" value="2">', html)
+        self.assertRegex(
+            html,
+            r"<td>GoTyme</td>\s*<td>GoTyme2</td>\s*<td><span class=\"badge muted-badge\">Waiting",
+        )
+        # The whole page shows the same card
+        self.assertIn(
+            '<li class="now">Uploading to YNAB</li>', self.client.get("/auto-import").data.decode()
+        )
+
+    def test_progress_that_stopped_updating_shows_as_stopped(self):
+        self.sign_in_google(enabled=True, progress=self.progress(updated_ago=timedelta(minutes=5)))
+
+        html = self.recent_imports()
+
+        self.assertIn('data-running="false"', html)
+        self.assertIn("⚠ Stopped", html)
+        self.assertIn("tried again at the next check", html)
+        self.assertNotIn("<progress", html)
+
+    def test_a_finished_run_shows_its_time_and_where_a_failed_one_stopped(self):
+        self.sign_in_google(enabled=True)
+        self.store.write_run(
+            SUB,
+            "msg-1",
+            "gcash",
+            account_name="GCash1",
+            status=runner.YNAB_ERROR,
+            message="YNAB returned HTTP 400.",
+            step=pipeline.STEP_UPLOAD,
+            duration_seconds=41,
+        )
+
+        html = self.recent_imports()
+
+        self.assertIn("Stopped at: Uploading to YNAB. YNAB returned HTTP 400.", html)
+        self.assertIn("Took 41s", html)
+        self.assertIn('data-running="false"', html)
+
+    def test_needs_google_sign_in_and_the_invite_list(self):
+        self.assertEqual(self.client.get("/auto-import/runs").status_code, 401)
+        self.sign_in_google(email=UNINVITED_EMAIL)
+        self.assertEqual(self.client.get("/auto-import/runs").status_code, 403)
 
 
 # =============================================================================
@@ -1509,6 +1592,26 @@ class AutoImportBrowserTest(unittest.TestCase):
         expect(page.locator("#auto-on-view")).to_be_visible()
         expect(page.locator("#card-active")).to_contain_text("On")
         expect(page.locator("#card-active")).to_contain_text(fake_ynab.EXISTING_ACCOUNT_NAME)
+
+        # Recent imports refreshes itself: an import that starts shows its steps
+        now = datetime.now(UTC)
+        self.store.save_user(
+            SUB,
+            progress={
+                "emails": [{"source": "gcash", "account_name": "GCash", "received_at": now}],
+                "index": 0,
+                "step": pipeline.STEP_READ,
+                "rows": None,
+                "started_at": now,
+                "updated_at": now,
+            },
+        )
+        page.evaluate("refreshRuns()")
+        expect(page.locator("#card-runs li.now")).to_have_text("Reading the statement")
+        expect(page.locator("#card-runs")).to_have_attribute("data-running", "true")
+        self.store.save_user(SUB, progress=None)
+        page.evaluate("refreshRuns()")
+        expect(page.locator("#card-runs li.now")).to_have_count(0)
 
         # 6. The browser's own YNAB session ends (30 minutes idle). "Edit mappings"
         #    connects with auto-import's saved YNAB token instead of asking to log in.

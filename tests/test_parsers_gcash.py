@@ -258,6 +258,13 @@ class ParseTransactionsTest(unittest.TestCase):
         opened.assert_called_once_with("statement.pdf", "secret")
         return rows
 
+    def test_reports_each_page_as_it_is_read(self):
+        on_page = mock.Mock()
+        with mock.patch.object(gcash, "open_pdf", return_value=FakePDF(statement_pages())):
+            gcash.parse_transactions("statement.pdf", "secret", on_page=on_page)
+        pages = len(statement_pages())
+        self.assertEqual(on_page.call_args_list, [mock.call(n, pages) for n in range(1, pages + 1)])
+
     def test_whole_statement(self):
         rows = self.parse(statement_pages())
         self.assertEqual(

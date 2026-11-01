@@ -197,6 +197,7 @@ class FakeStore:
     def __init__(self):
         self.users = {}  # sub -> record fields
         self.runs = {}  # sub -> {"{msg_id}:{source_key}": run fields}
+        self.progress_history = []  # every set_progress() record, in order
 
     def get_user(self, sub):
         if sub not in self.users:
@@ -230,6 +231,13 @@ class FakeStore:
         runs = [r for r in self.runs.get(sub, {}).values() if after is None or r["ran_at"] > after]
         runs.sort(key=lambda run: run["ran_at"], reverse=True)
         return copy.deepcopy(runs[:limit])
+
+    def set_progress(self, sub, progress):
+        self.save_user(sub, progress=copy.deepcopy(progress))
+        self.progress_history.append(copy.deepcopy(progress))
+
+    def clear_progress(self, sub):
+        self.save_user(sub, progress=None)
 
     def clear_runs(self, sub):
         self.save_user(sub, runs_cleared_at=datetime.now(UTC))

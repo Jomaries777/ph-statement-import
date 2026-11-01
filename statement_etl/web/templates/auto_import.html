@@ -60,49 +60,7 @@
       </div>
     </section>
 
-    <section id="card-runs" class="card">
-      <h2>
-        <span>Recent imports</span>
-        <span class="actions no-margin">
-          <span class="muted">last 20</span>
-          {%- if runs %}
-          <button id="clear-runs-btn" class="secondary small-btn" type="button">Clear</button>
-          {%- endif %}
-        </span>
-      </h2>
-      <div id="runs-msg" class="msg hidden"></div>
-      {%- if runs %}
-      <div class="table-wrap">
-        <table id="runs-table">
-          <thead>
-            <tr>
-              <th>Received</th>
-              <th>Wallet</th>
-              <th>YNAB account</th>
-              <th>Status</th>
-              <th>Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {%- for run in runs %}
-            <tr>
-              <td>{{ run.received }}</td>
-              <td>{{ run.wallet }}</td>
-              <td>{{ run.account }}</td>
-              <td><span class="badge {{ run.badge_kind }}">{{ run.badge_text }}</span></td>
-              <td class="wrap-cell">{{ run.result }}</td>
-            </tr>
-            {%- endfor %}
-          </tbody>
-        </table>
-      </div>
-      {%- elif runs_cleared %}
-      <p class="muted no-margin">No imports since you cleared the list.</p>
-      {%- else %}
-      <p class="muted no-margin">No statement emails imported yet. Request a statement in your
-        e-wallet or bank app and it will appear here within 15 minutes.</p>
-      {%- endif %}
-    </section>
+    {% include "auto_import_runs.html" %}
   </div>
 
   <!-- W2: shown when auto-import is off, or when clicking "Edit mappings" -->

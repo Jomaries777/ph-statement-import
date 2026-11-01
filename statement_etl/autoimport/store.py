@@ -7,6 +7,7 @@ document per account, in the project's (default) database:
 
     auto_import_users/{google_sub}
         email, enabled, last_checked, runs_cleared_at
+        progress              (the import running now, if any; runner.Progress)
         gmail_refresh_token   (encrypted)
         ynab_refresh_token    (encrypted)
         plan_id, plan_name
@@ -201,6 +202,16 @@ def delete_user(sub: str) -> None:
 def set_last_checked(sub: str, when: datetime) -> None:
     """Remember when Gmail was last checked; the next check asks for newer emails only."""
     save_user(sub, last_checked=when)
+
+
+def set_progress(sub: str, progress: dict) -> None:
+    """Save the import running now, for Recent imports on the page (runner.Progress)."""
+    save_user(sub, progress=progress)
+
+
+def clear_progress(sub: str) -> None:
+    """The run has ended: nothing is running."""
+    save_user(sub, progress=None)
 
 
 def save_ynab_tokens(sub: str, tokens: dict) -> None:

@@ -227,6 +227,13 @@ class ParseTransactionsTest(unittest.TestCase):
         opened.assert_called_once_with("gotyme.pdf", "01311990")
         return rows
 
+    def test_reports_each_page_as_it_is_read(self):
+        on_page = mock.Mock()
+        with mock.patch.object(gotyme, "open_pdf", return_value=FakePDF(statement_pages())):
+            gotyme.parse_transactions("gotyme.pdf", "01311990", on_page=on_page)
+        pages = len(statement_pages())
+        self.assertEqual(on_page.call_args_list, [mock.call(n, pages) for n in range(1, pages + 1)])
+
     def test_one_line_wrapped_and_multi_page_statement(self):
         rows = self.parse(statement_pages())
         self.assertEqual(

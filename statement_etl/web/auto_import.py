@@ -7,6 +7,8 @@ set, so local runs and hosted deploys without Google credentials expose none of
 these routes:
 
     GET  /auto-import             - setup view (W2) when off, run log (W3) when on
+    GET  /auto-import/runs        - just the Recent imports card, which the page
+                                    re-fetches while an import runs
     GET  /google/login            - send the browser to Google's consent screen
     GET  /google/callback         - check state, a verified email on ALLOWED_GOOGLE_EMAILS,
                                     save token
@@ -61,6 +63,7 @@ import google.auth.transport.requests
 import google.oauth2.id_token
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session
 
+from statement_etl import pipeline
 from statement_etl.autoimport import gmail, runner, store
 from statement_etl.sources import SOURCES
 from statement_etl.web import config, ynab_oauth
@@ -119,6 +122,22 @@ GOOGLE_ERRORS = {
         "then connect Gmail again."
     ),
 }
+
+# The steps an auto-import shows in Recent imports while it runs, in order:
+# (step, while it runs, once done). See runner.Progress.
+RUN_STEPS = (
+    (runner.STEP_DOWNLOAD, "Downloading the PDF", "PDF downloaded"),
+    (pipeline.STEP_READ, "Reading the statement", "Statement read"),
+    (pipeline.STEP_UPLOAD, "Uploading to YNAB", "Uploaded to YNAB"),
+    (pipeline.STEP_END_BALANCE, "Checking the balance", "Balance checked"),
+)
+
+# Progress not updated for this long belongs to a run that stopped part-way
+# (e.g. Cloud Run restarted). Every step updates it, and a run ends within 60 s.
+STALE_PROGRESS = timedelta(minutes=2)
+
+# Failed runs say which step they stopped at
+FAILED_STATUSES = (runner.PDF_LOCKED, runner.PARSE_ERROR, runner.YNAB_ERROR)
 
 RUN_BADGES = {
     runner.OK: ("ok", "✓ Imported"),
@@ -274,7 +293,11 @@ def format_run(run: dict, mappings: dict) -> dict:
         result = note or "No matching PDF attachment"
     else:
         result = note or "Nothing uploaded"
+    stopped_at = _step_name(run.get("step")) if status in FAILED_STATUSES else ""
+    if stopped_at:
+        result = f"Stopped at: {stopped_at}. {result}"
 
+    seconds = run.get("duration_seconds")
     return {
         "received": _format_time(run.get("received_at") or run.get("ran_at")),
         "wallet": source_name,
@@ -282,6 +305,86 @@ def format_run(run: dict, mappings: dict) -> dict:
         "badge_kind": badge_kind,
         "badge_text": badge_text,
         "result": result,
+        "duration": f"Took {seconds}s" if isinstance(seconds, int) else "",
+    }
+
+
+def _step_name(step: str | None) -> str:
+    """A step's name while it runs: "upload" -> "Uploading to YNAB"; "" if unknown."""
+    return next((running for name, running, _done in RUN_STEPS if name == step), "")
+
+
+def format_progress(progress: dict | None, now: datetime | None = None) -> dict | None:
+    """The import running now (runner.Progress), for the top of Recent imports.
+
+    format_progress({"emails": [{"source": "gcash", ...}, ...], "index": 0,
+                     "step": "upload", "rows": 72, ...})
+    -> {"running": True, "summary": "Importing 1 of 2 new statement emails",
+        "rows": [{"state": "running", "steps": [{"label": "PDF downloaded",
+                  "state": "done"}, ...], ...}, {"state": "waiting", ...}], ...}
+
+    Emails already done aren't listed: they're in the run log. None if no
+    import is running.
+    """
+    if not progress or progress.get("index", -1) < 0:
+        return None
+    now = now or datetime.now(UTC)
+    index, emails = progress["index"], progress["emails"]
+    updated_at = progress.get("updated_at") or progress.get("started_at")
+    running = isinstance(updated_at, datetime) and now - updated_at < STALE_PROGRESS
+
+    # The current email's steps: done, the one running now, still to do
+    position = next((n for n, step in enumerate(RUN_STEPS) if step[0] == progress["step"]), 0)
+    steps = []
+    for n, (name, while_running, once_done) in enumerate(RUN_STEPS):
+        if name == pipeline.STEP_READ and progress.get("rows") and n < position:
+            once_done = f"{progress['rows']} rows read"
+        state = "done" if n < position else "now" if n == position else "todo"
+        steps.append({"label": once_done if state == "done" else while_running, "state": state})
+
+    rows = []
+    for n, email in enumerate(emails[index:], start=index):
+        source_key = email.get("source", "")
+        row = {
+            "received": _format_time(email.get("received_at")),
+            "wallet": SOURCES[source_key].name if source_key in SOURCES else source_key,
+            "account": email.get("account_name") or "—",
+            "state": "waiting",
+            "steps": [],
+            "note": "Next in line",
+        }
+        if n == index:
+            started_at = progress.get("started_at")
+            seconds = int((now - started_at).total_seconds()) if started_at else 0
+            row.update(state="running", steps=steps, note=f"started {seconds}s ago")
+            if not running:
+                row.update(
+                    state="stopped", steps=[], note="Stopped. It's tried again at the next check."
+                )
+        rows.append(row)
+
+    return {
+        "running": running,
+        "summary": f"Importing {index + 1} of {len(emails)} new statement emails"
+        if running
+        else "",
+        "rows": rows,
+        "done_steps": position,
+        "total_steps": len(RUN_STEPS),
+    }
+
+
+def _recent_imports(user: dict | None) -> dict:
+    """What the Recent imports card shows (templates/auto_import_runs.html)."""
+    if not user:
+        return {"runs": [], "runs_cleared": False, "progress": None}
+    mappings = user.get("mappings") or {}
+    runs_cleared_at = user.get("runs_cleared_at")
+    runs = store.list_runs(user["sub"], limit=20, after=runs_cleared_at)
+    return {
+        "runs": [format_run(r, mappings) for r in runs],
+        "runs_cleared": bool(runs_cleared_at),
+        "progress": format_progress(user.get("progress")),
     }
 
 
@@ -322,16 +425,6 @@ def page():
     user = _current_user()
     gmail_connected = bool(user and user.get("gmail_refresh_token"))
     enabled = bool(gmail_connected and user.get("enabled"))
-    mappings = (user or {}).get("mappings") or {}
-    runs_cleared_at = (user or {}).get("runs_cleared_at")
-    runs = (
-        [
-            format_run(r, mappings)
-            for r in store.list_runs(user["sub"], limit=20, after=runs_cleared_at)
-        ]
-        if user
-        else []
-    )
     last_checked = (
         _format_time(user.get("last_checked"), "%b %d, %I:%M %p PHT")
         if user and user.get("last_checked")
@@ -350,10 +443,23 @@ def page():
         plan_name=(user or {}).get("plan_name", ""),
         last_checked=last_checked,
         sources=_source_rows(user),
-        runs=runs,
-        runs_cleared=bool(runs_cleared_at),
         google_error=_google_error_text(request.args.get("google_error")),
+        **_recent_imports(user),
     )
+
+
+@blueprint.get("/auto-import/runs")
+def recent_imports():
+    """Just the Recent imports card, so the page can refresh it while an import runs.
+
+    GET /auto-import/runs -> 200 HTML (templates/auto_import_runs.html)
+    """
+    user = _current_user()
+    if not user:
+        return "Connect Gmail first.", 401
+    if not is_email_allowed(user.get("email", "")):
+        return "This Google account is not on the invite list.", 403
+    return render_template("auto_import_runs.html", **_recent_imports(user))
 
 
 @blueprint.get("/google/login")

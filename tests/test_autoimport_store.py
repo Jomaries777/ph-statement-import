@@ -301,6 +301,8 @@ class FakeStoreTest(StoreTestCase):
         "write_run",
         "list_runs",
         "clear_runs",
+        "set_progress",
+        "clear_progress",
     )
 
     def test_same_functions_as_the_store(self):

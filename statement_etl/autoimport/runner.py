@@ -14,7 +14,8 @@ everything comes from the user's stored settings (store.py):
                                 2. renew Gmail push if it ends within a day
                                 3. find_new_emails() for each source mapped to an account
                                 4. only if there are any: a fresh YNAB access token (save
-                                   YNAB's new refresh token), then process_message() each
+                                   YNAB's new refresh token), then process_message() each,
+                                   keeping the progress on the user's document for the page
                                 5. remember when Gmail was checked
         find_new_emails(...)    - search Gmail for the source's statement emails since
                                   the last check, oldest first, skipping emails
@@ -79,6 +80,11 @@ PARSE_ERROR = "parse error"
 BALANCE_MISMATCH = "balance mismatch"
 YNAB_ERROR = "YNAB error"
 NO_ATTACHMENT = "no attachment"
+
+# The step an email's import is on, shown on the page while it runs (Progress).
+# Downloading is the runner's own; the others are pipeline's: STEP_READ,
+# STEP_UPLOAD and STEP_END_BALANCE.
+STEP_DOWNLOAD = "download"
 
 # Search from a little before the last check: Gmail can take a while to make a
 # new email searchable. run_exists() skips the emails that were already done.
@@ -231,8 +237,20 @@ def process_user(user: dict) -> int:
     if new_emails:
         ynab_tokens = ynab_oauth.refresh(store.decrypt(user["ynab_refresh_token"]))
         store.save_ynab_tokens(user["sub"], ynab_tokens)
-        for source, mapping, msg_id in new_emails:
-            process_message(user, msg_id, source, mapping, gmail_token, ynab_tokens["access_token"])
+        progress = Progress(user["sub"], new_emails)
+        try:
+            for source, mapping, msg_id in new_emails:
+                process_message(
+                    user,
+                    msg_id,
+                    source,
+                    mapping,
+                    gmail_token,
+                    ynab_tokens["access_token"],
+                    progress,
+                )
+        finally:  # also when one raised: the page never shows a run that isn't going
+            store.clear_progress(user["sub"])
 
     # 5. Next time, search from here. Not reached if anything above raised, so
     #    the emails since the last check are searched again.
@@ -267,15 +285,23 @@ def find_new_emails(
 
 
 def process_message(
-    user: dict, msg_id: str, source, mapping: dict, gmail_token: str, ynab_token: str
+    user: dict,
+    msg_id: str,
+    source,
+    mapping: dict,
+    gmail_token: str,
+    ynab_token: str,
+    progress: "Progress",
 ) -> str:
     """Import one statement email into the mapped account and record the run; returns its status.
 
+    progress shows each step on the page as it starts (see Progress).
     Raises, recording nothing, when Gmail or YNAB may work next time.
     """
     received_at = _received_at(gmail_token, msg_id)
+    progress.next_email(received_at)
     result = {"created": 0, "skipped": 0, "message": ""}
-    status = _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result)
+    status = _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result, progress)
 
     # 5. Record the run, so this email isn't imported again
     store.write_run(
@@ -287,15 +313,18 @@ def process_message(
         account_name=mapping.get("account_name", ""),
         status=status,
         received_at=received_at,
+        step=progress.step,  # where it stopped, for a failed run
+        duration_seconds=progress.seconds(),
         **result,
     )
     log.info("Auto-import run: user %s, %s, %s.", user_id(user), source.key, status)
     return status
 
 
-def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result) -> str:
+def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result, progress) -> str:
     """Steps 1-4 of process_message(). Fills in `result` and returns the run's status."""
     # 1. The PDF attachment, in memory only
+    progress.report(STEP_DOWNLOAD, {})
     attachment = gmail.get_pdf_attachment(gmail_token, msg_id, source.attachment_pattern)
     if attachment is None:
         return NO_ATTACHMENT
@@ -306,7 +335,9 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
 
     # 3. Parse
     try:
-        rows, transactions = pipeline.parse_statement(io.BytesIO(pdf_bytes), password, source.key)
+        rows, transactions = pipeline.parse_statement(
+            io.BytesIO(pdf_bytes), password, source.key, on_step=progress.report
+        )
     except PasswordError:
         result["message"] = "Check the password inputs on the auto-import page."
         return PDF_LOCKED
@@ -326,6 +357,7 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
             user["plan_id"],
             ynab_token,
             source=source.key,
+            on_step=progress.report,
         )
     except ynab.ApiException as e:
         if _try_again_later(e):
@@ -341,6 +373,60 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
         result["message"] = "The YNAB balance doesn't match the statement's ending balance."
         return BALANCE_MISMATCH
     return OK
+
+
+class Progress:
+    """One run's progress, kept on the user's document so the page can show it.
+
+        progress = Progress(sub, new_emails)  # [(source, mapping, msg_id)], in order
+        progress.next_email(received_at)      # the next email starts (step: download)
+        progress.report(pipeline.STEP_READ, {"page": 1, "pages": 5})
+
+    The document's "progress" field (store.set_progress()) is written only when
+    the step changes, so reading a 5-page PDF is one write, not five:
+        {"emails": [{"source": "gcash", "account_name": "GCash", "received_at": ...}],
+         "index": 0, "step": "upload", "rows": 72, "started_at": ..., "updated_at": ...}
+    process_user() removes it when the run ends (store.clear_progress()).
+    """
+
+    def __init__(self, sub: str, emails: list):
+        self.sub = sub
+        self.record = {
+            "emails": [
+                {"source": source.key, "account_name": mapping.get("account_name", "")}
+                for source, mapping, _msg_id in emails
+            ],
+            "index": -1,  # next_email() moves to 0
+            "step": None,
+            "rows": None,
+            "started_at": None,
+            "updated_at": None,
+        }
+
+    @property
+    def step(self) -> str | None:
+        """The step the current email is on, or stopped at."""
+        return self.record["step"]
+
+    def next_email(self, received_at: datetime | None) -> None:
+        """The next email's import starts."""
+        index = self.record["index"] + 1
+        self.record["emails"][index]["received_at"] = received_at
+        self.record.update(index=index, step=None, rows=None, started_at=datetime.now(UTC))
+
+    def report(self, step: str, detail: dict) -> None:
+        """A step starts: the on_step callback for pipeline.parse_statement() and
+        import_statement(). Saved only when the step changes."""
+        if step == self.record["step"]:
+            return
+        if step == pipeline.STEP_UPLOAD:
+            self.record["rows"] = detail.get("count")
+        self.record.update(step=step, updated_at=datetime.now(UTC))
+        store.set_progress(self.sub, self.record)
+
+    def seconds(self) -> int:
+        """How long the current email has taken so far, in whole seconds."""
+        return int((datetime.now(UTC) - self.record["started_at"]).total_seconds())
 
 
 def _received_at(gmail_token: str, msg_id: str) -> datetime | None:

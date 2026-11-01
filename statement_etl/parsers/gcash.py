@@ -252,9 +252,10 @@ def gcash_payee(description):
 # =============================================================================
 
 
-def parse_transactions(pdf_path, password=""):
+def parse_transactions(pdf_path, password="", on_page=None):
     """Parse a GCash PDF into a list of transaction dicts.
 
+    on_page(page, pages), if given, is called as each page is read: (1, 5), (2, 5), ...
     Raises StatementError if the password is wrong or the parsed totals don't
     match the statement's totals.
     """
@@ -264,7 +265,9 @@ def parse_transactions(pdf_path, password=""):
     columns = None  # kept from the last page with a header, for pages without one
 
     with open_pdf(pdf_path, password) as pdf:
-        for page in pdf.pages:
+        for number, page in enumerate(pdf.pages, start=1):
+            if on_page:
+                on_page(number, len(pdf.pages))  # progress, for the page or the run log
             lines = group_lines(page.extract_words(keep_blank_chars=False, use_text_flow=False))
 
             # Find the Debit / Credit columns; skip pages before the table starts
