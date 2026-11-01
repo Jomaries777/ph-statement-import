@@ -80,6 +80,7 @@ AUTO_IMPORT_ROUTES = (
     ("POST", "/api/auto-import"),
     ("POST", "/api/auto-import/test"),
     ("POST", "/api/auto-import/delete"),
+    ("POST", "/api/auto-import/ynab-session"),
     ("POST", "/tasks/poll-gmail"),
 )
 
@@ -779,6 +780,71 @@ class SaveSettingsTest(AutoImportWebTest):
 
 
 # =============================================================================
+# EDIT MAPPINGS - auto-import's saved YNAB connection
+# =============================================================================
+
+
+class SavedYnabSessionTest(AutoImportWebTest):
+    """POST /api/auto-import/ynab-session, called by "Edit mappings"."""
+
+    ROTATED = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+
+    def post(self):
+        return self.client.post("/api/auto-import/ynab-session")
+
+    def test_uses_the_saved_refresh_token_when_the_browser_session_has_ended(self):
+        self.sign_in_google(enabled=True, ynab_refresh_token=OLD_YNAB_REFRESH)
+
+        with mock.patch.object(ynab_oauth, "refresh", return_value=self.ROTATED) as refresh:
+            response = self.post()
+
+        self.assertEqual(response.get_json(), {"connected": True})
+        refresh.assert_called_once_with(OLD_YNAB_REFRESH)
+        # YNAB replaced the refresh token: Firestore keeps the new one for the runner
+        saved = self.store.get_user(SUB)
+        self.assertEqual(self.store.decrypt(saved["ynab_refresh_token"]), NEW_YNAB_REFRESH)
+        # The browser gets only the short-lived access token
+        session_ynab = self.ynab_state()
+        self.assertEqual(session_ynab["access_token"], NEW_YNAB_ACCESS)
+        self.assertNotIn("refresh_token", session_ynab)
+
+    def test_a_working_browser_session_is_used_as_is(self):
+        self.sign_in_google(enabled=True, ynab_refresh_token=OLD_YNAB_REFRESH)
+        self.connect_ynab_oauth()
+
+        with mock.patch.object(ynab_oauth, "refresh") as refresh:
+            response = self.post()
+
+        self.assertEqual(response.get_json(), {"connected": True})
+        refresh.assert_not_called()
+
+    def test_not_connected_without_a_saved_token_or_when_ynab_rejects_it(self):
+        self.sign_in_google(enabled=True)
+        with mock.patch.object(ynab_oauth, "refresh") as refresh:
+            self.assertEqual(self.post().get_json(), {"connected": False})
+        refresh.assert_not_called()
+
+        self.store.save_user(SUB, ynab_refresh_token=OLD_YNAB_REFRESH)
+        revoked = urllib.error.HTTPError("https://app.ynab.com", 401, "Unauthorized", {}, None)
+        with mock.patch.object(ynab_oauth, "refresh", side_effect=revoked):
+            self.assertEqual(self.post().get_json(), {"connected": False})
+        self.assertNotIn("access_token", self.ynab_state())
+
+    def test_waits_for_a_running_import_and_gives_up_after_a_while(self):
+        self.sign_in_google(enabled=True, ynab_refresh_token=OLD_YNAB_REFRESH)
+        self.patch(runner, "LOCK_WAIT_SECONDS", new=0)
+        with runner.run_lock_held(), mock.patch.object(ynab_oauth, "refresh") as refresh:
+            response = self.post()
+        self.assertEqual(response.status_code, 503)
+        refresh.assert_not_called()
+
+    def test_needs_gmail_and_the_invite_list(self):
+        self.assertEqual(self.post().status_code, 401)
+        self.sign_in_google(email=UNINVITED_EMAIL, ynab_refresh_token=OLD_YNAB_REFRESH)
+        self.assertEqual(self.post().status_code, 403)
+
+
+# =============================================================================
 # TEST PASSWORD & TURN OFF AND DELETE
 # =============================================================================
 
@@ -1416,7 +1482,25 @@ class AutoImportBrowserTest(unittest.TestCase):
         expect(page.locator("#card-active")).to_contain_text("On")
         expect(page.locator("#card-active")).to_contain_text(fake_ynab.EXISTING_ACCOUNT_NAME)
 
-        # 6. Turn off and delete -> back to setup view with confirmation
+        # 6. The browser's own YNAB session ends (30 minutes idle). "Edit mappings"
+        #    connects with auto-import's saved YNAB token instead of asking to log in.
+        web_state.STORE.clear()
+        rotated_again = {**rotated, "refresh_token": "made-up-third-ynab-refresh"}
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated_again):
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/auto-import/ynab-session")
+            ) as reconnect:
+                page.click("#edit-btn")
+            self.assertEqual(reconnect.value.status, 200)
+            expect(page.locator("#auto-setup-view")).to_be_visible()
+        expect(page.locator("#ynab-on")).to_be_visible()
+        expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)
+        expect(page.locator('tr[data-source="gcash"] .account-select')).to_have_value(
+            fake_ynab.EXISTING_ACCOUNT_ID
+        )
+        page.click("#cancel-edit-btn")
+
+        # 7. Turn off and delete -> back to setup view with confirmation
         with mock.patch.object(gmail, "revoke"):
             page.click("#delete-btn")
             expect(page.locator("#page-msg")).to_contain_text("deleted")

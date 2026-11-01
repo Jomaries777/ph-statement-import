@@ -25,6 +25,8 @@ everything comes from the user's stored settings (store.py):
                                 4. import it, unapproved (pipeline.import_statement)
                                 5. record the run, with its status
     start_watch(user)         - start Gmail push now, when auto-import is turned on
+    run_lock_held()           - hold the run lock outside a run, e.g. to refresh the
+                                user's stored YNAB token for the auto-import page
     test_password(...)        - steps 1-3 on the newest email, for the page's Test button
 
 Why YNAB waits until step 4: Gmail pushes on every inbox change (each email,
@@ -56,6 +58,8 @@ import os
 import threading
 import time
 import urllib.error
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import ynab
@@ -365,6 +369,25 @@ def _renew_watch(user: dict, gmail_token: str) -> None:
         )
         return
     store.save_user(user["sub"], gmail_watch_expires=expires)
+
+
+@contextmanager
+def run_lock_held() -> Iterator[bool]:
+    """Hold the run lock (see _lock) outside a run; yields False if a run kept it.
+
+    For the auto-import page, which refreshes the user's stored YNAB token: a
+    run refreshing the same single-use token at the same time would break one.
+
+        with run_lock_held() as held:
+            if held:
+                ...  # refresh and save the token
+    """
+    held = _lock.acquire(timeout=LOCK_WAIT_SECONDS)
+    try:
+        yield held
+    finally:
+        if held:
+            _lock.release()
 
 
 def start_watch(user: dict) -> None:
