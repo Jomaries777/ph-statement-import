@@ -129,6 +129,7 @@ class RoutesTest(unittest.TestCase):
             {
                 ("/", "GET"),
                 ("/api/status", "GET"),
+                ("/api/progress", "GET"),
                 ("/api/parse", "POST"),
                 ("/api/plans", "GET"),
                 ("/api/plans/<plan_id>/accounts", "GET"),
@@ -725,6 +726,36 @@ class ParseTest(WebTest):
         )
         self.assertEqual(self.client.get("/api/status").get_json()["parsed"], parsed)
 
+    def test_keeps_the_page_it_is_reading_while_it_runs(self):
+        self.set_state()  # the page's first request (/api/status) gave it a session
+        seen = []
+
+        def parse(pdf, password, source, on_step):
+            for page in (1, 2):
+                on_step("read", {"page": page, "pages": 2})
+                seen.append(self.client.get("/api/progress").get_json())
+            return ROWS, TRANSACTIONS
+
+        with mock.patch.object(upload, "parse_statement", side_effect=parse):
+            self.assertEqual(self.post(self.pdf()).status_code, 200)
+        self.assertEqual(
+            seen,
+            [
+                {"step": "read", "detail": {"page": 1, "pages": 2}},
+                {"step": "read", "detail": {"page": 2, "pages": 2}},
+            ],
+        )
+        self.assertIsNone(self.client.get("/api/progress").get_json())
+
+    def test_forgets_the_step_when_the_parse_fails(self):
+        def parse(pdf, password, source, on_step):
+            on_step("read", {"page": 1, "pages": 2})
+            raise StatementError("Total Credit doesn't match")
+
+        with mock.patch.object(upload, "parse_statement", side_effect=parse):
+            self.assertEqual(self.post(self.pdf()).status_code, 400)
+        self.assertIsNone(self.client.get("/api/progress").get_json())
+
 
 # =============================================================================
 # BALANCE CHECK AND UPLOAD
@@ -847,6 +878,32 @@ class UploadTest(WebTest):
 
     def post(self, body=TARGET):
         return self.client.post("/api/upload", json=body)
+
+    def progress(self):
+        """What GET /api/progress answers now."""
+        return self.client.get("/api/progress").get_json()
+
+    def test_keeps_the_step_while_it_runs(self):
+        self.parsed()
+        seen = []
+        uploaded = self.upload.return_value
+        self.upload.side_effect = lambda *args, **kwargs: seen.append(self.progress()) or uploaded
+        self.end.side_effect = lambda *args, **kwargs: seen.append(self.progress()) or self.ending
+        self.assertEqual(self.post().status_code, 200)
+        self.assertEqual(
+            seen,
+            [
+                {"step": "upload", "detail": {"count": len(TRANSACTIONS)}},
+                {"step": "end_balance", "detail": {}},
+            ],
+        )
+        self.assertIsNone(self.progress())
+
+    def test_forgets_the_step_when_the_upload_fails(self):
+        self.parsed()
+        self.upload.side_effect = exceptions.BadRequestException(status=400, reason="Bad Request")
+        self.assertEqual(self.post().status_code, 400)
+        self.assertIsNone(self.progress())
 
     def test_needs_a_parsed_statement(self):
         self.connected()

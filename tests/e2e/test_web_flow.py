@@ -192,6 +192,7 @@ class WebFlowTest(BrowserTest):
             "Total debit 500.00 · Total credit 750.00 · matches statement ✓"
         )
         expect(page.locator("#balance-msg")).to_be_hidden()
+        expect(page.locator("#parse-steps")).to_be_hidden()  # the message above says it all
         expect(page.locator("#card-parse")).to_have_class(re.compile(r"\bcomplete\b"))
 
         # 2. YNAB
@@ -226,6 +227,16 @@ class WebFlowTest(BrowserTest):
         expect(self.result_rows().nth(1)).to_contain_text("-₱150.25")
         expect(page.locator("#results-table tbody tr.missing")).to_have_count(0)
         expect(page.locator("#end-check")).to_have_text("✓ Ending balance matches YNAB: 1,250.00")
+        expect(page.locator("#upload-steps li")).to_have_text(
+            [
+                "Statement read: 4 rows",
+                "Starting balance checked",
+                "Uploaded 4 transactions to YNAB",
+                "Ending balance checked",
+            ]
+        )
+        expect(page.locator("#upload-steps li.done")).to_have_count(4)
+        expect(page.locator("#upload-elapsed")).to_contain_text("Finished in")
         expect(page.locator("#ynab-link")).to_have_attribute(
             "href", f"https://app.ynab.com/{fake_ynab.PLAN_ID}/accounts/{account}"
         )
@@ -343,6 +354,16 @@ class WebFlowTest(BrowserTest):
             "(the statement starting balance)."
         )
         expect(page.locator("#end-check")).to_have_text("✓ Ending balance matches YNAB: 1,250.00")
+        expect(page.locator("#upload-steps li")).to_have_text(
+            [
+                "Statement read: 4 rows",
+                "Starting balance checked",
+                "Uploaded 4 transactions to YNAB",
+                "Ending balance checked",
+            ]
+        )
+        expect(page.locator("#upload-steps li.done")).to_have_count(4)
+        expect(page.locator("#upload-elapsed")).to_contain_text("Finished in")
 
         starting = [
             t
@@ -382,6 +403,9 @@ class WebFlowTest(BrowserTest):
         page.click("#parse-btn")
         expect(page.locator("#parse-msg")).to_contain_text("Could not read the PDF")
         expect(page.locator("#parse-msg")).to_have_class(re.compile(r"\berr\b"))
+        # The step it stopped at turns red; the ones after it never ran
+        expect(page.locator("#parse-steps li.failed")).to_have_text("Opening the PDF")
+        expect(page.locator("#parse-steps li.todo")).to_have_count(1)
         expect(page.locator("#preview")).to_be_hidden()
         expect(page.locator("#card-parse")).not_to_have_class(re.compile(r"\bcomplete\b"))
 

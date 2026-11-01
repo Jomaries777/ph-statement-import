@@ -29,6 +29,40 @@ async function api(path, options = {}) {
   return body;
 }
 
+// ---- progress checklists (cards ① and ④) ---------------------------------
+
+// While /api/parse or /api/upload runs, the page asks /api/progress which step
+// it's on (pipeline.py PROGRESS) and shows the steps as a checklist.
+const PROGRESS_POLL_MS = 700;
+
+// steps: [[label, done label], ...]; current: index of the step running
+// (steps.length once all are done). failed marks the current step red.
+function renderSteps(list, steps, current, failed = false) {
+  list.replaceChildren(...steps.map(([label, doneLabel], i) => {
+    const li = document.createElement("li");
+    li.className = i < current ? "done" : i > current ? "todo" : failed ? "failed" : "now";
+    li.textContent = i < current ? doneLabel : label;
+    return li;
+  }));
+  show(list);
+}
+
+// Calls onProgress with /api/progress's answer (null when nothing runs) every
+// PROGRESS_POLL_MS, until the returned stop() is called.
+function pollProgress(onProgress) {
+  let stopped = false;
+  let timer = null;
+  const tick = async () => {
+    try {
+      const progress = await api("/api/progress");
+      if (!stopped && progress) onProgress(progress);
+    } catch (_) { /* the parse or upload request reports its own errors */ }
+    if (!stopped) timer = setTimeout(tick, PROGRESS_POLL_MS);
+  };
+  timer = setTimeout(tick, PROGRESS_POLL_MS);
+  return () => { stopped = true; clearTimeout(timer); };
+}
+
 // Build a table with textContent only (no HTML injection from PDF text)
 function renderTable(table, headers, rows, cellClass) {
   table.replaceChildren();
@@ -136,6 +170,7 @@ function showParsed(parsed) {
   message("upload-msg", "");
   message("upload-skipped", "");
   showBalanceCheck("end-check", null);
+  show($("upload-progress"), false);
   refreshSteps();
   checkStartingBalance();
 }
@@ -169,21 +204,40 @@ function showBalanceWarning(parsed) {
   });
 }
 
+// ① checklist: reading the pages, then the totals and running balance check
+// (which runs once the last page is read)
+function showParseSteps(read, failed = false) {
+  const allRead = !!read && read.page === read.pages;
+  renderSteps($("parse-steps"), [
+    [read ? `Reading rows: page ${read.page} of ${read.pages}` : "Opening the PDF",
+     read ? `${read.pages} page${read.pages === 1 ? "" : "s"} read` : "PDF read"],
+    ["Checking totals and running balance", "Totals and running balance checked"],
+  ], allRead ? 1 : 0, failed);
+}
+
 $("parse-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("parse-btn").disabled = true;
   $("parse-btn").textContent = "Parsing…";
   message("parse-msg", "");
+  let read = null;
+  showParseSteps(read);
+  const stop = pollProgress((progress) => {
+    if (progress.step === "read") showParseSteps(read = progress.detail);
+  });
   try {
     showParsed(await api("/api/parse", { method: "POST", body: new FormData(e.target) }));
     $("password").value = "";
+    show($("parse-steps"), false);  // the success message says it all
   } catch (err) {
+    showParseSteps(read, true);
     state.parsed = null;
     show($("preview"), false);
     show($("balance-msg"), false);
     message("parse-msg", err.message);
     refreshSteps();
   } finally {
+    stop();
     $("parse-btn").disabled = false;
     $("parse-btn").textContent = "Parse";
   }
@@ -365,6 +419,26 @@ async function checkStartingBalance() {
   }
 }
 
+// ④ checklist: the steps done before the click, then import_statement()'s
+// (pipeline.py: "upload", then "end_balance"). step: the one it's on, or null
+// once finished.
+function showUploadSteps(step, count, startedAt, failed = false) {
+  const steps = [[`Statement read: ${state.parsed.statement_count} rows`,
+                  `Statement read: ${state.parsed.statement_count} rows`]];
+  if (state.toUpload !== null) steps.push(["Starting balance check", "Starting balance checked"]);
+  const uploadAt = steps.length;
+  steps.push([`Uploading ${count} transactions to YNAB`, `Uploaded ${count} transactions to YNAB`],
+             ["Checking the ending balance", "Ending balance checked"]);
+  const current = step === null ? steps.length : step === "end_balance" ? uploadAt + 1 : uploadAt;
+  renderSteps($("upload-steps"), steps, current, failed);
+  $("upload-bar").max = steps.length;
+  $("upload-bar").value = current;
+  const seconds = Math.round((Date.now() - startedAt) / 1000);
+  $("upload-elapsed").textContent = step === null ? `Finished in ${seconds}s`
+    : failed ? `Stopped after ${seconds}s` : `${seconds}s so far`;
+  show($("upload-progress"));
+}
+
 $("upload-btn").addEventListener("click", async () => {
   state.uploading = true;
   $("upload-btn").textContent = "Uploading…";
@@ -373,6 +447,19 @@ $("upload-btn").addEventListener("click", async () => {
   message("upload-skipped", "");
   showBalanceCheck("end-check", null);
   show($("results"), false);
+  const startedAt = Date.now();
+  let step = "upload";
+  let count = state.toUpload ?? state.parsed.count;
+  showUploadSteps(step, count, startedAt);
+  const stop = pollProgress((progress) => {
+    step = progress.step;
+    // Without a starting balance check, all of them are sent (YNAB skips the
+    // ones it already has)
+    if (state.toUpload === null && progress.detail && progress.detail.count !== undefined) {
+      count = progress.detail.count;
+    }
+    showUploadSteps(step, count, startedAt);
+  });
   try {
     const res = await api("/api/upload", {
       method: "POST",
@@ -402,9 +489,14 @@ $("upload-btn").addEventListener("click", async () => {
     // After the upload: YNAB balance vs. the statement's ending balance
     showBalanceCheck("end-check", res.ending_check,
       res.ending_check_error && `Could not check the ending balance: ${res.ending_check_error}`);
+    stop();
+    showUploadSteps(null, count, startedAt);
   } catch (err) {
+    stop();
+    showUploadSteps(step, count, startedAt, true);
     handleYnabError(err, "upload-msg");
   } finally {
+    stop();
     state.uploading = false;
     refreshSteps();
   }
