@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transfer rules · Statement → YNAB Import</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<!-- static/transfer_rules.js draws the tables from these data-* values -->
+<main class="narrow" id="transfer-rules-main"
+      data-hosted="{{ 'true' if hosted else 'false' }}"
+      data-plan-id="{{ plan_id or '' }}"
+      data-wallets='{{ wallets|tojson }}'
+      data-rules='{{ rules|tojson }}'
+      data-sources='{{ sources|map(attribute="key")|list|tojson }}'
+      data-source-names='{{ sources|map(attribute="name")|list|tojson }}'>
+  <header>
+    <a class="btn-link secondary" href="/">◂ Manual upload</a>
+    <h1>Transfer rules</h1>
+    {%- if hosted %}
+    <a class="btn-link secondary" href="/auto-import">Auto-import ▸</a>
+    {%- endif %}
+  </header>
+
+  <p class="muted intro-note">Money you move between your own banks shows on both
+    statements. A rule tells the importer which rows are such a move, so YNAB can show
+    them as one transfer instead of a payment and an unrelated deposit.</p>
+
+  {%- if hosted and not signed_in %}
+  <section id="card-sign-in" class="card">
+    <h2>Sign in first</h2>
+    <p>Transfer rules are saved with your Google account.
+      <a href="/auto-import">Sign in with Google on the Auto-import page</a>, then come back.</p>
+  </section>
+  {%- else %}
+
+  {%- if hosted %}
+  <section id="card-wallets" class="card">
+    <h2>Your banks</h2>
+    {%- if wallets %}
+    <p class="muted">The banks and e-wallets you mapped on the Auto-import page.
+      <a href="/auto-import">Change them there.</a></p>
+    {%- else %}
+    <p id="no-wallets">Map your banks to YNAB accounts on the
+      <a href="/auto-import">Auto-import page</a> first.</p>
+    {%- endif %}
+  </section>
+  {%- else %}
+  <section id="card-wallets" class="card">
+    <h2>Your banks</h2>
+    <p class="muted">Each bank or e-wallet, and the YNAB account you import its statements into.</p>
+    <div class="row"><label for="plan">YNAB plan</label>
+      <select id="plan"><option value="">{{ plan_name or "Loading…" }}</option></select>
+    </div>
+    <div class="table-wrap">
+      <table id="local-wallets-table">
+        <thead><tr><th>Bank</th><th>YNAB account</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button id="add-wallet-btn" class="secondary small-btn" type="button">+ Add a bank</button>
+    </div>
+    <div id="wallets-msg" class="msg hidden"></div>
+    {%- if settings_error %}
+    <div id="settings-error" class="msg err">{{ settings_error }}</div>
+    {%- endif %}
+  </section>
+  {%- endif %}
+
+  <section id="card-rules" class="card">
+    <h2>Rules</h2>
+    <p class="muted">In statements from the source bank, a row whose description contains the
+      text is a transfer to the destination bank. Capital letters and extra spaces don't matter.</p>
+    <div class="table-wrap">
+      <table id="rules-table">
+        <thead><tr><th>Description</th><th>Source bank</th><th>Destination bank</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="no-rules" class="muted hidden">No rules yet.</p>
+    <div class="actions">
+      <button id="add-rule-btn" class="secondary small-btn" type="button">+ Add a rule</button>
+    </div>
+  </section>
+
+  <div class="actions">
+    <button id="save-btn" type="button">Save</button>
+  </div>
+  <div id="save-msg" class="msg hidden"></div>
+  {%- if not hosted %}
+  <p class="small-note muted break-anywhere">Saved on this computer in {{ settings_path }}.</p>
+  {%- endif %}
+  {%- endif %}
+</main>
+{% include "footer.html" %}
+<script src="/static/transfer_rules.js"></script>
+</body>
+</html>

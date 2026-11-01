@@ -121,10 +121,10 @@ The GCash email says `Mobile number: 0917123****` (first 7 digits), and its PDF 
 
 A rule is a **description** (text the statement row contains, ignoring case), a **source wallet** and a **destination wallet**. Example: GCash row "Transfer to 0917123…" → from GCash, to GoTyme.
 
-- [ ] `transfers.py` (no YNAB, no storage): `TransferRule` and `find_transfers()`, matching each source's `text_column`, so a new e-wallet needs no code here.
-- [ ] Hosted: rules on the Google user's Firestore record; wallets are the auto-import mappings. Local: a JSON file (`~/.config/ph-statement-import/settings.json`, or `LOCAL_SETTINGS_PATH`) with the rules and a small wallet → YNAB account list.
-- [ ] `/transfer-rules` page, linked from the upload and auto-import pages.
-- [ ] Tests: matching; the local file; routes in both modes.
+- [x] `transfers.py` (no YNAB, no storage): `TransferRule` and `find_transfers()`, matching each source's `text_column`, so a new e-wallet needs no code here.
+- [x] Hosted: rules on the Google user's Firestore record; wallets are the auto-import mappings. Local: a JSON file (`~/.config/ph-statement-import/settings.json`, or `LOCAL_SETTINGS_PATH`) with the rules and a small wallet → YNAB account list.
+- [x] `/transfer-rules` page, linked from the upload and auto-import pages.
+- [x] Tests: matching; the local file; routes in both modes.
 
 ### PR 7: `feat/import-transfers`, "feat: import rows matching a transfer rule as YNAB transfers"
 

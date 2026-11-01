@@ -147,6 +147,8 @@ class RoutesTest(unittest.TestCase):
                 ("/static/<path:filename>", "GET"),
                 ("/privacy", "GET"),
                 ("/terms", "GET"),
+                ("/transfer-rules", "GET"),
+                ("/api/transfer-rules", "POST"),
             },
         )
 

@@ -457,7 +457,7 @@ def _recent_imports(user: dict | None) -> dict:
     }
 
 
-def _current_user() -> dict | None:
+def signed_in_user() -> dict | None:
     """The signed-in Google user's Firestore record (secrets still encrypted), or None."""
     sub = session.get("google_sub")
     if not sub:
@@ -491,7 +491,7 @@ def page():
     if request.args.get("not_invited") == "1":
         return render_template("auto_import.html", not_invited=True), 403
 
-    user = _current_user()
+    user = signed_in_user()
     gmail_connected = bool(user and user.get("gmail_refresh_token"))
     enabled = bool(gmail_connected and user.get("enabled"))
     last_checked = (
@@ -526,7 +526,7 @@ def recent_imports():
 
     GET /auto-import/runs -> 200 HTML (templates/auto_import_runs.html)
     """
-    user = _current_user()
+    user = signed_in_user()
     if not user:
         return "Connect Gmail first.", 401
     if not is_email_allowed(user.get("email", "")):
@@ -808,7 +808,7 @@ def save_settings():
     POST /api/auto-import {"plan_id": "...", "mappings": {...}, "password_inputs": {...}}
     -> {"enabled": True}
     """
-    user = _current_user()
+    user = signed_in_user()
     if not user or not user.get("gmail_refresh_token"):
         return error_response("Connect Gmail first.", 401)
     if not is_email_allowed(user.get("email", "")):
@@ -847,7 +847,7 @@ def connect_saved_ynab():
     POST /api/auto-import/ynab-session -> {"connected": True}
     -> {"connected": False} if there's no saved connection or YNAB rejects it
     """
-    user = _current_user()
+    user = signed_in_user()
     if not user or not user.get("gmail_refresh_token"):
         return error_response("Connect Gmail first.", 401)
     if not is_email_allowed(user.get("email", "")):
@@ -895,7 +895,7 @@ def test_source_password():
     "account" (optional, one of several accounts at the source): test the
     newest email for that account.
     """
-    user = _current_user()
+    user = signed_in_user()
     if not user or not user.get("gmail_refresh_token"):
         return error_response("Connect Gmail first.", 401)
     if not is_email_allowed(user.get("email", "")):
@@ -942,7 +942,7 @@ def clear_runs():
 
     POST /api/auto-import/runs/clear -> {"cleared": True}
     """
-    user = _current_user()
+    user = signed_in_user()
     if not user:
         return error_response("Connect Gmail first.", 401)
     if not is_email_allowed(user.get("email", "")):

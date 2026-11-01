@@ -32,6 +32,10 @@ Open http://localhost:5050. Pick the source (e.g. GCash), upload the statement P
 
 The app binds to `127.0.0.1` only, so nothing is reachable from your network.
 
+### Transfer rules
+
+Money you move between your own wallets (say GCash to GoTyme) shows on both statements. On **Transfer rules** (top of the page) you list your wallets, each with its YNAB account, and add rules such as "in GCash statements, a description containing `Transfer to 0917123` is a transfer to GoTyme". Capital letters and extra spaces don't matter. Locally they're saved in `~/.config/ph-statement-import/settings.json` (set `LOCAL_SETTINGS_PATH` to use another file); hosted, they're saved with your Google account and the wallets are the ones mapped on the Auto-import page.
+
 ### Saving your YNAB token
 
 Tick **Remember this token on this computer** when you connect, and the app saves the token in your operating system's secure store. After that, step 2 connects by itself every time you start the app.
@@ -159,6 +163,8 @@ statement_etl/
 ├── transaction.py  # the neutral Transaction, in no budgeting app's format
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
+├── transfers.py    # transfer rules: which rows are money moved between your wallets
+├── local_settings.py # local mode's settings file (wallets, transfer rules)
 ├── categorize.py   # optional: categorize uncategorized YNAB transactions with Gemini
 ├── gemini.py       # Gemini REST client (urllib)
 ├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py, categories.py
