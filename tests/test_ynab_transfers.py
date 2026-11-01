@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from statement_etl import pipeline
-from statement_etl.ynab_api.transfers import apply_transfers, transfer_payee_ids
+from statement_etl.ynab_api.transfers import apply_transfers, transfer_payee_ids, unlinked
 from tests.e2e import fake_ynab
 
 GCASH = fake_ynab.EXISTING_ACCOUNT_ID  # the GCash wallet's YNAB account
@@ -122,8 +122,9 @@ class ApplyTransfersTest(FakeYnabTest):
         self.assertEqual(already, {"ETLPH:gotyme-transfer"})
 
 
-class ImportTransfersTest(FakeYnabTest):
-    """pipeline.import_statement() and starting_balance_check() with transfers."""
+class ImportTest(FakeYnabTest):
+    """pipeline.import_statement() and starting_balance_check(), with the
+    statements' own balances left out."""
 
     def setUp(self):
         super().setUp()
@@ -137,6 +138,10 @@ class ImportTransfersTest(FakeYnabTest):
         return pipeline.import_statement(
             [], transactions, account_id, PLAN, TOKEN, transfers=transfers
         )
+
+
+class ImportTransfersTest(ImportTest):
+    """pipeline.import_statement() and starting_balance_check() with transfers."""
 
     def test_round_trip_makes_one_transfer(self):
         # 1. GCash: the transfer row is sent as a transfer; YNAB adds its other side to GoTyme
@@ -178,6 +183,89 @@ class ImportTransfersTest(FakeYnabTest):
         self.import_statement(GCASH_STATEMENT, GCASH, {0: GOTYME})
         second = self.import_statement(GOTYME_STATEMENT, GOTYME, None)
         self.assertEqual((len(second.created), second.transfers), (1, 0))
+
+
+# GoTyme Everyday and two GoalSave accounts. The same day, 1,500.00 goes to
+# one and 2,500.00 to the other; the Everyday rows don't say which.
+EVERYDAY = fake_ynab.EXISTING_ACCOUNT_ID
+GOALSAVE_22222 = fake_ynab.NEW_ACCOUNT_ID
+GOALSAVE_11111 = "00000000-0000-4000-8000-000000000004"
+GOALSAVES = (GOALSAVE_22222, GOALSAVE_11111)
+
+GOALSAVE_22222_STATEMENT = [
+    transaction("ETLPH:22222-in", 1500000, day="2026-10-18", payee="Transfer from Deposit account")
+]
+GOALSAVE_11111_STATEMENT = [
+    transaction("ETLPH:11111-in", 2500000, day="2026-10-18", payee="Transfer from Deposit account")
+]
+EVERYDAY_STATEMENT = [
+    transaction("ETLPH:everyday-2500", -2500000, day="2026-10-18", payee="GoalSave"),
+    transaction("ETLPH:everyday-1500", -1500000, day="2026-10-18", payee="GoalSave"),
+]
+
+
+class GoalSaveTransfersTest(ImportTest):
+    """Rows that name no account (Everyday's "Transfer to GoalSave", a tuple of
+    the GoalSave accounts): linked to the transfer a GoalSave import made."""
+
+    def setUp(self):
+        super().setUp()
+        self.ynab.accounts[GOALSAVE_11111] = {"name": "GoalSave Travel", "transactions": []}
+
+    def import_goalsave_statements(self):
+        self.import_statement(GOALSAVE_22222_STATEMENT, GOALSAVE_22222, {0: EVERYDAY})
+        self.import_statement(GOALSAVE_11111_STATEMENT, GOALSAVE_11111, {0: EVERYDAY})
+
+    def test_each_everyday_row_finds_its_own_goalsave_account(self):
+        self.import_goalsave_statements()
+
+        transactions, already = apply_transfers(
+            EVERYDAY_STATEMENT, {0: GOALSAVES, 1: GOALSAVES}, EVERYDAY, PLAN, TOKEN
+        )
+
+        self.assertEqual(already, {"ETLPH:everyday-2500", "ETLPH:everyday-1500"})
+        self.assertEqual(
+            [t["payee_id"] for t in transactions],
+            [
+                fake_ynab.transfer_payee_id(GOALSAVE_11111),
+                fake_ynab.transfer_payee_id(GOALSAVE_22222),
+            ],
+        )
+
+    def test_goalsave_first_then_everyday_makes_one_transfer_each(self):
+        self.import_goalsave_statements()
+        everyday = self.import_statement(EVERYDAY_STATEMENT, EVERYDAY, {0: GOALSAVES, 1: GOALSAVES})
+
+        self.assertEqual((len(everyday.created), everyday.skipped), (0, 2))
+        self.assertEqual(everyday.unlinked_transfers, [])
+        for account, amount in ((GOALSAVE_22222, 1500000), (GOALSAVE_11111, 2500000)):
+            transfers = [t for t in self.ynab.transactions(account) if t.transfer_account_id]
+            self.assertEqual(
+                [(t.amount, t.transfer_account_id) for t in transfers], [(amount, EVERYDAY)]
+            )
+
+    def test_everyday_first_imports_them_as_ordinary_rows(self):
+        check = pipeline.starting_balance_check(
+            [], EVERYDAY_STATEMENT, EVERYDAY, PLAN, TOKEN, transfers={0: GOALSAVES, 1: GOALSAVES}
+        )
+        self.assertEqual(check["unlinked_transfers"], [0, 1])
+
+        everyday = self.import_statement(EVERYDAY_STATEMENT, EVERYDAY, {0: GOALSAVES, 1: GOALSAVES})
+
+        self.assertEqual((len(everyday.created), everyday.transfers), (2, 0))
+        self.assertEqual(everyday.unlinked_transfers, [0, 1])
+        self.assertEqual(self.ynab.transactions(GOALSAVE_11111), [])  # no transfer made
+
+    def test_an_empty_tuple_is_any_account(self):
+        self.import_goalsave_statements()
+        _, already = apply_transfers(EVERYDAY_STATEMENT, {0: (), 1: ()}, EVERYDAY, PLAN, TOKEN)
+        self.assertEqual(len(already), 2)
+
+    def test_unlinked_is_only_tuple_rows_with_no_transfer(self):
+        transfers = {0: GOALSAVES, 1: GOALSAVE_22222}
+        self.assertEqual(unlinked(transfers, EVERYDAY_STATEMENT, set()), [0])
+        self.assertEqual(unlinked(transfers, EVERYDAY_STATEMENT, {"ETLPH:everyday-2500"}), [])
+        self.assertEqual(unlinked(None, EVERYDAY_STATEMENT, set()), [])
 
 
 if __name__ == "__main__":

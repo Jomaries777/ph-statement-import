@@ -17,8 +17,10 @@ Where rules are kept depends on the mode:
         (autoimport/store.py).
     Local: local_settings.py, a JSON file on this computer, same two fields.
 
-The manual upload reads them with saved_rules(); auto-import
-(autoimport/runner.py) reads the user's record itself.
+The manual upload reads them with saved_rules(), and the YNAB accounts mapped
+on /auto-import with saved_own_accounts() (for the transfers that need no
+rule, Source.own_transfers); auto-import (autoimport/runner.py) reads the
+user's record itself.
 """
 
 import logging
@@ -26,7 +28,7 @@ import logging
 from flask import Blueprint, jsonify, render_template, request
 
 from statement_etl import local_settings
-from statement_etl.autoimport import store
+from statement_etl.autoimport import runner, store
 from statement_etl.transfers import TransferRule, clean_rules, rules_from_dicts
 from statement_etl.web.auto_import import is_email_allowed, signed_in_user
 from statement_etl.web.config import HOSTED
@@ -65,6 +67,17 @@ def saved_rules() -> list[TransferRule]:
         log.warning("Upload without transfer rules: %s", e)
         return []
     return rules_from_dicts(settings.get("transfer_pairs"))
+
+
+def saved_own_accounts() -> dict[str, list[str]]:
+    """The YNAB accounts this browser's user mapped on /auto-import, per
+    source (runner.own_accounts()), for an upload's transfers that need no
+    rule. Hosted and signed in only; {} otherwise, as nothing is mapped locally.
+    """
+    if not HOSTED:
+        return {}
+    user, error = _hosted_user()
+    return {} if error else runner.own_accounts(user)
 
 
 # =============================================================================

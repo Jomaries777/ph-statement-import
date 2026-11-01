@@ -38,6 +38,8 @@ Money you move between your own wallets (say GCash to GoTyme) shows on both stat
 
 When you upload (or auto-import) a statement, the rows a rule matches are marked "→ GoTyme" and imported as YNAB transfers, so YNAB adds the other side to the GoTyme account. Import the other statement later, in either order, and its row is found already in YNAB and not added again. Bank #2's description is optional; without it only Bank #1's statements are matched.
 
+GoTyme GoalSave and GoTyme Everyday need no rule: a GoalSave "Transfer to/from Deposit account" row is always a transfer with your Everyday account (pick it in step ③, under **Transfers to/from Deposit account go to**; auto-import uses the one you mapped). The Everyday "Transfer to/from GoalSave" rows don't say which GoalSave account, so import the GoalSave statement first: each Everyday row then finds the transfer its GoalSave account made. Auto-import does GoalSave first by itself.
+
 ### Saving your YNAB token
 
 Tick **Remember this token on this computer** when you connect, and the app saves the token in your operating system's secure store. After that, step 2 connects by itself every time you start the app.

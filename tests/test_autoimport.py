@@ -419,7 +419,19 @@ class GoalSaveTest(RunnerTest):
         self.parsed.append((pdf.read(), password))
         if pdf.getvalue() == SAVINGS_PDF[1]:
             return [dict(row) for row in TWO_ACCOUNT_ROWS]
-        return [dict(row) for row in GoTymeTest.ROWS]
+        return [dict(row) for row in self.EVERYDAY_ROWS]
+
+    # The Everyday side of 11111's 2,500.00, then a card payment
+    EVERYDAY_ROWS = [
+        {
+            "Date": "18 Oct 2026",
+            "Details": "Transfer to GoalSave",
+            "Credits": "0.00",
+            "Debits": "2500.00",
+            "Running Balance": "1000.00",
+        },
+        *GoTymeTest.ROWS,
+    ]
 
     def add_goalsave_user(self, second=True, second_enabled=True):
         """GoTyme Everyday to OTHER_ACCOUNT_ID, GoalSave 22222 to "goalsave-22222"
@@ -473,7 +485,7 @@ class GoalSaveTest(RunnerTest):
         self.assertEqual(
             self.imported_into(),
             {
-                OTHER_ACCOUNT_ID: [None],
+                OTHER_ACCOUNT_ID: [None, None],  # Everyday rows have no GoalSave No.
                 "goalsave-11111": ["11111"],
                 "goalsave-22222": ["22222", "22222"],
             },
@@ -565,6 +577,52 @@ class GoalSaveTest(RunnerTest):
         goalsave = next(e for e in emails if e["source"] == "gotyme_goalsave")
         self.assertEqual(
             (goalsave["wallet_name"], goalsave["account_name"]), ("GoTyme GoalSave", "2 accounts")
+        )
+
+    def test_goalsave_is_imported_before_everyday(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[EVERYDAY_PDF, SAVINGS_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(
+            [c.args[2] for c in self.import_statement.call_args_list],
+            ["goalsave-11111", "goalsave-22222", OTHER_ACCOUNT_ID],
+        )
+
+    def test_moves_between_them_are_transfers_without_a_rule(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+
+        runner.poll_all()
+
+        transfers = {c.args[2]: c.kwargs["transfers"] for c in self.import_statement.call_args_list}
+        self.assertEqual(
+            transfers,
+            {
+                # "Transfer from/to Deposit account" -> the Everyday account
+                "goalsave-11111": {0: OTHER_ACCOUNT_ID},
+                "goalsave-22222": {1: OTHER_ACCOUNT_ID},
+                # "Transfer to GoalSave": one of them, whichever made the transfer
+                OTHER_ACCOUNT_ID: {0: ("goalsave-22222", "goalsave-11111")},
+            },
+        )
+
+    def test_an_everyday_row_with_no_goalsave_transfer_says_so(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[EVERYDAY_PDF])
+        result = imported()
+        result.unlinked_transfers = [0]
+        self.import_statement.return_value = result
+
+        runner.poll_all()
+
+        run = self.runs()["msg-g:gotyme"]
+        self.assertEqual(run["status"], runner.OK)
+        self.assertEqual(
+            run["message"],
+            "1 GoalSave row imported without a transfer. "
+            "Import the GoTyme GoalSave statement first, so its transfers link up.",
         )
 
     def test_the_test_button_names_the_accounts_found(self):

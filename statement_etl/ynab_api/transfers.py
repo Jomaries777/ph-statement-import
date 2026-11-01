@@ -17,6 +17,12 @@ statement is imported later, its matching row is already there:
 Step 2 needs a rule for the GoTyme side too; without one, the row is imported
 as an ordinary deposit.
 
+A row whose statement doesn't say which account it's with (GoTyme Everyday's
+"Transfer to GoalSave", with several GoalSave accounts) has a tuple of them as
+its destination. It can only take step 2: it's linked to the transfer one of
+them already made (same amount, within MATCH_DAYS), or, if none did, imported
+as an ordinary row. So the GoalSave statement is imported first.
+
     transfer_payee_ids() - {account id: that account's transfer payee id}
     apply_transfers()    - point transfer rows at their account's transfer
                            payee, and find the ones already in YNAB
@@ -55,14 +61,14 @@ def _other_sides(account_id, plan_id, since: date, access_token) -> list:
     return [t for t in existing if t.transfer_account_id and not t.import_id and not t.deleted]
 
 
-def _take_other_side(other_sides: list, transaction: dict, to_account: str):
-    """Remove and return the other side of `transaction` (same amount, the
-    destination account, dated within MATCH_DAYS), or None. Removed, so two
-    equal rows don't both match one."""
+def _take_other_side(other_sides: list, transaction: dict, to_accounts: tuple):
+    """Remove and return the other side of `transaction` (same amount, from
+    one of the destination accounts, dated within MATCH_DAYS), or None.
+    Removed, so two equal rows don't both match one."""
     day = date.fromisoformat(transaction["date"])
     for other in other_sides:
         if (
-            str(other.transfer_account_id) == to_account
+            str(other.transfer_account_id) in to_accounts
             and other.amount == transaction["amount"]
             and abs((other.var_date - day).days) <= MATCH_DAYS
         ):
@@ -78,7 +84,9 @@ def apply_transfers(
 
     transactions - dicts from ynab_api.format.to_ynab(), one per statement row
     transfers    - {row index: destination YNAB account id}
-                   (statement_etl.transfers.find_transfers())
+                   (statement_etl.transfers.find_transfers()). A tuple of ids
+                   (empty: any account) links the row only to a transfer one
+                   of them already made; otherwise it stays an ordinary row.
 
     Returns (transactions, already_in_ynab):
         transactions    - a copy; each transfer row gets "payee_id", the
@@ -95,11 +103,14 @@ def apply_transfers(
     if not transfers:
         return list(transactions), set()
     payee_ids = transfer_payee_ids(plan_id, access_token)
-    destinations = {
-        index: to_account
-        for index, to_account in transfers.items()
-        if to_account in payee_ids and to_account != account_id
-    }
+    destinations = {}  # {row index: the account id, or a tuple of them}
+    for index, to in transfers.items():
+        if isinstance(to, tuple):
+            candidates = tuple(a for a in to or payee_ids if a in payee_ids and a != account_id)
+            if candidates:
+                destinations[index] = candidates
+        elif to in payee_ids and to != account_id:
+            destinations[index] = to
     if not destinations:
         return list(transactions), set()
 
@@ -109,11 +120,32 @@ def apply_transfers(
     )
     result, already_in_ynab = [], set()
     for index, transaction in enumerate(transactions):
-        to_account = destinations.get(index)
-        if to_account is None:
+        to = destinations.get(index)
+        if to is None:
             result.append(transaction)
-            continue
-        result.append({**transaction, "payee_id": payee_ids[to_account]})
-        if _take_other_side(other_sides, transaction, to_account):
-            already_in_ynab.add(transaction["import_id"])
+        elif isinstance(to, tuple):  # one of these accounts, if it made the transfer
+            other = _take_other_side(other_sides, transaction, to)
+            if other is None:
+                result.append(transaction)
+            else:
+                to_account = str(other.transfer_account_id)
+                result.append({**transaction, "payee_id": payee_ids[to_account]})
+                already_in_ynab.add(transaction["import_id"])
+        else:
+            result.append({**transaction, "payee_id": payee_ids[to]})
+            if _take_other_side(other_sides, transaction, (to,)):
+                already_in_ynab.add(transaction["import_id"])
     return result, already_in_ynab
+
+
+def unlinked(transfers, transactions, already_in_ynab) -> list[int]:
+    """The rows with a tuple destination (see apply_transfers()) that no
+    transfer was found for: they're imported as ordinary rows.
+
+    unlinked({3: ("acc-22222", "acc-11111")}, transactions, set()) -> [3]
+    """
+    return sorted(
+        index
+        for index, to in (transfers or {}).items()
+        if isinstance(to, tuple) and transactions[index]["import_id"] not in already_in_ynab
+    )

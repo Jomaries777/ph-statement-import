@@ -81,7 +81,7 @@ Output:
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 import ynab
@@ -103,7 +103,7 @@ from statement_etl.ynab_api.client import (
     import_transactions,
 )
 from statement_etl.ynab_api.format import to_ynab
-from statement_etl.ynab_api.transfers import apply_transfers
+from statement_etl.ynab_api.transfers import apply_transfers, unlinked
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -234,6 +234,9 @@ def starting_balance_check(
     Returns the check dict from
     ynab_api.balance.check_starting_balance(); describe it with
     ynab_api.balance.balance_check_message(). A mismatch is a warning only.
+    It also has "unlinked_transfers": the rows of a transfer that names no
+    account (a tuple destination) that found no transfer to link to, so are
+    uploaded as ordinary rows (ynab_api.transfers.unlinked()).
     Raises ynab.ApiException if YNAB rejects the request.
     """
     starting = get_source(source).statement_balances(rows)["starting"]
@@ -245,7 +248,7 @@ def starting_balance_check(
     )
     to_upload = [t for t in transactions if t["import_id"] not in already]
     upload_total = Decimal(sum(t["amount"] for t in to_upload)) / 1000
-    return check_starting_balance(
+    check = check_starting_balance(
         starting,
         upload_total,
         account_id,
@@ -254,6 +257,8 @@ def starting_balance_check(
         already_in_ynab=len(already),
         to_upload=len(to_upload),
     )
+    check["unlinked_transfers"] = unlinked(transfers, transactions, other_side_in_ynab)
+    return check
 
 
 def new_account_starting_balance(
@@ -297,6 +302,9 @@ class ImportResult:
     ending_check: dict | None  # from ending_balance_check(); None if it failed
     ending_error: ynab.ApiException | None  # why the ending check failed, if it did
     transfers: int = 0  # rows imported as transfers (or whose transfer was already in YNAB)
+    # Rows of a transfer that names no account that found none to link to, so
+    # were imported as ordinary rows (ynab_api.transfers.unlinked())
+    unlinked_transfers: list = field(default_factory=list)
 
 
 def import_statement(
@@ -320,6 +328,7 @@ def import_statement(
     a transfer rule matched (transfers.find_transfers()). They're sent as
     YNAB transfers, except those whose other side YNAB already has
     (ynab_api/transfers.py), which are skipped like already-imported ones.
+    A tuple destination only links to a transfer YNAB already has.
 
         result = import_statement(rows, transactions, account_id, plan_id)
         len(result.created), result.skipped  ->  (23, 2)
@@ -375,6 +384,7 @@ def import_statement(
         ending_check=ending_check,
         ending_error=ending_error,
         transfers=sum(1 for t in transactions if t.get("payee_id")),
+        unlinked_transfers=unlinked(transfers, transactions, other_side_in_ynab),
     )
 
 

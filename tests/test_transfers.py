@@ -16,10 +16,12 @@ from statement_etl.transfers import (
     find_transfers,
     normalize,
     rules_from_dicts,
+    unlinked_message,
 )
 
 GCASH = SOURCES["gcash"]
 GOTYME = SOURCES["gotyme"]
+GOALSAVE = SOURCES["gotyme_goalsave"]
 
 # The plan's open accounts, {id: name}, as clean_rules() gets them
 ACCOUNTS = {"acc-gcash": "GCash - 1161", "acc-gotyme": "GoTyme", "acc-bpi": "BPI Savings"}
@@ -107,6 +109,60 @@ class FindTransfersTest(unittest.TestCase):
     def test_no_rules_no_transfers(self):
         rows = [gcash_row("Transfer to 0917123")]
         self.assertEqual(find_transfers(rows, GCASH, "acc-gcash", []), {})
+
+
+class OwnTransfersTest(unittest.TestCase):
+    """GoalSave and GoTyme Everyday moves, which need no rule (Source.own_transfers)."""
+
+    GOALSAVE_ROWS = [
+        {"Details": "Earned interest"},
+        {"Details": "Transfer to Deposit account"},
+        {"Details": "Transfer from  deposit ACCOUNT"},  # case and spaces don't matter
+    ]
+    EVERYDAY_ROWS = [gotyme_row("Transfer from GoalSave"), gotyme_row("Card payment at SHOPEE")]
+    MAPPED = {"gotyme": ["acc-gotyme"], "gotyme_goalsave": ["acc-22222", "acc-11111"]}
+
+    def test_goalsave_rows_go_to_the_everyday_account(self):
+        self.assertEqual(
+            find_transfers(self.GOALSAVE_ROWS, GOALSAVE, "acc-22222", [], self.MAPPED),
+            {1: "acc-gotyme", 2: "acc-gotyme"},
+        )
+
+    def test_everyday_rows_go_to_one_of_the_goalsave_accounts(self):
+        self.assertEqual(
+            find_transfers(self.EVERYDAY_ROWS, GOTYME, "acc-gotyme", [], self.MAPPED),
+            {0: ("acc-22222", "acc-11111")},
+        )
+
+    def test_with_one_goalsave_account_the_everyday_row_names_it(self):
+        mapped = {"gotyme": ["acc-gotyme"], "gotyme_goalsave": ["acc-22222"]}
+        self.assertEqual(
+            find_transfers(self.EVERYDAY_ROWS, GOTYME, "acc-gotyme", [], mapped), {0: "acc-22222"}
+        )
+
+    def test_with_nothing_mapped(self):
+        # GoalSave: no Everyday account to send to. Everyday: any account's transfer.
+        self.assertEqual(find_transfers(self.GOALSAVE_ROWS, GOALSAVE, "acc-22222", []), {})
+        self.assertEqual(find_transfers(self.EVERYDAY_ROWS, GOTYME, "acc-gotyme", []), {0: ()})
+
+    def test_a_rule_still_comes_first(self):
+        rule = TransferRule("acc-gotyme", "GoTyme", "GoalSave", "acc-bpi", "BPI Savings", "")
+        self.assertEqual(
+            find_transfers(self.EVERYDAY_ROWS, GOTYME, "acc-gotyme", [rule], self.MAPPED),
+            {0: "acc-bpi"},
+        )
+
+    def test_gcash_has_none(self):
+        rows = [gcash_row("Transfer to GoalSave")]
+        self.assertEqual(find_transfers(rows, GCASH, "acc-gcash", [], self.MAPPED), {})
+
+    def test_the_unlinked_message(self):
+        self.assertEqual(
+            unlinked_message(GOTYME, 2),
+            "2 GoalSave rows imported without a transfer. "
+            "Import the GoTyme GoalSave statement first, so its transfers link up.",
+        )
+        self.assertTrue(unlinked_message(GOTYME, 1).startswith("1 GoalSave row imported"))
 
 
 class RulesFromDictsTest(unittest.TestCase):

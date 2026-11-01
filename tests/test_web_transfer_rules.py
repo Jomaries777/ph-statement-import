@@ -24,6 +24,7 @@ from statement_etl.web import app as web
 from statement_etl.web import transfer_rules, upload, ynab_auth
 from tests.fakes import ACCOUNT_ID, PLAN_ID
 from tests.hosted import HOSTED_ENV, hosted_mode
+from tests.test_parsers_gotyme_goalsave import TWO_ACCOUNT_ROWS
 from tests.test_web_app import ROWS, TARGET, TRANSACTIONS, WebTest, starting_check
 from tests.test_web_auto_import import (
     OTHER_ACCOUNT_ID,
@@ -55,6 +56,43 @@ SAVED = {
 }
 # ROWS[2] in tests/test_web_app.py is "Payment to Test Shop"
 PAYMENT_RULE = {**SAVED, "description_1": "payment to TEST"}
+
+# GoalSave No. 22222's rows: "Earned interest", "Transfer to Deposit account"
+GOALSAVE_ROWS = TWO_ACCOUNT_ROWS[1:]
+# A GoTyme Everyday statement: "Transfer to GoalSave", then a card payment
+EVERYDAY_ROWS = [
+    {
+        "Date": "18 Oct 2026",
+        "Details": "Transfer to GoalSave",
+        "Credits": "0.00",
+        "Debits": "2500.00",
+        "Running Balance": "1000.00",
+    },
+    {
+        "Date": "19 Oct 2026",
+        "Details": "Card payment at SHOPEE PH",
+        "Credits": "0.00",
+        "Debits": "249.00",
+        "Running Balance": "751.00",
+    },
+]
+UNLINKED = (
+    "1 GoalSave row imported without a transfer. "
+    "Import the GoTyme GoalSave statement first, so its transfers link up."
+)
+
+
+def uploaded(**more):
+    """What import_statement() returns, as much as /api/upload reads."""
+    return SimpleNamespace(
+        created=[],
+        skipped=0,
+        ending_check=None,
+        ending_error=None,
+        new_account=None,
+        transfers=0,
+        **more,
+    )
 
 
 def page_data(html: bytes, name: str):
@@ -293,6 +331,63 @@ class LocalUploadTransfersTest(LocalSettingsWebTest):
         self.assertEqual(start.call_args.kwargs["transfers"], {})
 
 
+class LocalUploadOwnTransfersTest(LocalSettingsWebTest):
+    """GoalSave and GoTyme Everyday moves need no rule (Source.own_transfers)."""
+
+    def start(self, **body):
+        check = {**starting_check(), "unlinked_transfers": body.pop("unlinked", [])}
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
+            response = self.client.post("/api/starting-balance", json={**TARGET, **body})
+        return start.call_args.kwargs["transfers"], response.get_json()
+
+    def test_goalsave_rows_go_to_the_picked_account(self):
+        self.connected(source="gotyme_goalsave", rows=GOALSAVE_ROWS, transactions=TRANSACTIONS)
+        transfers, shown = self.start(own_transfer_account_id=OTHER_ACCOUNT_ID)
+        self.assertEqual(transfers, {1: OTHER_ACCOUNT_ID})
+        self.assertEqual(shown["transfers"], [{"row": 1, "to": "GoTyme"}])
+
+    def test_goalsave_rows_without_a_pick_are_ordinary(self):
+        self.connected(source="gotyme_goalsave", rows=GOALSAVE_ROWS, transactions=TRANSACTIONS)
+        self.assertEqual(self.start()[0], {})
+
+    def test_everyday_rows_link_to_any_accounts_transfer(self):
+        self.connected(source="gotyme", rows=EVERYDAY_ROWS, transactions=TRANSACTIONS)
+        transfers, shown = self.start()
+        self.assertEqual(transfers, {0: ()})  # nothing mapped locally: any account
+        self.assertEqual(shown["transfers"], [{"row": 0, "to": "GoTyme GoalSave"}])
+        self.assertIsNone(shown["unlinked_message"])
+
+    def test_everyday_rows_with_no_transfer_yet(self):
+        self.connected(source="gotyme", rows=EVERYDAY_ROWS, transactions=TRANSACTIONS)
+        _, shown = self.start(unlinked=[0])
+        self.assertEqual(shown["transfers"], [])  # uploaded as an ordinary row
+        self.assertEqual(shown["unlinked_message"], UNLINKED)
+
+        with mock.patch.object(
+            upload, "import_statement", return_value=uploaded(unlinked_transfers=[0])
+        ):
+            response = self.client.post("/api/upload", json=TARGET)
+        self.assertEqual(response.get_json()["unlinked_message"], UNLINKED)
+
+    def test_the_upload_sends_the_pick(self):
+        self.connected(source="gotyme_goalsave", rows=GOALSAVE_ROWS, transactions=TRANSACTIONS)
+        with mock.patch.object(upload, "import_statement", return_value=uploaded()) as send:
+            self.client.post("/api/upload", json={**TARGET, "own_transfer_account_id": "acc-x"})
+        self.assertEqual(send.call_args.kwargs["transfers"], {1: "acc-x"})
+
+    def test_the_parsed_goalsave_statement_asks_where_they_go(self):
+        self.connected(
+            source="gotyme_goalsave",
+            filename="savings.pdf",
+            accounts={"22222": (GOALSAVE_ROWS, TRANSACTIONS)},
+        )
+        response = self.client.post("/api/statement-account", json={"account": "22222"})
+        self.assertEqual(
+            response.get_json()["own_transfers"],
+            {"description": "Deposit account", "other_name": "GoTyme", "account_id": ""},
+        )
+
+
 class HostedUploadTransfersTest(HostedRulesWebTest):
     """Hosted, the upload reads the signed-in Google user's rules."""
 
@@ -303,6 +398,37 @@ class HostedUploadTransfersTest(HostedRulesWebTest):
         with mock.patch.object(upload, "starting_balance_check", return_value=check):
             response = self.client.post("/api/starting-balance", json=TARGET)
         self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
+
+    def test_mapped_goalsave_accounts_are_the_everyday_rows_choices(self):
+        self.sign_in_google(
+            mappings={
+                "gotyme": {"account_id": OTHER_ACCOUNT_ID, "enabled": True},
+                "gotyme_goalsave": {
+                    "source": "gotyme_goalsave",
+                    "account_id": "acc-22222",
+                    "enabled": True,
+                },
+                "gotyme_goalsave-2": {
+                    "source": "gotyme_goalsave",
+                    "account_id": "acc-11111",
+                    "enabled": True,
+                },
+            }
+        )
+        self.connect_ynab(source="gotyme", rows=EVERYDAY_ROWS, transactions=TRANSACTIONS)
+        check = {**starting_check(), "unlinked_transfers": []}
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
+            self.client.post("/api/starting-balance", json=TARGET)
+        self.assertEqual(start.call_args.kwargs["transfers"], {0: ("acc-22222", "acc-11111")})
+
+        # A GoalSave upload: "Transfers to/from Deposit account" starts on the Everyday account
+        self.connect_ynab(
+            source="gotyme_goalsave",
+            filename="savings.pdf",
+            accounts={"22222": (GOALSAVE_ROWS, TRANSACTIONS)},
+        )
+        response = self.client.post("/api/statement-account", json={"account": "22222"})
+        self.assertEqual(response.get_json()["own_transfers"]["account_id"], OTHER_ACCOUNT_ID)
 
     def test_not_signed_in_no_transfers(self):
         self.connect_ynab(source="gcash", rows=ROWS, transactions=TRANSACTIONS)

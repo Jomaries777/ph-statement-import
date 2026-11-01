@@ -81,7 +81,7 @@ from statement_etl.autoimport import gmail, store
 from statement_etl.categorize import categorize_transactions
 from statement_etl.parsers.common import PasswordError, StatementError
 from statement_etl.sources import SOURCES, Source, get_source
-from statement_etl.transfers import find_transfers, rules_from_dicts
+from statement_etl.transfers import find_transfers, rules_from_dicts, unlinked_message
 from statement_etl.web import ynab_oauth
 from statement_etl.ynab_api.categories import uncategorized_created
 
@@ -264,6 +264,10 @@ def process_user(user: dict) -> int:
             elif wallets[wallet_id].get("enabled"):
                 new_emails.append((source, wallet_id, wallets[wallet_id], msg_id))
             # else: that account is set to "Don't import"
+    # A source whose rows are always transfers (GoTyme GoalSave) goes first: its
+    # transfers name the account, and the other source's rows (GoTyme Everyday's,
+    # from the same email) are then linked to them (Source.own_transfers)
+    new_emails.sort(key=lambda email: email[0].own_transfers is None)
 
     # 4. Only now a fresh YNAB access token. YNAB rotates refresh tokens, and the
     #    old one stops working, so the new one is saved before anything else can fail.
@@ -619,7 +623,11 @@ def _import_rows(
     and the next poll tries again.
     """
     transfers = find_transfers(
-        rows, source, mapping["account_id"], rules_from_dicts(user.get("transfer_pairs"))
+        rows,
+        source,
+        mapping["account_id"],
+        rules_from_dicts(user.get("transfer_pairs")),
+        own_accounts=own_accounts(user),
     )
     try:
         imported = pipeline.import_statement(
@@ -642,12 +650,27 @@ def _import_rows(
     result["skipped"] = imported.skipped
     if imported.transfers:
         result["transfers"] = imported.transfers
+    notes = []
     if imported.ending_check is None:  # the upload worked; only the check after it failed
-        result["message"] = "Imported, but YNAB's balance couldn't be checked."
+        notes.append("Imported, but YNAB's balance couldn't be checked.")
     elif not imported.ending_check["matches"]:
-        result["message"] = "The YNAB balance doesn't match the statement's ending balance."
+        notes.append("The YNAB balance doesn't match the statement's ending balance.")
+    if imported.unlinked_transfers:
+        notes.append(unlinked_message(source, len(imported.unlinked_transfers)))
+    result["message"] = " ".join(notes)
+    if imported.ending_check and not imported.ending_check["matches"]:
         return BALANCE_MISMATCH, imported.created
     return OK, imported.created
+
+
+def own_accounts(user: dict) -> dict[str, list[str]]:
+    """The YNAB accounts of the user's mapped wallets, per source, for the
+    transfers that need no rule (transfers.find_transfers()):
+    {"gotyme": ["acc-everyday"], "gotyme_goalsave": ["acc-22222", "acc-11111"]}."""
+    return {
+        source_key: [m["account_id"] for m in wallets.values() if m.get("enabled")]
+        for source_key, wallets in _wallets_by_source(user).items()
+    }
 
 
 def _categorize(user, created, ynab_token, result, progress) -> None:

@@ -145,12 +145,14 @@ class BalanceStepsTest(unittest.TestCase):
         already = {TRANSACTIONS[0]["import_id"]}
         with (
             mock.patch.object(pipeline, "find_already_imported", return_value=already) as find,
-            mock.patch.object(pipeline, "check_starting_balance", return_value="check") as check,
+            mock.patch.object(
+                pipeline, "check_starting_balance", return_value={"matches": True}
+            ) as check,
         ):
             result = pipeline.starting_balance_check(
                 ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token"
             )
-        self.assertEqual(result, "check")
+        self.assertEqual(result, {"matches": True, "unlinked_transfers": []})
         find.assert_called_once_with(TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token")
         check.assert_called_once_with(
             Decimal("500.00"),  # statement starting balance

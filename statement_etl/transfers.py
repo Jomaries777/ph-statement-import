@@ -22,12 +22,22 @@ description_2 may be empty: Bank #2's statements are then never matched.
 Matching ignores case and extra spaces, and looks at the source's text_column
 (sources.py), so it works for every source with no code of its own.
 
+Some moves need no rule: a GoTyme GoalSave row "Transfer to Deposit account"
+is always money moved to the person's GoTyme Everyday account
+(Source.own_transfers). find_transfers() matches those too, given the person's
+YNAB account for each source (own_accounts). The Everyday row "Transfer from
+GoalSave" doesn't say which GoalSave account, so with several its destination
+is all of them, a tuple: it's linked only to a transfer one of them already
+made (ynab_api/transfers.py).
+
 Nothing here knows about YNAB or where rules are stored: find_transfers() only
 says which rows match, and where to. ynab_api/transfers.py imports them as
 YNAB transfers.
 """
 
 from dataclasses import asdict, dataclass
+
+from statement_etl.sources import SOURCES
 
 MAX_RULES = 50
 MAX_DESCRIPTION_LENGTH = 100
@@ -68,9 +78,35 @@ def _sides(rules: list[TransferRule], account_id: str) -> list[tuple[str, str]]:
     return sides
 
 
+def _own_sides(source, own_accounts: dict[str, list[str]]) -> list[tuple[str, str | tuple]]:
+    """(normalized description, the other account) for the moves `source`'s
+    rows make without a rule (Source.own_transfers), with `own_accounts`, the
+    person's YNAB accounts per source: {"gotyme": ["acc-everyday"],
+    "gotyme_goalsave": ["acc-22222", "acc-11111"]}.
+
+    The other account is an id, or, when the row doesn't say which of several
+    it is, a tuple of them. An empty tuple is any account: the person's
+    accounts at that source aren't known (a manual upload).
+    """
+    sides = []
+    own = source.own_transfers
+    if own and own_accounts.get(own.other_source):  # GoalSave -> the Everyday account
+        sides.append((normalize(own.description), own_accounts[own.other_source][0]))
+    for other in SOURCES.values():  # Everyday -> one of the GoalSave accounts
+        if other.own_transfers and other.own_transfers.other_source == source.key:
+            accounts = tuple(own_accounts.get(other.key, ()))
+            to = accounts[0] if len(accounts) == 1 else accounts
+            sides.append((normalize(other.own_transfers.other_description), to))
+    return sides
+
+
 def find_transfers(
-    rows: list[dict], source, account_id: str, rules: list[TransferRule]
-) -> dict[int, str]:
+    rows: list[dict],
+    source,
+    account_id: str,
+    rules: list[TransferRule],
+    own_accounts: dict[str, list[str]] | None = None,
+) -> dict[int, str | tuple]:
     """Which rows of a statement imported into YNAB account `account_id` are
     transfers, and to which account.
 
@@ -80,10 +116,14 @@ def find_transfers(
 
         rows = [{"Description": "Transfer to 0917123 (Juan)", ...}, {"Description": "Load", ...}]
         find_transfers(rows, SOURCES["gcash"], "acc-gcash", [rule above]) -> {0: "acc-gotyme"}
+
+    Then the moves that need no rule (Source.own_transfers), with
+    `own_accounts` as in _own_sides(): an Everyday row "Transfer to GoalSave"
+    with two GoalSave accounts -> {3: ("acc-22222", "acc-11111")}.
     """
     if not source.text_column:
         return {}
-    sides = _sides(rules, account_id)
+    sides = _sides(rules, account_id) + _own_sides(source, own_accounts or {})
     matches = {}
     for index, row in enumerate(rows):
         if source.is_correction_row(row):
@@ -94,6 +134,28 @@ def find_transfers(
                 matches[index] = other_account
                 break
     return matches
+
+
+def unlinked_message(source, count: int) -> str:
+    """Why `count` rows of a transfer that names no account (an Everyday
+    "Transfer to GoalSave") were imported as ordinary rows: the statement
+    they're with wasn't imported first, so there was no transfer to link to.
+
+    unlinked_message(SOURCES["gotyme"], 2) -> "2 GoalSave rows imported
+    without a transfer. Import the GoTyme GoalSave statement first, so its
+    transfers link up."
+    """
+    other = next(
+        s
+        for s in SOURCES.values()
+        if s.own_transfers and s.own_transfers.other_source == source.key
+    )
+    label = other.own_transfers.other_description
+    rows = f"1 {label} row" if count == 1 else f"{count} {label} rows"
+    return (
+        f"{rows} imported without a transfer. "
+        f"Import the {other.name} statement first, so its transfers link up."
+    )
 
 
 def clean_rules(

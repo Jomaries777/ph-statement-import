@@ -802,6 +802,7 @@ class ParseTest(WebTest):
                 "account_label": None,
                 "account": "",
                 "accounts": [],
+                "own_transfers": None,  # GCash rows aren't always transfers
             },
         )
         self.assertTrue(
@@ -925,7 +926,10 @@ class StartingBalanceTest(WebTest):
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
             response = self.post(TARGET)
-        self.assertEqual(response.get_json(), {**upload._check_json(check), "transfers": []})
+        self.assertEqual(
+            response.get_json(),
+            {**upload._check_json(check), "transfers": [], "unlinked_message": None},
+        )
         start.assert_called_once_with(
             ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash", transfers={}
         )
@@ -1051,6 +1055,7 @@ class UploadTest(WebTest):
                 ],
                 "skipped": 1,
                 "transfers": 0,
+                "unlinked_message": None,
                 "to_categorize": 0,
                 "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
                 "other_accounts": [],
