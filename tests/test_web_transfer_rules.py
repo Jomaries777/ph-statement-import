@@ -12,15 +12,18 @@ import json
 import os
 import re
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from statement_etl import local_settings
 from statement_etl.web import app as web
-from statement_etl.web import transfer_rules
+from statement_etl.web import transfer_rules, upload
 from tests.fakes import ACCOUNT_ID, PLAN_ID
 from tests.hosted import HOSTED_ENV, hosted_mode
-from tests.test_web_app import WebTest
+from tests.test_web_app import ROWS, TARGET, TRANSACTIONS, WebTest, starting_check
 from tests.test_web_auto_import import (
     OTHER_ACCOUNT_ID,
     SUB,
@@ -28,6 +31,10 @@ from tests.test_web_auto_import import (
     AutoImportWebTest,
 )
 
+LOCAL_WALLETS = [
+    {"id": ACCOUNT_ID, "source": "gcash", "account_name": "GCash1"},
+    {"id": OTHER_ACCOUNT_ID, "source": "gotyme", "account_name": "GoTyme2"},
+]
 RULE = {"description": "Transfer to 0917123", "from_wallet": "gcash", "to_wallet": "gotyme"}
 
 
@@ -42,19 +49,17 @@ def page_data(html: bytes, name: str):
 # =============================================================================
 
 
-class LocalTransferRulesTest(WebTest):
+class LocalSettingsWebTest(WebTest):
+    """Local mode, with the settings file in a temporary folder."""
+
     def setUp(self):
         super().setUp()
         folder = self.enterContext(tempfile.TemporaryDirectory())
         self.path = Path(folder) / "settings.json"
         self.patch_dict(os.environ, {"LOCAL_SETTINGS_PATH": str(self.path)})
 
-    def wallets(self):
-        return [
-            {"id": ACCOUNT_ID, "source": "gcash", "account_name": "GCash1"},
-            {"id": OTHER_ACCOUNT_ID, "source": "gotyme", "account_name": "GoTyme2"},
-        ]
 
+class LocalTransferRulesTest(LocalSettingsWebTest):
     def save(self, **body):
         return self.client.post("/api/transfer-rules", json=body)
 
@@ -76,7 +81,7 @@ class LocalTransferRulesTest(WebTest):
             "to_wallet": OTHER_ACCOUNT_ID,
         }
         response = self.save(
-            plan_id=PLAN_ID, plan_name="Test Plan", wallets=self.wallets(), rules=[rule]
+            plan_id=PLAN_ID, plan_name="Test Plan", wallets=LOCAL_WALLETS, rules=[rule]
         )
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(response.get_json(), {"saved": True, "rules": 1})
@@ -85,7 +90,7 @@ class LocalTransferRulesTest(WebTest):
             {
                 "plan_id": PLAN_ID,
                 "plan_name": "Test Plan",
-                "wallets": self.wallets(),
+                "wallets": LOCAL_WALLETS,
                 "transfer_rules": [rule],
             },
         )
@@ -100,7 +105,7 @@ class LocalTransferRulesTest(WebTest):
 
     def test_rules_must_use_saved_wallets(self):
         response = self.save(
-            wallets=self.wallets()[:1],
+            wallets=LOCAL_WALLETS[:1],
             rules=[{"description": "x", "from_wallet": ACCOUNT_ID, "to_wallet": OTHER_ACCOUNT_ID}],
         )
         self.assertEqual(response.status_code, 400)
@@ -144,7 +149,9 @@ class LocalTransferRulesTest(WebTest):
 # =============================================================================
 
 
-class HostedTransferRulesTest(AutoImportWebTest):
+class HostedRulesWebTest(AutoImportWebTest):
+    """Hosted mode with auto-import; FakeStore for Firestore, and no settings file."""
+
     def setUp(self):
         super().setUp()
         self.patch(transfer_rules, "store", new=self.store)
@@ -181,6 +188,8 @@ class HostedTransferRulesTest(AutoImportWebTest):
             **fields,
         )
 
+
+class HostedTransferRulesTest(HostedRulesWebTest):
     def test_signed_out_page_asks_to_sign_in(self):
         page = self.client.get("/transfer-rules")
         self.assertEqual(page.status_code, 200)
@@ -245,6 +254,104 @@ class HostedWithoutGoogleTest(unittest.TestCase):
             self.assertNotIn(b"/transfer-rules", client.get("/").data)
             self.assertEqual(client.get("/transfer-rules").status_code, 404)
             self.assertEqual(client.post("/api/transfer-rules", json={}).status_code, 404)
+
+
+# =============================================================================
+# UPLOAD - the manual upload uses the saved rules
+# =============================================================================
+
+
+class LocalUploadTransfersTest(LocalSettingsWebTest):
+    """Locally, the upload reads the rules from the settings file."""
+
+    def setUp(self):
+        super().setUp()
+        local_settings.save_settings(
+            wallets=LOCAL_WALLETS,
+            # ROWS[2] in tests/test_web_app.py is "Payment to Test Shop"
+            transfer_rules=[
+                {
+                    "description": "payment to TEST",
+                    "from_wallet": ACCOUNT_ID,
+                    "to_wallet": OTHER_ACCOUNT_ID,
+                }
+            ],
+        )
+        self.parsed()
+
+    def test_the_starting_check_marks_the_matching_rows(self):
+        check = starting_check()
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
+            response = self.client.post("/api/starting-balance", json=TARGET)
+        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
+        self.assertEqual(start.call_args.kwargs["transfers"], {2: OTHER_ACCOUNT_ID})
+
+    def test_the_upload_sends_them_as_transfers(self):
+        imported = SimpleNamespace(
+            created=[],
+            skipped=0,
+            ending_check=None,
+            ending_error=None,
+            new_account=None,
+            transfers=1,
+        )
+        with mock.patch.object(upload, "import_statement", return_value=imported) as send:
+            response = self.client.post("/api/upload", json=TARGET)
+        self.assertEqual(send.call_args.kwargs["transfers"], {2: OTHER_ACCOUNT_ID})
+        self.assertEqual(response.get_json()["transfers"], 1)
+
+    def test_another_account_has_no_transfers(self):
+        check = starting_check()
+        with mock.patch.object(upload, "starting_balance_check", return_value=check):
+            response = self.client.post(
+                "/api/starting-balance", json={**TARGET, "account_id": "not-a-wallet"}
+            )
+        self.assertEqual(response.get_json()["transfers"], [])
+
+    def test_a_broken_settings_file_uploads_without_transfers(self):
+        self.path.write_text("{not json")
+        check = starting_check()
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
+            response = self.client.post("/api/starting-balance", json=TARGET)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(start.call_args.kwargs["transfers"], {})
+
+
+class HostedUploadTransfersTest(HostedRulesWebTest):
+    """Hosted, the upload reads the signed-in Google user's rules."""
+
+    def test_signed_in_user_rules_apply(self):
+        self.sign_in_with_wallets(
+            transfer_rules=[
+                {"description": "Payment to", "from_wallet": "gcash", "to_wallet": "gotyme"}
+            ]
+        )
+        self.set_ynab_state(
+            access_token="test-token",
+            token_kind="oauth",
+            expires_at=time.time() + 3600,
+            source="gcash",
+            rows=ROWS,
+            transactions=TRANSACTIONS,
+        )
+        check = starting_check()
+        with mock.patch.object(upload, "starting_balance_check", return_value=check):
+            response = self.client.post("/api/starting-balance", json=TARGET)
+        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
+
+    def test_not_signed_in_no_transfers(self):
+        self.set_ynab_state(
+            access_token="test-token",
+            token_kind="oauth",
+            expires_at=time.time() + 3600,
+            source="gcash",
+            rows=ROWS,
+            transactions=TRANSACTIONS,
+        )
+        check = starting_check()
+        with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
+            self.client.post("/api/starting-balance", json=TARGET)
+        self.assertEqual(start.call_args.kwargs["transfers"], {})
 
 
 if __name__ == "__main__":

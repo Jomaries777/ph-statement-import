@@ -11,9 +11,12 @@ A wallet is one account at a source, by its id ("gcash", "gcash-2", ...;
 web/transfer_rules.py says where each mode gets its wallets from). Matching
 ignores case and extra spaces, and looks at the source's text_column
 (sources.py), so it works for every source with no code of its own.
+It needs a rule for each side: one in GCash statements to GoTyme, and one in
+GoTyme statements to GCash (ynab_api/transfers.py says why).
 
 Nothing here knows about YNAB or where rules are stored: find_transfers() only
-says which rows match. Importing them as YNAB transfers is up to the caller.
+says which rows match, and transfer_accounts() which YNAB account each goes
+to. ynab_api/transfers.py imports them as YNAB transfers.
 """
 
 from dataclasses import asdict, dataclass
@@ -71,6 +74,34 @@ def find_transfers(
                 matches[index] = to_wallet
                 break
     return matches
+
+
+def transfer_accounts(
+    rows: list[dict],
+    source,
+    account_id: str,
+    wallet_accounts: dict[str, str],
+    rules: list[TransferRule],
+) -> dict[int, str]:
+    """find_transfers() for a statement imported into YNAB account `account_id`,
+    with each destination wallet turned into its YNAB account.
+
+    wallet_accounts is {wallet id: YNAB account id}. The statement's wallet is
+    the one on `account_id` (each wallet has its own account); with none, or a
+    destination wallet with no account, those rows aren't transfers.
+
+        transfer_accounts(rows, SOURCES["gcash"], "acc-gcash",
+                          {"gcash": "acc-gcash", "gotyme": "acc-gotyme"}, rules)
+        -> {0: "acc-gotyme"}
+    """
+    wallet_id = next((w for w, a in wallet_accounts.items() if a == account_id), None)
+    if wallet_id is None:
+        return {}
+    return {
+        index: wallet_accounts[to_wallet]
+        for index, to_wallet in find_transfers(rows, source, wallet_id, rules).items()
+        if wallet_accounts.get(to_wallet)
+    }
 
 
 def clean_rules(raw: object, wallet_ids: set[str]) -> tuple[list[TransferRule] | None, str | None]:

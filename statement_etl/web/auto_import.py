@@ -345,6 +345,9 @@ def format_run(run: dict, mappings: dict) -> dict:
 
     if status in (runner.OK, runner.BALANCE_MISMATCH):
         counts = f"{created} created · {skipped} skipped"
+        transfers = int(run.get("transfers") or 0)
+        if transfers:
+            counts += f" · {transfers} transfer{'' if transfers == 1 else 's'}"
         if run.get("categorized") is not None:
             counts += f" · {int(run['categorized'])} categorized"
         # The import worked either way; categorizing is only noted

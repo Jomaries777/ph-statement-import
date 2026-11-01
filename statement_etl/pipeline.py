@@ -29,8 +29,12 @@ How it works:
                     transaction set to the statement's starting
                     balance instead                              (new_account_starting_balance ->
                                                                   ynab_api.balance.set_new_account_starting_balance)
-    5. Import     - send all transactions to YNAB in one call    (upload_transactions ->
-                                                                  ynab_api.client.import_transactions)
+    5. Import     - send all transactions to YNAB in one call;
+                    rows a transfer rule matched go as YNAB
+                    transfers, unless YNAB already has their
+                    other side (web app and auto-import only)    (upload_transactions ->
+                                                                  ynab_api.client.import_transactions,
+                                                                  ynab_api.transfers.apply_transfers)
     6. End        - after the upload, the YNAB account balance
                     should equal the statement's ending
                     balance; a warning only, adjust in YNAB      (ending_balance_check ->
@@ -97,6 +101,7 @@ from statement_etl.ynab_api.client import (
     import_transactions,
 )
 from statement_etl.ynab_api.format import to_ynab
+from statement_etl.ynab_api.transfers import apply_transfers
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -183,7 +188,13 @@ def upload_transactions(transactions, account_id, plan_id, access_token=None):
 
 
 def starting_balance_check(
-    rows, transactions, account_id, plan_id, access_token=None, source=DEFAULT_SOURCE
+    rows,
+    transactions,
+    account_id,
+    plan_id,
+    access_token=None,
+    source=DEFAULT_SOURCE,
+    transfers=None,
 ):
     """ph-statement-import step, before the upload: compare the YNAB account
     balance with the statement's starting balance. Read only.
@@ -192,13 +203,20 @@ def starting_balance_check(
     already has (ynab_api.client.find_already_imported) are skipped on upload, so
     the expected "YNAB balance AFTER upload" adds only the others, and the
     check says "X transactions already in YNAB. Only Y will be uploaded."
+    transfers is as in import_statement(): a transfer whose other side YNAB
+    already has counts as already in YNAB too.
     Returns the check dict from
     ynab_api.balance.check_starting_balance(); describe it with
     ynab_api.balance.balance_check_message(). A mismatch is a warning only.
     Raises ynab.ApiException if YNAB rejects the request.
     """
     starting = get_source(source).statement_balances(rows)["starting"]
-    already = find_already_imported(transactions, account_id, plan_id, access_token)
+    _, other_side_in_ynab = apply_transfers(
+        transactions, transfers, account_id, plan_id, access_token
+    )
+    already = (
+        find_already_imported(transactions, account_id, plan_id, access_token) | other_side_in_ynab
+    )
     to_upload = [t for t in transactions if t["import_id"] not in already]
     upload_total = Decimal(sum(t["amount"] for t in to_upload)) / 1000
     return check_starting_balance(
@@ -247,13 +265,23 @@ class ImportResult:
     new_account: dict | None  # {"from", "to"} if a new account's Starting Balance was set
     ynab_before: Decimal  # YNAB account balance just before the upload, in pesos
     created: list  # YNAB TransactionDetail objects that were created
-    skipped: int  # transactions YNAB already had (same import_id), so not created again
+    # Transactions YNAB already had, so not created again: the same import_id,
+    # or a transfer whose other side YNAB added on an earlier import
+    skipped: int
     ending_check: dict | None  # from ending_balance_check(); None if it failed
     ending_error: ynab.ApiException | None  # why the ending check failed, if it did
+    transfers: int = 0  # rows imported as transfers (or whose transfer was already in YNAB)
 
 
 def import_statement(
-    rows, transactions, account_id, plan_id, access_token=None, source=DEFAULT_SOURCE, on_step=None
+    rows,
+    transactions,
+    account_id,
+    plan_id,
+    access_token=None,
+    source=DEFAULT_SOURCE,
+    on_step=None,
+    transfers=None,
 ):
     """ph-statement-import step: import a parsed statement into one YNAB account.
 
@@ -262,11 +290,16 @@ def import_statement(
     upload_transactions(). on_step, if given, is told STEP_UPLOAD before step 1
     and STEP_END_BALANCE before step 4 (see PROGRESS above).
 
+    transfers, if given, is {row index: destination YNAB account id}, the rows
+    a transfer rule matched (transfers.transfer_accounts()). They're sent as
+    YNAB transfers, except those whose other side YNAB already has
+    (ynab_api/transfers.py), which are skipped like already-imported ones.
+
         result = import_statement(rows, transactions, account_id, plan_id)
         len(result.created), result.skipped  ->  (23, 2)
 
-    Raises ynab.ApiException if YNAB rejects steps 1-3, so each caller reports
-    it its own way. Step 4 runs after the upload is done, so its failure is
+    Raises ynab.ApiException if YNAB rejects steps 1-4, so each caller reports
+    it its own way. Step 5 runs after the upload is done, so its failure is
     returned in ending_error instead.
 
     Running it again with the same transactions is safe (the web app does
@@ -284,10 +317,21 @@ def import_statement(
     # 2. YNAB balance just before the upload, for the ending-balance message
     ynab_before = get_account_balance(plan_id, account_id, access_token)
 
-    # 3. All transactions in one API call; YNAB skips import_ids it already has
-    uploaded = upload_transactions(transactions, account_id, plan_id, access_token)
+    # 3. Rows a transfer rule matched become YNAB transfers; the ones YNAB
+    #    already has as the other side of a transfer aren't sent again
+    transactions, other_side_in_ynab = apply_transfers(
+        transactions, transfers, account_id, plan_id, access_token
+    )
+    to_upload = [t for t in transactions if t["import_id"] not in other_side_in_ynab]
 
-    # 4. YNAB balance after the upload vs. the statement's ending balance
+    # 4. All of them in one API call; YNAB skips import_ids it already has
+    created, duplicates = [], []
+    if to_upload:
+        uploaded = upload_transactions(to_upload, account_id, plan_id, access_token)
+        created = uploaded.transactions or []
+        duplicates = uploaded.duplicate_import_ids or []
+
+    # 5. YNAB balance after the upload vs. the statement's ending balance
     report(STEP_END_BALANCE, {})
     ending_check, ending_error = None, None
     try:
@@ -300,10 +344,11 @@ def import_statement(
     return ImportResult(
         new_account=new_account,
         ynab_before=ynab_before,
-        created=uploaded.transactions or [],
-        skipped=len(uploaded.duplicate_import_ids or []),
+        created=created,
+        skipped=len(duplicates) + len(other_side_in_ynab),
         ending_check=ending_check,
         ending_error=ending_error,
+        transfers=sum(1 for t in transactions if t.get("payee_id")),
     )
 
 

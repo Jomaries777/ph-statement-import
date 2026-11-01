@@ -72,7 +72,8 @@ def import_transactions(transactions, account_id, plan_id, access_token=None):
     """Create transactions in YNAB.
 
     transactions - list of dicts from ynab_api.format.to_ynab()
-                   (date, payee_name, import_id, amount, memo)
+                   (date, payee_name, import_id, amount, memo), and payee_id
+                   for transfers (ynab_api/transfers.py)
     account_id   - the YNAB account to add them to (your GCash account)
     plan_id      - YNAB plan (budget) id that contains that account
     access_token - token from the web app; None uses $BEARER_TOKEN
@@ -87,6 +88,9 @@ def import_transactions(transactions, account_id, plan_id, access_token=None):
                 "date": t["date"],
                 "amount": t["amount"],
                 "payee_name": t["payee_name"][:200],
+                # A transfer's other account (ynab_api/transfers.py); YNAB then
+                # ignores payee_name
+                "payee_id": t.get("payee_id"),
                 "memo": t.get("memo"),
                 "import_id": t["import_id"],
                 # e.g. "red" on balance-correction rows so they stand out

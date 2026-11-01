@@ -73,6 +73,10 @@
     <h2>Rules</h2>
     <p class="muted">In statements from the source bank, a row whose description contains the
       text is a transfer to the destination bank. Capital letters and extra spaces don't matter.</p>
+    <p class="muted">Add a rule for each side, e.g. in GCash statements "Transfer to 0917123"
+      goes to GoTyme, and in GoTyme statements "InstaPay from GCash" goes to GCash. Whichever
+      statement you import first makes the transfer in YNAB; the second one finds it there and
+      doesn't add it again.</p>
     <div class="table-wrap">
       <table id="rules-table">
         <thead><tr><th>Description</th><th>Source bank</th><th>Destination bank</th><th></th></tr></thead>

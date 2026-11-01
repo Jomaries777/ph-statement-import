@@ -93,3 +93,10 @@ else:
 # Gemini picks categories for what an import created: hosted mode only, where
 # the key is the server's. Each person still ticks it on themselves.
 CATEGORIZE_AVAILABLE = HOSTED and bool(os.environ.get("GEMINI_API_KEY"))
+
+# Gmail auto-import: hosted mode with GOOGLE_CLIENT_ID (app.py registers web/auto_import.py)
+AUTO_IMPORT = HOSTED and bool(os.environ.get("GOOGLE_CLIENT_ID"))
+
+# Transfer rules (web/transfer_rules.py): hosted, they're saved with the Google
+# account, so they need auto-import's sign-in
+TRANSFER_RULES = AUTO_IMPORT or not HOSTED

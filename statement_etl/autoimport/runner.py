@@ -76,6 +76,7 @@ from statement_etl.autoimport import gmail, store
 from statement_etl.categorize import categorize_transactions
 from statement_etl.parsers.common import PasswordError, StatementError
 from statement_etl.sources import SOURCES, Source, get_source
+from statement_etl.transfers import rules_from_dicts, transfer_accounts
 from statement_etl.web import ynab_oauth
 from statement_etl.ynab_api.categories import uncategorized_created
 
@@ -309,6 +310,16 @@ def _wallets_by_source(user: dict) -> dict[str, dict[str, dict]]:
     return wallets
 
 
+def _wallet_accounts(user: dict) -> dict[str, str]:
+    """{wallet id: YNAB account id} for the user's wallets that have an account,
+    for transfer rules (transfers.transfer_accounts())."""
+    return {
+        wallet_id: mapping["account_id"]
+        for wallet_id, mapping in (user.get("mappings") or {}).items()
+        if mapping.get("account_id")
+    }
+
+
 def wallet_account(user: dict, source, wallet_id: str) -> str:
     """The source.account_input value saved for a wallet, e.g. the first 7 digits
     of a GCash mobile number ("0917123"); "" if there's none."""
@@ -473,7 +484,15 @@ def _import_email(
         result["message"] = "The PDF couldn't be read."
         return PARSE_ERROR
 
-    # 4. Import, unapproved, the same way as a manual upload
+    # 4. Import, unapproved, the same way as a manual upload; rows a transfer
+    #    rule matches become YNAB transfers
+    transfers = transfer_accounts(
+        rows,
+        source,
+        mapping["account_id"],
+        _wallet_accounts(user),
+        rules_from_dicts(user.get("transfer_rules")),
+    )
     try:
         imported = pipeline.import_statement(
             rows,
@@ -483,6 +502,7 @@ def _import_email(
             ynab_token,
             source=source.key,
             on_step=progress.report,
+            transfers=transfers,
         )
     except ynab.ApiException as e:
         if _try_again_later(e):
@@ -492,6 +512,8 @@ def _import_email(
 
     result["created"] = len(imported.created)
     result["skipped"] = imported.skipped
+    if imported.transfers:
+        result["transfers"] = imported.transfers
     _categorize(user, imported.created, ynab_token, result, progress)
     if imported.ending_check is None:  # the upload worked; only the check after it failed
         result["message"] = "Imported, but YNAB's balance couldn't be checked."

@@ -405,6 +405,12 @@ class PageViewTest(AutoImportWebTest):
         self.assertNotIn(">1 created · 1 skipped<", html)  # oldest two dropped at limit=20
         self.assertNotIn(">0 created · 1 skipped<", html)
 
+    def test_a_run_shows_its_transfers(self):
+        run = {"source": "gcash", "status": "ok", "created": 20, "skipped": 1, "transfers": 3}
+        self.assertEqual(
+            auto_import.format_run(run, {})["result"], "20 created · 1 skipped · 3 transfers"
+        )
+
     def test_a_run_shows_what_gemini_categorized(self):
         run = {"source": "gcash", "status": "ok", "created": 286, "skipped": 0, "categorized": 240}
         self.assertEqual(

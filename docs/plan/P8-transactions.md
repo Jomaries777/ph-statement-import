@@ -128,11 +128,11 @@ A rule is a **description** (text the statement row contains, ignoring case), a 
 
 ### PR 7: `feat/import-transfers`, "feat: import rows matching a transfer rule as YNAB transfers"
 
-- [ ] Spike first, on a test plan: does YNAB match the other side's own import to a transfer created through the API, or make a duplicate? Write the answer in the PR.
-- [ ] `ynab_api/transfers.py`: a matching row gets the destination account's transfer payee. If the other side is already in YNAB (same amount, within 3 days), the row isn't uploaded again and counts as "already in YNAB as a transfer".
-- [ ] `import_statement(..., transfers=None)`; the starting balance check counts those rows like already-imported ones.
-- [ ] The parsed table marks matching rows "→ GoTyme"; the results and the run log show "12 transfers".
-- [ ] Tests: transfer payees, the balance math, the runner.
+- [ ] Spike first, on a test plan: does YNAB match the other side's own import to a transfer created through the API, or make a duplicate? Write the answer in the PR. Not done yet: it needs a real YNAB plan. The code doesn't depend on the answer, because it skips the other side itself (next box), as long as there's a rule for each side.
+- [x] `ynab_api/transfers.py`: a matching row gets the destination account's transfer payee. If the other side is already in YNAB (same amount, within 3 days), the row isn't uploaded again and counts as "already in YNAB as a transfer".
+- [x] `import_statement(..., transfers=None)`; the starting balance check counts those rows like already-imported ones. No separate progress step: it runs inside the upload step, and the page's checklist lists "N rows marked as transfers".
+- [x] The parsed table marks matching rows "→ GoTyme"; the results and the run log show "12 transfers".
+- [x] Tests: transfer payees, the balance math, the runner.
 
 ## Tests
 

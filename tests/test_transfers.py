@@ -16,6 +16,7 @@ from statement_etl.transfers import (
     find_transfers,
     normalize,
     rules_from_dicts,
+    transfer_accounts,
 )
 
 GCASH = SOURCES["gcash"]
@@ -67,6 +68,26 @@ class FindTransfersTest(unittest.TestCase):
 
     def test_no_rules_no_transfers(self):
         self.assertEqual(find_transfers([gcash_row("Transfer to 0917123")], GCASH, "gcash", []), {})
+
+
+class TransferAccountsTest(unittest.TestCase):
+    WALLETS = {"gcash": "acc-gcash", "gotyme": "acc-gotyme", "gcash-2": ""}
+
+    def test_destination_wallets_become_their_accounts(self):
+        rows = [gcash_row("Transfer to 0917123")]
+        self.assertEqual(
+            transfer_accounts(rows, GCASH, "acc-gcash", self.WALLETS, [TO_GOTYME]),
+            {0: "acc-gotyme"},
+        )
+
+    def test_an_account_that_is_no_wallet_has_no_transfers(self):
+        rows = [gcash_row("Transfer to 0917123")]
+        self.assertEqual(transfer_accounts(rows, GCASH, "acc-bpi", self.WALLETS, [TO_GOTYME]), {})
+
+    def test_a_destination_without_an_account_is_no_transfer(self):
+        rule = TransferRule("Transfer", from_wallet="gcash", to_wallet="gcash-2")
+        rows = [gcash_row("Transfer to 0917123")]
+        self.assertEqual(transfer_accounts(rows, GCASH, "acc-gcash", self.WALLETS, [rule]), {})
 
 
 class RulesFromDictsTest(unittest.TestCase):

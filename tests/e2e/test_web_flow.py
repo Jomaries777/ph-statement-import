@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest import mock
 
 import tests  # noqa: F401 - the safety net: nothing reaches YNAB or the keyring
+from statement_etl import local_settings
 from tests.e2e import fake_ynab, make_pdf
 from tests.e2e.fake_server import FakeServer
 from tests.hosted import PUBLIC_URL, hosted_mode
@@ -480,6 +481,39 @@ class WebFlowTest(BrowserTest):
         expect(page.locator("#rules-table tbody input")).to_have_value("Transfer to 0917123")
         expect(wallets).to_have_count(2)
         self.assertTrue(settings.exists())
+        self.assertEqual(self.console_errors, [])
+
+    def test_a_row_matching_a_transfer_rule_becomes_a_ynab_transfer(self):
+        page = self.page
+        settings = Path(self.tmp.name) / "rules-upload-settings.json"
+        self.enterContext(mock.patch.dict(os.environ, {"LOCAL_SETTINGS_PATH": str(settings)}))
+        gcash, gotyme = fake_ynab.EXISTING_ACCOUNT_ID, fake_ynab.NEW_ACCOUNT_ID
+        local_settings.save_settings(
+            wallets=[
+                {"id": gcash, "source": "gcash", "account_name": fake_ynab.EXISTING_ACCOUNT_NAME},
+                {"id": gotyme, "source": "gotyme", "account_name": fake_ynab.NEW_ACCOUNT_NAME},
+            ],
+            # make_pdf.BALANCED_ROWS[2]: "Cash-in from Test Bank", +250.00
+            transfer_rules=[
+                {"description": "cash-in from test bank", "from_wallet": gcash, "to_wallet": gotyme}
+            ],
+        )
+        self.parse(self.balanced_pdf)
+        self.connect()
+        self.choose_account(gcash)
+        expect(self.preview_rows().nth(2).locator(".transfer-badge")).to_have_text("→ GoTyme")
+        expect(page.locator("#preview-table .transfer-badge")).to_have_count(1)
+
+        self.upload()
+        expect(page.locator("#upload-msg")).to_have_text(
+            "Import successful: 4 transactions created in YNAB (unapproved) · 1 transfer"
+        )
+        expect(page.locator("#upload-steps")).to_contain_text("1 row marked as transfer")
+        # YNAB added the other side to the GoTyme account by itself
+        other_sides = [t for t in self.ynab.transactions(gotyme) if t.transfer_account_id]
+        self.assertEqual(
+            [(t.amount, t.transfer_account_id) for t in other_sides], [(-250000, gcash)]
+        )
         self.assertEqual(self.console_errors, [])
 
 

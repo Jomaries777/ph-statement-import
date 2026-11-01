@@ -38,9 +38,10 @@ from statement_etl.pipeline import (
     parse_statement,
     starting_balance_check,
 )
-from statement_etl.sources import DEFAULT_SOURCE, SOURCES
-from statement_etl.web import token_store
-from statement_etl.web.config import CATEGORIZE_AVAILABLE, HOSTED
+from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
+from statement_etl.transfers import transfer_accounts
+from statement_etl.web import token_store, transfer_rules
+from statement_etl.web.config import CATEGORIZE_AVAILABLE, HOSTED, TRANSFER_RULES
 from statement_etl.web.limits import CATEGORIZE_LIMIT, PARSE_LIMIT, limiter
 from statement_etl.web.state import error_response, session_state
 from statement_etl.web.ynab_auth import api_error_message, get_token, ynab_call
@@ -221,6 +222,21 @@ def _money(amount):
     return None if amount is None else f"{amount:,.2f}"
 
 
+def _transfers(state, account_id) -> tuple[dict[int, str], dict[str, str]]:
+    """The parsed rows a saved transfer rule matches, for an upload into
+    `account_id` (transfers.transfer_accounts()): ({row index: destination
+    YNAB account id}, {account id: its wallet's name}). Empty without rules,
+    and in hosted mode without auto-import's Google sign-in."""
+    if not TRANSFER_RULES:
+        return {}, {}
+    wallets, rules = transfer_rules.saved_wallets_and_rules()
+    wallet_accounts = {wallet["id"]: wallet["account_id"] for wallet in wallets}
+    transfers = transfer_accounts(
+        state["rows"], get_source(state["source"]), account_id, wallet_accounts, rules
+    )
+    return transfers, {wallet["account_id"]: wallet["name"] for wallet in wallets}
+
+
 @blueprint.post("/api/starting-balance")
 def api_starting_balance():
     """Before the upload: YNAB account balance vs. the statement's starting balance.
@@ -236,12 +252,30 @@ def api_starting_balance():
     if not plan_id or not account_id:
         return error_response("Choose a plan and an account.", 400)
 
+    transfers, wallet_names = _transfers(state, account_id)
     check, err = ynab_call(
         lambda token: starting_balance_check(
-            rows, transactions, account_id, plan_id, token, source=state["source"]
+            rows,
+            transactions,
+            account_id,
+            plan_id,
+            token,
+            source=state["source"],
+            transfers=transfers,
         )
     )
-    return err or jsonify(_check_json(check))
+    if err:
+        return err
+    return jsonify(
+        {
+            **_check_json(check),
+            # rows a transfer rule matched, so the page can mark them
+            "transfers": [
+                {"row": index, "to": wallet_names[to_account]}
+                for index, to_account in sorted(transfers.items())
+            ],
+        }
+    )
 
 
 @blueprint.post("/api/upload")
@@ -266,6 +300,7 @@ def api_upload():
         return error_response("Choose a plan and an account.", 400)
 
     rows = state["rows"]
+    transfers, _ = _transfers(state, account_id)
 
     # New account's Starting Balance, upload, ending balance check. After a
     # token refresh ynab_call() runs it again, which is safe: YNAB skips
@@ -280,6 +315,7 @@ def api_upload():
                 token,
                 source=state["source"],
                 on_step=_progress_reporter(state),
+                transfers=transfers,
             )
         )
     finally:
@@ -320,6 +356,7 @@ def api_upload():
         {
             "created": created,
             "skipped": imported.skipped,
+            "transfers": imported.transfers,
             "to_categorize": len(to_categorize),
             "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
             "ending_check": ending_check,

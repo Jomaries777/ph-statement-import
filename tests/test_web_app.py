@@ -844,9 +844,9 @@ class StartingBalanceTest(WebTest):
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
             response = self.post(TARGET)
-        self.assertEqual(response.get_json(), upload._check_json(check))
+        self.assertEqual(response.get_json(), {**upload._check_json(check), "transfers": []})
         start.assert_called_once_with(
-            ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash"
+            ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "test-token", source="gcash", transfers={}
         )
 
 
@@ -956,6 +956,7 @@ class UploadTest(WebTest):
                     },
                 ],
                 "skipped": 1,
+                "transfers": 0,
                 "to_categorize": 0,
                 "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
                 "ending_check": upload._check_json(self.ending),
@@ -1132,6 +1133,7 @@ class LoggingTest(WebTest):
             ending_check=None,
             ending_error=None,
             new_account=None,
+            transfers=0,
         )
         form = {
             "password": "log-test-password",
@@ -1380,6 +1382,7 @@ class CategorizeTest(Hosted, WebTest):
                 ending_check=None,
                 ending_error=None,
                 new_account=None,
+                transfers=0,
             ),
         )
         self.categorize = self.patch(upload, "categorize_transactions")

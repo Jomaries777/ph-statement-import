@@ -25,6 +25,7 @@ document per account, in the project's (default) database:
             source, account_id, account_name, status, created, skipped, message,
             received_at, ran_at, step, duration_seconds, wallet, wallet_name,
             categorized, categorize_error   (only when categorize is on)
+            transfers                       (rows imported as transfers, if any)
 
 Nothing is stored for users who don't turn it on, and "Turn off and delete"
 removes the document and its runs (delete_user()).

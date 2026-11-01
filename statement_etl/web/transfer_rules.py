@@ -19,20 +19,26 @@ your wallets. Where rules and wallets are kept depends on the mode:
 
 Both modes hand the page the same wallet dicts:
     {"id", "name", "source", "account_id", "account_name"}
+
+The manual upload reads them with saved_wallets_and_rules(); auto-import
+(autoimport/runner.py) reads the user's record itself.
 """
+
+import logging
 
 from flask import Blueprint, jsonify, render_template, request
 
 from statement_etl import local_settings
 from statement_etl.autoimport import runner, store
 from statement_etl.sources import SOURCES
-from statement_etl.transfers import clean_rules
+from statement_etl.transfers import TransferRule, clean_rules, rules_from_dicts
 from statement_etl.web.auto_import import is_email_allowed, signed_in_user
 from statement_etl.web.config import HOSTED
 from statement_etl.web.limits import AUTO_IMPORT_LIMIT, limiter
 from statement_etl.web.state import error_response
 
 blueprint = Blueprint("transfer_rules", __name__)
+log = logging.getLogger(__name__)
 
 MAX_LOCAL_WALLETS = 20
 
@@ -113,6 +119,26 @@ def _clean_local_wallets(raw: object) -> tuple[list[dict] | None, str | None]:
         account_name = str(item.get("account_name") or "")[:200]
         wallets.append({"id": account_id, "source": source, "account_name": account_name})
     return wallets, None
+
+
+def saved_wallets_and_rules() -> tuple[list[dict], list[TransferRule]]:
+    """This browser's wallets and transfer rules, for an upload (web/upload.py).
+
+    Hosted: the signed-in, invited Google user's; none when not signed in.
+    Local: the settings file's; none when it can't be read (the upload goes
+    on without transfers, and /transfer-rules shows what's wrong with it).
+    """
+    if HOSTED:
+        user, error = _hosted_user()
+        if error:
+            return [], []
+        return hosted_wallets(user), rules_from_dicts(user.get("transfer_rules"))
+    try:
+        settings = local_settings.load_settings()
+    except local_settings.LocalSettingsError as e:
+        log.warning("Upload without transfer rules: %s", e)
+        return [], []
+    return local_wallets(settings), rules_from_dicts(settings.get("transfer_rules"))
 
 
 # =============================================================================
