@@ -211,6 +211,9 @@ class AutoImportWebTest(unittest.TestCase):
             for k, v in os.environ.items()
             if not k.startswith(("YNAB_CLIENT_", "GOOGLE_", "ALLOWED_GOOGLE_", "GCP_"))
         }
+        # No Gemini key unless the test's hosted env has one; empty, so a .env
+        # file can't add one
+        clean_env["GEMINI_API_KEY"] = ""
         self.patch_dict(os.environ, clean_env, clear=True)
         self.enterContext(hosted_mode(AUTO_IMPORT_ENV))
 
@@ -401,6 +404,17 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn(">2 created · 1 skipped<", html)
         self.assertNotIn(">1 created · 1 skipped<", html)  # oldest two dropped at limit=20
         self.assertNotIn(">0 created · 1 skipped<", html)
+
+    def test_a_run_shows_what_gemini_categorized(self):
+        run = {"source": "gcash", "status": "ok", "created": 286, "skipped": 0, "categorized": 240}
+        self.assertEqual(
+            auto_import.format_run(run, {})["result"], "286 created · 0 skipped · 240 categorized"
+        )
+        failed = {**run, "categorized": None, "categorize_error": "Gemini ran out of time."}
+        self.assertEqual(
+            auto_import.format_run(failed, {})["result"],
+            "286 created · 0 skipped · Not categorized: Gemini ran out of time.",
+        )
 
     def test_a_run_keeps_the_account_it_imported_into(self):
         mappings = {"gcash": {"account_id": ACCOUNT_ID, "account_name": "GCash1", "enabled": True}}
@@ -654,6 +668,15 @@ class SaveSettingsTest(AutoImportWebTest):
             {"birth_date": "1990-05-15"},
         )
 
+    def test_categorize_is_off_without_a_gemini_key(self):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+            self.post({**valid_settings_payload(), "categorize": True})
+        self.assertFalse(self.store.get_user(SUB)["categorize"])
+        self.assertNotIn('id="categorize"', self.client.get("/auto-import").get_data(as_text=True))
+
     def test_rejects_a_date_of_birth_that_is_not_a_date(self):
         self.sign_in_google()
         self.connect_ynab_oauth()
@@ -784,6 +807,55 @@ class SaveSettingsTest(AutoImportWebTest):
 # =============================================================================
 # PROGRESS - the import running now, at the top of Recent imports
 # =============================================================================
+
+
+class CategorizeSettingTest(AutoImportWebTest):
+    """The server has a Gemini key: each user can turn categorizing on."""
+
+    def setUp(self):
+        env = {**AUTO_IMPORT_ENV, "GEMINI_API_KEY": "test-gemini-key"}
+        self.enterContext(mock.patch.dict(AUTO_IMPORT_ENV, env))
+        super().setUp()
+
+    def save(self, **payload):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+            response = self.client.post(
+                "/api/auto-import", json={**valid_settings_payload(), **payload}
+            )
+        self.assertEqual(response.status_code, 200)
+        return self.store.get_user(SUB)
+
+    def test_saved_when_ticked(self):
+        self.assertTrue(self.save(categorize=True)["categorize"])
+        html = self.client.get("/auto-import").get_data(as_text=True)
+        self.assertIn('<input id="categorize" type="checkbox" checked>', html)
+        self.assertIn("With Gemini, after each import", html)
+        self.assertIn("at least 80% sure", html)
+
+    def test_off_unless_ticked(self):
+        for value in (False, "yes", None):
+            with self.subTest(categorize=value):
+                self.assertFalse(self.save(categorize=value)["categorize"])
+
+    def test_the_running_import_lists_gemini_only_when_on(self):
+        now = datetime.now(UTC)
+        progress = {
+            "emails": [{"source": "gcash", "account_name": "GCash"}],
+            "index": 0,
+            "step": pipeline.STEP_CATEGORIZE,
+            "started_at": now - timedelta(seconds=20),
+            "updated_at": now,
+        }
+        on = auto_import.format_progress({**progress, "categorize": True}, now)
+        self.assertEqual(
+            on["rows"][0]["steps"][-1], {"label": "Categorizing with Gemini", "state": "now"}
+        )
+        self.assertEqual((on["done_steps"], on["total_steps"]), (4, 5))
+        off = auto_import.format_progress({**progress, "step": pipeline.STEP_UPLOAD}, now)
+        self.assertEqual(off["total_steps"], 4)
 
 
 class RunProgressTest(AutoImportWebTest):

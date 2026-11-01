@@ -65,6 +65,7 @@ from flask import Blueprint, current_app, jsonify, redirect, render_template, re
 
 from statement_etl import pipeline
 from statement_etl.autoimport import gmail, runner, store
+from statement_etl.categorize import MIN_CONFIDENCE
 from statement_etl.sources import SOURCES
 from statement_etl.web import config, ynab_oauth
 from statement_etl.web.limits import AUTO_IMPORT_LIMIT, limiter
@@ -130,6 +131,7 @@ RUN_STEPS = (
     (pipeline.STEP_READ, "Reading the statement", "Statement read"),
     (pipeline.STEP_UPLOAD, "Uploading to YNAB", "Uploaded to YNAB"),
     (pipeline.STEP_END_BALANCE, "Checking the balance", "Balance checked"),
+    (pipeline.STEP_CATEGORIZE, "Categorizing with Gemini", "Categorized"),
 )
 
 # Progress not updated for this long belongs to a run that stopped part-way
@@ -288,6 +290,11 @@ def format_run(run: dict, mappings: dict) -> dict:
 
     if status in (runner.OK, runner.BALANCE_MISMATCH):
         counts = f"{created} created · {skipped} skipped"
+        if run.get("categorized") is not None:
+            counts += f" · {int(run['categorized'])} categorized"
+        # The import worked either way; categorizing is only noted
+        if run.get("categorize_error"):
+            note = " ".join(filter(None, [note, f"Not categorized: {run['categorize_error']}"]))
         result = f"{counts} · {note}" if note else counts
     elif status == runner.NO_ATTACHMENT:
         result = note or "No matching PDF attachment"
@@ -333,10 +340,16 @@ def format_progress(progress: dict | None, now: datetime | None = None) -> dict 
     updated_at = progress.get("updated_at") or progress.get("started_at")
     running = isinstance(updated_at, datetime) and now - updated_at < STALE_PROGRESS
 
-    # The current email's steps: done, the one running now, still to do
-    position = next((n for n, step in enumerate(RUN_STEPS) if step[0] == progress["step"]), 0)
+    # The current email's steps: done, the one running now, still to do.
+    # Gemini's only for a user who turned it on.
+    run_steps = [
+        step
+        for step in RUN_STEPS
+        if step[0] != pipeline.STEP_CATEGORIZE or progress.get("categorize")
+    ]
+    position = next((n for n, step in enumerate(run_steps) if step[0] == progress["step"]), 0)
     steps = []
-    for n, (name, while_running, once_done) in enumerate(RUN_STEPS):
+    for n, (name, while_running, once_done) in enumerate(run_steps):
         if name == pipeline.STEP_READ and progress.get("rows") and n < position:
             once_done = f"{progress['rows']} rows read"
         state = "done" if n < position else "now" if n == position else "todo"
@@ -370,7 +383,7 @@ def format_progress(progress: dict | None, now: datetime | None = None) -> dict 
         else "",
         "rows": rows,
         "done_steps": position,
-        "total_steps": len(RUN_STEPS),
+        "total_steps": len(run_steps),
     }
 
 
@@ -439,6 +452,9 @@ def page():
         has_stored_data=user is not None,
         has_saved_ynab=bool(user and user.get("ynab_refresh_token")),
         enabled=enabled,
+        categorize_available=config.CATEGORIZE_AVAILABLE,
+        categorize=bool((user or {}).get("categorize")),
+        min_confidence=MIN_CONFIDENCE,
         plan_id=(user or {}).get("plan_id", ""),
         plan_name=(user or {}).get("plan_name", ""),
         last_checked=last_checked,
@@ -620,6 +636,8 @@ def _validate_settings(body: object) -> tuple[dict | None, str | None]:
         "plan_name": plan_name or plan_id,
         "mappings": clean_mappings,
         "password_inputs": clean_inputs,
+        # Gemini categorizes what each import creates; only where the server can
+        "categorize": config.CATEGORIZE_AVAILABLE and body.get("categorize") is True,
     }, None
 
 

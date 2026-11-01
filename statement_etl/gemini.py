@@ -6,7 +6,9 @@ ph-statement-import - Google Gemini REST client: ask a question, get JSON back.
 
 When Gemini is busy (HTTP 429 or 5xx, e.g. "This model is currently
 experiencing high demand"), the call waits and tries again, up to
-len(RETRY_WAITS) more times, before giving up.
+len(RETRY_WAITS) more times, before giving up. With a deadline (a web request
+must answer within Cloud Run's 60 seconds), it gives up sooner: no wait goes
+past the deadline, and the request's timeout is cut to fit.
 
 Uses plain HTTPS via `urllib`, like autoimport/gmail.py, so there's no Google
 client library to install. Used by categorize.py.
@@ -50,15 +52,22 @@ class GeminiError(RuntimeError):
         self.status = status  # the HTTP status, if Gemini answered with an error
 
 
-def generate_json(prompt: str, schema: dict, api_key: str, model: str | None = None):
+def generate_json(
+    prompt: str,
+    schema: dict,
+    api_key: str,
+    model: str | None = None,
+    deadline: float | None = None,
+):
     """Ask Gemini `prompt` and return its answer, parsed from JSON.
 
     schema is the shape the answer must have, in Gemini's responseSchema
     format, e.g. {"type": "ARRAY", "items": {"type": "STRING"}} -> ["a", "b"].
     model defaults to $GEMINI_MODEL, then DEFAULT_MODEL.
+    deadline, if given, is a time.monotonic() value to give up by.
 
     Raises GeminiError if Gemini can't be reached, stays busy after every
-    retry, refuses, or answers something that isn't JSON.
+    retry (or until the deadline), refuses, or answers something that isn't JSON.
     """
     model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
     url = f"{GEMINI_API_BASE}/{urllib.parse.quote(model)}:generateContent"
@@ -71,7 +80,7 @@ def generate_json(prompt: str, schema: dict, api_key: str, model: str | None = N
     request = urllib.request.Request(
         url, data=json.dumps(body).encode(), headers=headers, method="POST"
     )
-    response = json.loads(_send_with_retries(request))
+    response = json.loads(_send_with_retries(request, deadline))
 
     try:
         text = response["candidates"][0]["content"]["parts"][0]["text"]
@@ -84,30 +93,41 @@ def generate_json(prompt: str, schema: dict, api_key: str, model: str | None = N
         raise GeminiError("Gemini's answer wasn't valid JSON.") from None
 
 
-def _send_with_retries(request: urllib.request.Request) -> bytes:
+def _send_with_retries(request: urllib.request.Request, deadline: float | None) -> bytes:
     """_send(request), waiting RETRY_WAITS seconds and trying again while Gemini is busy.
 
     Any other error is raised at once: retrying a wrong key or a bad request
-    wouldn't help. Each wait is logged as a warning, which the command line
-    prints, so a long wait doesn't look like a hang.
+    wouldn't help. Neither is a wait that would end after the deadline. Each
+    wait is logged as a warning, which the command line prints, so a long
+    wait doesn't look like a hang.
     """
-    tries = len(RETRY_WAITS) + 1
-    for wait in (*RETRY_WAITS, None):  # None: the last try, with no wait after it
+    # None: the last try, with no wait after it
+    for tries, wait in enumerate((*RETRY_WAITS, None), start=1):
         try:
-            return _send(request)
+            return _send(request, _timeout(deadline))
         except GeminiError as e:
             if e.status not in BUSY_STATUSES:
                 raise
-            if wait is None:
+            if wait is None or (deadline is not None and time.monotonic() + wait >= deadline):
                 raise GeminiError(f"{e} (tried {tries} times)", status=e.status) from None
             log.warning("Gemini is busy (HTTP %s). Trying again in %s seconds.", e.status, wait)
         time.sleep(wait)
 
 
-def _send(request: urllib.request.Request) -> bytes:
+def _timeout(deadline: float | None) -> float:
+    """Seconds one request may take: TIMEOUT_SECONDS, or less to end by the deadline."""
+    if deadline is None:
+        return TIMEOUT_SECONDS
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise GeminiError("Gemini ran out of time.")
+    return min(TIMEOUT_SECONDS, left)
+
+
+def _send(request: urllib.request.Request, timeout: float) -> bytes:
     """urlopen(request).read(), with errors turned into GeminiError."""
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as e:
         try:
@@ -120,5 +140,7 @@ def _send(request: urllib.request.Request) -> bytes:
         raise GeminiError(f"Gemini returned HTTP {e.code}: {detail}", status=e.code) from None
     except urllib.error.URLError as e:
         raise GeminiError(f"Could not reach Gemini: {e.reason}") from None
-    except (TimeoutError, http.client.HTTPException) as e:
+    except TimeoutError:
+        raise GeminiError("Gemini took too long to answer.") from None
+    except http.client.HTTPException as e:
         raise GeminiError(f"Could not reach Gemini: {e or type(e).__name__}") from None

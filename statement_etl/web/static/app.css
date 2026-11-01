@@ -121,3 +121,4 @@ td.wrap-cell { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
   .row { grid-template-columns: 1fr; gap: 4px; }
   .kv { grid-template-columns: 1fr; gap: 2px; }
 }
+.opt-in { margin-top: 12px; }

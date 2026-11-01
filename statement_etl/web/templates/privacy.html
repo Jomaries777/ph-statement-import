@@ -82,6 +82,14 @@
   <h2>What is sent where</h2>
   <ul>
     <li>Your transactions go only to YNAB's API, into the plan and account you choose.</li>
+    <li><strong>Optional: categorize with Gemini.</strong> Only if you tick "Categorize new
+      transactions with Gemini" (on the upload page, or for auto-import), the app sends Google's
+      Gemini API your YNAB category and group names and, for each transaction that import created
+      without a category, its date, account name, payee, memo and amount. Not your YNAB token,
+      balances, statement PDF or anything else. On Gemini's free tier, Google may use what is sent
+      to improve its products
+      (<a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener">Gemini API terms</a>).
+      Leave it unticked and nothing goes to Gemini.</li>
     <li>There are no analytics, no ads, and no other third parties. Your data is never sold or
       shared.</li>
     <li>Google Cloud hosts the app as a processor: it runs the app, and doesn't use your data

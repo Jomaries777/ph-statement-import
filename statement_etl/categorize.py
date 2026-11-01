@@ -3,7 +3,9 @@ ph-statement-import - give YNAB's uncategorized transactions a category, picked 
 
 Run it after importing a statement: imported transactions arrive in YNAB
 without a category unless YNAB knows the payee. This asks Gemini to pick one
-from your own YNAB categories for each of them.
+from your own YNAB categories for each of them. The hosted web app and
+auto-import can also do it right after an import, for only the transactions
+that import created (categorize_transactions(), opt-in).
 
 How it works:
     1. Read   - the plan's categories, and the transactions YNAB
@@ -11,9 +13,11 @@ How it works:
     2. Ask    - send Gemini the category names and each
                 transaction's date, account, payee, memo and
                 amount; it picks one category for each, or
-                "unsure"                                       (suggest_categories ->
+                "unsure", and says how sure it is (0-100)      (suggest_categories ->
                                                                 gemini.generate_json)
-    3. Check  - keep only picks that are one of your categories (suggest_categories)
+    3. Check  - keep only picks that are one of your categories
+                and that Gemini is at least MIN_CONFIDENCE
+                sure of                                        (suggest_categories)
     4. Save   - set those categories in YNAB in one call.
                 Nothing gets approved: you still review each
                 transaction in YNAB                            (ynab_api.categories.set_categories)
@@ -61,6 +65,11 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 # Gemini's answer when no category fits well; that transaction is left uncategorized
 UNSURE = "unsure"
 
+# How sure (0-100) Gemini must say it is for a pick to be saved; below it, the
+# transaction is left uncategorized. It's Gemini's own estimate, not a measured
+# accuracy, so this is the one number to tune if it guesses too much or too little.
+MIN_CONFIDENCE = 80
+
 # Transactions per Gemini request, so a long list doesn't make one huge answer
 BATCH_SIZE = 100
 
@@ -71,6 +80,8 @@ amounts are in pesos, negative for money out and positive for money in.
 For each transaction, pick the one category from the list that fits it best.
 Answer "{unsure}" if none fits well, or if you can't tell what the payee is.
 Income usually goes to "Inflow: Ready to Assign".
+For each pick, also give your confidence: how sure you are, from 0 to 100,
+that the category is right.
 
 Categories, as "Group / Category":
 {categories}
@@ -86,6 +97,7 @@ class Suggestion:
 
     transaction: dict  # from ynab_api.categories.get_uncategorized_transactions()
     category: dict | None  # from ynab_api.categories.get_categories(); None if unsure
+    confidence: int | None = None  # how sure Gemini said it was, 0-100
 
 
 # =============================================================================
@@ -100,30 +112,35 @@ def category_label(category):
     return f"{category['group']} / {category['name']}"
 
 
-def suggest_categories(transactions, categories, api_key, model=None) -> list[Suggestion]:
+def suggest_categories(
+    transactions, categories, api_key, model=None, deadline=None
+) -> list[Suggestion]:
     """Ask Gemini to pick a category for each transaction, BATCH_SIZE at a time.
 
     transactions - from ynab_api.categories.get_uncategorized_transactions()
     categories   - from ynab_api.categories.get_categories()
+    deadline     - optional time.monotonic() value to give up by (gemini.py)
 
     Returns one Suggestion per transaction, in the same order. A pick that
-    isn't one of the categories (or is "unsure") becomes category=None.
+    isn't one of the categories, is "unsure", or that Gemini is less than
+    MIN_CONFIDENCE sure of becomes category=None.
     Raises gemini.GeminiError if Gemini fails.
     """
     by_label = {category_label(c): c for c in categories}
     suggestions = []
     for start in range(0, len(transactions), BATCH_SIZE):
         batch = transactions[start : start + BATCH_SIZE]
-        picks = _ask_gemini(batch, list(by_label), api_key, model)
-        suggestions += [
-            Suggestion(transaction, by_label.get(picks.get(index)))
-            for index, transaction in enumerate(batch)
-        ]
+        picks = _ask_gemini(batch, list(by_label), api_key, model, deadline)
+        for index, transaction in enumerate(batch):
+            label, confidence = picks.get(index, (None, None))
+            sure = confidence is not None and confidence >= MIN_CONFIDENCE
+            category = by_label.get(label) if sure else None
+            suggestions.append(Suggestion(transaction, category, confidence))
     return suggestions
 
 
-def _ask_gemini(transactions, labels, api_key, model):
-    """One Gemini request: {transaction's index in the list: category label}.
+def _ask_gemini(transactions, labels, api_key, model, deadline):
+    """One Gemini request: {transaction's index in the list: (category label, confidence)}.
 
     Transactions are numbered 0, 1, 2, ... rather than sent with their YNAB
     ids: a short number is harder to get wrong, and the ids stay in YNAB.
@@ -154,18 +171,64 @@ def _ask_gemini(transactions, labels, api_key, model):
             "properties": {
                 "index": {"type": "INTEGER"},
                 "category": {"type": "STRING", "enum": [*labels, UNSURE]},
+                "confidence": {"type": "INTEGER"},
             },
-            "required": ["index", "category"],
+            "required": ["index", "category", "confidence"],
         },
     }
-    answer = gemini.generate_json(prompt, schema, api_key, model)
+    answer = gemini.generate_json(prompt, schema, api_key, model, deadline=deadline)
     if not isinstance(answer, list):
         raise gemini.GeminiError("Gemini's answer wasn't a list.")
+    # A pick without a confidence counts as unsure (None)
     return {
-        pick["index"]: pick["category"]
+        pick["index"]: (pick["category"], _confidence(pick.get("confidence")))
         for pick in answer
         if isinstance(pick, dict) and "index" in pick and "category" in pick
     }
+
+
+def _confidence(value) -> int | None:
+    """Gemini's confidence as an int 0-100, or None if it isn't a number."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return max(0, min(100, int(value)))
+
+
+def categorize_transactions(
+    plan_id,
+    transactions,
+    gemini_api_key,
+    access_token=None,
+    model=None,
+    dry_run=False,
+    deadline=None,
+) -> tuple[list[Suggestion], int]:
+    """ph-statement-import step: categorize these transactions with Gemini
+    (steps 2-4 above; step 1's categories are read here too).
+
+        created = ynab_api.categories.uncategorized_created(imported.created)
+        suggestions, updated = categorize_transactions(plan_id, created, api_key, token)
+        len(suggestions), updated  ->  (286, 240)   # 46 left uncategorized
+
+    transactions - transaction dicts (ynab_api.categories.transaction_dict()).
+    Only these are changed, never anything else in the plan. With dry_run,
+    nothing is saved and updated is 0. deadline: see suggest_categories().
+
+    Raises ynab.ApiException if YNAB rejects a request, gemini.GeminiError if
+    Gemini fails. Nothing is saved unless Gemini answered for every batch.
+    """
+    if not transactions:
+        return [], 0
+    categories = get_categories(plan_id, access_token)
+
+    # 2 + 3. Ask Gemini, keeping only sure picks that are real categories
+    suggestions = suggest_categories(transactions, categories, gemini_api_key, model, deadline)
+
+    # 4. Save the picks in one call; the others stay uncategorized
+    if dry_run:
+        return suggestions, 0
+    category_ids = {s.transaction["id"]: s.category["id"] for s in suggestions if s.category}
+    return suggestions, set_categories(plan_id, category_ids, access_token)
 
 
 def categorize_uncategorized(
@@ -190,20 +253,11 @@ def categorize_uncategorized(
     Raises ynab.ApiException if YNAB rejects a request, gemini.GeminiError if
     Gemini fails. Nothing is saved unless Gemini answered for every batch.
     """
-    # 1. Read: the categories to pick from, and the transactions without one
+    # 1. Read: the transactions without a category (and, in there, the categories)
     transactions = get_uncategorized_transactions(plan_id, account_id, since_date, access_token)
-    if not transactions:
-        return [], 0
-    categories = get_categories(plan_id, access_token)
-
-    # 2 + 3. Ask Gemini, keeping only picks that are real categories
-    suggestions = suggest_categories(transactions, categories, gemini_api_key, model)
-
-    # 4. Save the picks in one call; "unsure" ones stay uncategorized
-    if dry_run:
-        return suggestions, 0
-    category_ids = {s.transaction["id"]: s.category["id"] for s in suggestions if s.category}
-    return suggestions, set_categories(plan_id, category_ids, access_token)
+    return categorize_transactions(
+        plan_id, transactions, gemini_api_key, access_token, model, dry_run=dry_run
+    )
 
 
 # =============================================================================
@@ -256,7 +310,7 @@ def main():
         print("No uncategorized transactions in YNAB.")
         return
     _print_table(
-        ("Date", "Account", "Payee", "Amount", "Category"),
+        ("Date", "Account", "Payee", "Amount", "Category", "Sure"),
         [
             (
                 s.transaction["date"],
@@ -264,10 +318,11 @@ def main():
                 s.transaction["payee"],
                 f"{s.transaction['amount']:,.2f}",
                 category_label(s.category) if s.category else "(unsure, left as is)",
+                "" if s.confidence is None else f"{s.confidence}%",
             )
             for s in suggestions
         ],
-        right_aligned=("Amount",),
+        right_aligned=("Amount", "Sure"),
     )
     picked = sum(1 for s in suggestions if s.category)
     if args.dry_run:

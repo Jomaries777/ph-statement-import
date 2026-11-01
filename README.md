@@ -69,7 +69,7 @@ python -m statement_etl.categorize                                 # set them in
 python -m statement_etl.categorize --account-id ID --since 2026-10-01  # one account, recent ones only
 ```
 
-It needs `BEARER_TOKEN`, `YNAB_PLAN_ID` and `GEMINI_API_KEY` (create one in [Google AI Studio](https://aistudio.google.com/apikey)) in `.env`. `GEMINI_MODEL` is optional. When Gemini isn't sure, it says so, and the transaction is left uncategorized. If Gemini is busy, the script waits and tries again (up to 4 times, about 2 minutes in all) before giving up. Only the category changes: an unapproved transaction stays unapproved, so you still review each one in YNAB. Transfers and split transactions are skipped.
+It needs `BEARER_TOKEN`, `YNAB_PLAN_ID` and `GEMINI_API_KEY` (create one in [Google AI Studio](https://aistudio.google.com/apikey)) in `.env`. `GEMINI_MODEL` is optional. Gemini says how sure it is of each pick; one it's less than 80% sure of (`MIN_CONFIDENCE` in `categorize.py`) is left uncategorized, and so is one it says it's unsure of. The table shows each pick's confidence. If Gemini is busy, the script waits and tries again (up to 4 times, about 2 minutes in all) before giving up. Only the category changes: an unapproved transaction stays unapproved, so you still review each one in YNAB. Transfers and split transactions are skipped.
 
 **What goes to Google:** your category and group names, and each uncategorized transaction's date, account name, payee, memo and amount. Not your YNAB token or balances. On Gemini's free tier, Google may use what you send to improve its products ([Gemini API terms](https://ai.google.dev/gemini-api/terms)).
 
@@ -117,7 +117,9 @@ Over plain `http://localhost` the browser won't send the session cookie back, be
 | `PUBLIC_URL` | The address people open, e.g. `https://statements.example.com`. Turns on hosted mode. The OAuth redirect URI is `PUBLIC_URL` + `/oauth/callback`; register exactly that in your YNAB OAuth application. |
 | `YNAB_CLIENT_ID` | From your YNAB OAuth application. Not a secret, so a plain variable. |
 | `GOOGLE_CLIENT_ID` | Optional. From your Google Cloud OAuth 2.0 Web client (redirect URI `PUBLIC_URL` + `/google/callback`). Turns on `/auto-import` when set. |
-| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}` (plus `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` when `GOOGLE_CLIENT_ID` is set). Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
+| `APP_CONFIG` | The secrets as one JSON object: `{"FLASK_SECRET_KEY": "...", "YNAB_CLIENT_SECRET": "..."}` (plus `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` when `GOOGLE_CLIENT_ID` is set, and optionally `GEMINI_API_KEY`). Cloud Run passes it from Secret Manager. Each key can also be set as its own variable instead. |
+
+With `GEMINI_API_KEY` in `APP_CONFIG`, the upload page shows **Categorize new transactions with Gemini** under the Upload button, and the auto-import page the same checkbox for every import. Each person turns it on for themselves (the upload page remembers it in the browser). It categorizes only the transactions that import created, and only with picks Gemini is at least 80% sure of; the rest stay uncategorized. A Gemini problem never undoes the import: the page or the run log says it wasn't categorized. Locally, run `python -m statement_etl.categorize` instead.
 
 `FLASK_SECRET_KEY`, `YNAB_CLIENT_ID` and `YNAB_CLIENT_SECRET` are required in hosted mode (`GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEYS` and `ALLOWED_GOOGLE_EMAILS` too when `GOOGLE_CLIENT_ID` is set). If one is missing, the app stops at startup with a message that names the missing key (never a value). Without a fixed `FLASK_SECRET_KEY`, every restart would sign everyone out.
 

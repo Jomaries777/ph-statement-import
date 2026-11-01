@@ -25,6 +25,11 @@ set. It then also needs GOOGLE_CLIENT_SECRET, ENCRYPTION_KEYS (see
 autoimport/store.py) and ALLOWED_GOOGLE_EMAILS, the invite list. Without
 GOOGLE_CLIENT_ID, none of them is needed.
 
+Categorizing right after an import (categorize.py, opt-in per person) is
+available in hosted mode when GEMINI_API_KEY is set (in APP_CONFIG):
+CATEGORIZE_AVAILABLE is then True. GEMINI_MODEL is optional. Locally, run
+python -m statement_etl.categorize instead.
+
 REDIRECT_URI is where YNAB sends the browser back after OAuth login. It must
 match the redirect URI of your YNAB OAuth application exactly.
 """
@@ -84,3 +89,7 @@ if HOSTED:
     REDIRECT_URI = f"{PUBLIC_URL}/oauth/callback"
 else:
     REDIRECT_URI = f"http://localhost:{PORT}/oauth/callback"
+
+# Gemini picks categories for what an import created: hosted mode only, where
+# the key is the server's. Each person still ticks it on themselves.
+CATEGORIZE_AVAILABLE = HOSTED and bool(os.environ.get("GEMINI_API_KEY"))

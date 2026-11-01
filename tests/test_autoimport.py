@@ -557,6 +557,69 @@ class ProgressTest(RunnerTest):
 # =============================================================================
 
 
+class CategorizeTest(RunnerTest):
+    """Gemini categorizes what each import created, for a user who turned it on."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.dict(os.environ, GEMINI_API_KEY="test-gemini-key"))
+        self.categorize = self.enterContext(
+            mock.patch.object(runner, "categorize_transactions", return_value=([], 3))
+        )
+
+    def poll_one(self, categorize=True):
+        self.add_user()
+        self.store.save_user(SUB, categorize=categorize)
+        self.gmail.add("msg-1")
+        runner.poll_all()
+        return self.runs()["msg-1:gcash"]
+
+    def test_only_what_the_import_created(self):
+        run = self.poll_one()
+
+        plan_id, transactions, api_key, token = self.categorize.call_args.args
+        self.assertEqual(
+            (plan_id, [t["id"] for t in transactions], api_key, token),
+            (PLAN_ID, ["txn-0", "txn-1", "txn-2", "txn-3"], "test-gemini-key", "ynab-access-1"),
+        )
+        self.assertIsNotNone(self.categorize.call_args.kwargs["deadline"])
+        self.assertEqual((run["status"], run["categorized"]), (runner.OK, 3))
+        steps = [p["step"] for p in self.store.progress_history]
+        self.assertEqual(steps[-1], pipeline.STEP_CATEGORIZE)
+        self.assertTrue(self.store.progress_history[0]["categorize"])
+
+    def test_off(self):
+        run = self.poll_one(categorize=False)
+        self.categorize.assert_not_called()
+        self.assertNotIn("categorized", run)
+        self.assertFalse(self.store.progress_history[0]["categorize"])
+
+    def test_no_gemini_key_on_the_server(self):
+        del os.environ["GEMINI_API_KEY"]
+        run = self.poll_one()
+        self.categorize.assert_not_called()
+        self.assertNotIn("categorized", run)
+
+    def test_nothing_new_to_categorize(self):
+        self.import_statement.return_value = imported(created=0)
+        run = self.poll_one()
+        self.categorize.assert_not_called()
+        self.assertEqual(run["categorized"], 0)
+
+    def test_a_failure_still_records_the_import(self):
+        cases = [
+            (runner.gemini.GeminiError("Gemini ran out of time."), "Gemini ran out of time."),
+            (ynab.ApiException(status=400, reason="Bad Request"), "YNAB returned HTTP 400."),
+        ]
+        for error, message in cases:
+            with self.subTest(message):
+                self.store.runs.clear()
+                self.categorize.side_effect = error
+                run = self.poll_one()
+                self.assertEqual((run["status"], run["created"]), (runner.OK, 4))
+                self.assertEqual(run["categorize_error"], message)
+
+
 class LoggingTest(RunnerTest):
     def test_no_password_token_email_or_statement_text_in_the_logs(self):
         self.add_user()

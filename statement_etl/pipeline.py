@@ -112,6 +112,7 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 STEP_READ = "read"  # read the PDF's rows; detail {"page": 3, "pages": 5}
 STEP_UPLOAD = "upload"  # send the transactions to YNAB; detail {"count": 286}
 STEP_END_BALANCE = "end_balance"  # YNAB's balance after the upload vs. the statement's
+STEP_CATEGORIZE = "categorize"  # after the import, opt-in: Gemini (categorize.py)
 
 
 def _no_progress(step, detail):

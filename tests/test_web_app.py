@@ -25,6 +25,7 @@ from ynab import exceptions
 
 from statement_etl import pipeline
 from statement_etl.convert import rows_to_transactions
+from statement_etl.gemini import GeminiError
 from statement_etl.parsers.common import StatementError
 from statement_etl.web import app as web
 from statement_etl.web import config, token_store, upload, ynab_auth, ynab_oauth
@@ -68,9 +69,12 @@ def unauthorized():
 class WebTest(unittest.TestCase):
     """A test client with no saved token, no OAuth settings and an empty STORE."""
 
+    GEMINI_API_KEY = ""  # none; empty, so a .env file can't add one
+
     def setUp(self):
         self.patch_dict(web_state.STORE, {}, clear=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("YNAB_CLIENT_")}
+        env["GEMINI_API_KEY"] = self.GEMINI_API_KEY
         self.patch_dict(os.environ, env, clear=True)
         self.available = self.patch(token_store, "available", return_value=False)
         self.store_name = self.patch(token_store, "store_name", return_value=None)
@@ -135,6 +139,7 @@ class RoutesTest(unittest.TestCase):
                 ("/api/plans/<plan_id>/accounts", "GET"),
                 ("/api/starting-balance", "POST"),
                 ("/api/upload", "POST"),
+                ("/api/categorize", "POST"),
                 ("/api/token", "POST"),
                 ("/oauth/login", "GET"),
                 ("/oauth/callback", "GET"),
@@ -183,6 +188,7 @@ class StatusTest(WebTest):
                 "token_allowed": True,
                 "remember_available": False,
                 "store_name": None,
+                "categorize_available": False,  # local mode: never
                 "parsed": None,
             },
         )
@@ -853,6 +859,7 @@ class UploadTest(WebTest):
             return_value=SimpleNamespace(
                 transactions=[
                     ynab_txn(
+                        id="txn-1",
                         var_date="2026-10-01",
                         payee_name="Received GCash from Test Sender",
                         category_name="Ready to Assign",
@@ -860,6 +867,7 @@ class UploadTest(WebTest):
                         amount=1000000,
                     ),
                     ynab_txn(
+                        id="txn-2",
                         var_date="2026-10-02",
                         payee_name=None,
                         category_name=None,
@@ -927,6 +935,7 @@ class UploadTest(WebTest):
             {
                 "created": [
                     {
+                        "id": "txn-1",
                         "date": "2026-10-01",
                         "payee": "Received GCash from Test Sender",
                         "category": "Ready to Assign",
@@ -935,6 +944,7 @@ class UploadTest(WebTest):
                         "flag": "",
                     },
                     {
+                        "id": "txn-2",
                         "date": "2026-10-02",
                         "payee": "",
                         "category": "Uncategorized",
@@ -944,6 +954,7 @@ class UploadTest(WebTest):
                     },
                 ],
                 "skipped": 1,
+                "to_categorize": 0,
                 "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
                 "ending_check": upload._check_json(self.ending),
                 "ending_check_error": None,
@@ -1345,6 +1356,105 @@ class HostedUploadTest(Hosted, UploadTest):
         self.upload.side_effect = exceptions.BadRequestException(status=400, reason="Bad Request")
         self.assertEqual(self.post().status_code, 400)
         self.assertEqual(self.state()["rows"], ROWS)  # so the user can try again
+
+
+class CategorizeTest(Hosted, WebTest):
+    """Hosted mode with a Gemini key: the upload can be categorized right after."""
+
+    GEMINI_API_KEY = "test-gemini-key"
+
+    def setUp(self):
+        super().setUp()
+        self.import_statement = self.patch(
+            upload,
+            "import_statement",
+            return_value=SimpleNamespace(
+                created=[
+                    ynab_txn(id="shop", payee_name="Test Shop", amount=-249000),
+                    ynab_txn(id="rule", category_id="c-food", category_name="Groceries"),
+                    ynab_txn(id="fix", flag_color=SimpleNamespace(value="red")),
+                ],
+                skipped=0,
+                ending_check=None,
+                ending_error=None,
+                new_account=None,
+            ),
+        )
+        self.categorize = self.patch(upload, "categorize_transactions")
+
+    def upload(self, **body):
+        return self.client.post("/api/upload", json={**TARGET, **body})
+
+    def test_status_says_it_is_available(self):
+        with mock.patch.object(upload, "get_user"):
+            self.assertTrue(self.client.get("/api/status").get_json()["categorize_available"])
+
+    def test_upload_keeps_only_what_it_created_with_no_category(self):
+        self.parsed()
+        self.assertEqual(self.upload(categorize=True).get_json()["to_categorize"], 1)
+        pending = self.state()["to_categorize"]
+        self.assertEqual(pending["plan_id"], PLAN_ID)
+        self.assertEqual([t["id"] for t in pending["transactions"]], ["shop"])
+
+    def test_not_ticked_keeps_nothing(self):
+        self.parsed()
+        self.assertEqual(self.upload().get_json()["to_categorize"], 0)
+        self.assertNotIn("to_categorize", self.state())
+
+    def test_categorizes_only_the_last_upload(self):
+        self.parsed()
+        self.upload(categorize=True)
+        groceries = {"id": "c-food", "name": "Groceries", "group": "Everyday"}
+        self.categorize.return_value = (
+            [
+                SimpleNamespace(transaction={"id": "shop"}, category=groceries),
+                SimpleNamespace(transaction={"id": "other"}, category=None),  # unsure
+            ],
+            1,
+        )
+
+        response = self.client.post("/api/categorize")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json(),
+            {"categorized": 1, "total": 2, "categories": {"shop": "Everyday / Groceries"}},
+        )
+        plan_id, transactions, api_key, token = self.categorize.call_args.args
+        self.assertEqual(
+            (plan_id, [t["id"] for t in transactions], api_key, token),
+            (PLAN_ID, ["shop"], "test-gemini-key", "test-token"),
+        )
+        self.assertIsNotNone(self.categorize.call_args.kwargs["deadline"])
+        # Once only: they're forgotten afterwards
+        self.assertEqual(self.client.post("/api/categorize").status_code, 400)
+
+    def test_nothing_uploaded(self):
+        self.connected()
+        response = self.client.post("/api/categorize")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"], "Nothing to categorize: upload a statement first."
+        )
+        self.categorize.assert_not_called()
+
+    def test_gemini_failing_says_the_import_is_done(self):
+        self.parsed()
+        self.upload(categorize=True)
+        self.categorize.side_effect = GeminiError("Gemini ran out of time.")
+        with self.assertLogs(web.app.logger, level="WARNING"):
+            response = self.client.post("/api/categorize")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.get_json()["error"], "Imported, but not categorized: Gemini ran out of time."
+        )
+        self.assertNotIn("to_categorize", self.state())
+
+
+class LocalCategorizeTest(WebTest):
+    def test_not_in_local_mode(self):
+        self.parsed(to_categorize={"plan_id": PLAN_ID, "transactions": [{"id": "shop"}]})
+        self.assertEqual(self.client.post("/api/categorize").status_code, 404)
 
 
 class HostedStartupTest(unittest.TestCase):

@@ -11,11 +11,13 @@ document per account, in the project's (default) database:
         gmail_refresh_token   (encrypted)
         ynab_refresh_token    (encrypted)
         plan_id, plan_name
+        categorize            (True: Gemini categorizes what each import creates)
         mappings: {gcash: {account_id, account_name, enabled}}
         password_inputs: {gcash: <encrypted JSON {last_name, mobile_last4}>}
         runs/{gmail_msg_id}:{source}
             source, account_id, account_name, status, created, skipped, message,
-            received_at, ran_at
+            received_at, ran_at, step, duration_seconds,
+            categorized, categorize_error   (only when categorize is on)
 
 Nothing is stored for users who don't turn it on, and "Turn off and delete"
 removes the document and its runs (delete_user()).

@@ -44,6 +44,10 @@
         <dd>{{ gmail_email }} ✓</dd>
         <dt>YNAB plan</dt>
         <dd>{{ plan_name }} ✓</dd>
+        {%- if categorize_available %}
+        <dt>Categorize</dt>
+        <dd>{% if categorize %}With Gemini, after each import{% else %}<span class="muted">Off</span>{% endif %}</dd>
+        {%- endif %}
         <dt>Wallets</dt>
         <dd>
           {%- for s in sources %}
@@ -170,6 +174,17 @@
         </table>
       </div>
       <p class="small-note muted">One row per supported e-wallet or bank account. Each needs its own YNAB account.</p>
+      {%- if categorize_available %}
+      <!-- Hosted with a Gemini key only (config.CATEGORIZE_AVAILABLE) -->
+      <div class="opt-in">
+        <label class="check"><input id="categorize" type="checkbox"{% if categorize %} checked{% endif %}>
+          Categorize new transactions with Gemini</label>
+        <p class="small-note muted">After each import, sends the new transactions' date, account,
+          payee, memo and amount, and your category names, to Google Gemini. Only categories
+          Gemini is at least {{ min_confidence }}% sure of are set; the others stay uncategorized.
+          <a href="/privacy">Privacy</a></p>
+      </div>
+      {%- endif %}
       <div class="msg info">ⓘ Statement emails arrive when you request them in your e-wallet or
         bank app; each one is imported within 15 minutes. Your connections and password details
         are stored encrypted until you turn this off.</div>

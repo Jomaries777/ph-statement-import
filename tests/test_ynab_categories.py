@@ -162,6 +162,35 @@ class GetUncategorizedTransactionsTest(MockedYnabTest):
         self.transactions_api.get_transactions.assert_not_called()
 
 
+class UncategorizedCreatedTest(unittest.TestCase):
+    def test_keeps_only_real_transactions_with_no_category(self):
+        created = [
+            ynab_txn(id="keep", payee_name="Test Shop", amount=-249500),
+            # Some come back with YNAB's own "Uncategorized" category
+            ynab_txn(id="keep-too", category_id="c-internal", category_name="Uncategorized"),
+            ynab_txn(id="payee-rule", category_id="c1", category_name="Groceries"),
+            ynab_txn(id="transfer", transfer_account_id="other-account"),
+            ynab_txn(id="split", subtransactions=[SimpleNamespace(id="part")]),
+            ynab_txn(id="correction", flag_color=SimpleNamespace(value="red")),
+            ynab_txn(id="deleted", deleted=True),
+        ]
+
+        result = categories.uncategorized_created(created)
+
+        self.assertEqual([t["id"] for t in result], ["keep", "keep-too"])
+        self.assertEqual(
+            result[0],
+            {
+                "id": "keep",
+                "date": "2026-10-01",
+                "account": "Test Wallet",
+                "payee": "Test Shop",
+                "memo": "",
+                "amount": Decimal("-249.5"),
+            },
+        )
+
+
 class SetCategoriesTest(MockedYnabTest):
     def test_sends_only_the_id_and_category(self):
         self.transactions_api.update_transactions.return_value = response(

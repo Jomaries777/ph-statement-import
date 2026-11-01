@@ -91,7 +91,7 @@ SECURITY_HEADERS = {
 }
 
 # The privacy and terms pages: change the date with every change to them
-LEGAL_LAST_UPDATED = "31 October 2026"
+LEGAL_LAST_UPDATED = "1 November 2026"
 CONTACT_EMAIL = "froze.settle-1p@icloud.com"
 
 AUTO_IMPORT = HOSTED and bool(os.environ.get("GOOGLE_CLIENT_ID"))
