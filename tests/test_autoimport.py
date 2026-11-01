@@ -593,7 +593,9 @@ class CategorizeTest(RunnerTest):
         self.add_user()
         self.store.save_user(SUB, categorize=categorize)
         self.gmail.add("msg-1")
-        runner.poll_all()
+        with self.assertLogs(runner.log, "INFO") as logs:
+            runner.poll_all()
+        self.categorize_logs = [line for line in logs.output if "categorize" in line]
         return self.runs()["msg-1:gcash"]
 
     def test_only_what_the_import_created(self):
@@ -606,6 +608,11 @@ class CategorizeTest(RunnerTest):
         )
         self.assertIsNotNone(self.categorize.call_args.kwargs["deadline"])
         self.assertEqual((run["status"], run["categorized"]), (runner.OK, 3))
+        user = runner.user_id({"sub": SUB})
+        self.assertEqual(
+            self.categorize_logs,
+            [f"INFO:{runner.log.name}:Auto-import categorize: user {user}, categorized 3 of 4."],
+        )
         steps = [p["step"] for p in self.store.progress_history]
         self.assertEqual(steps[-1], pipeline.STEP_CATEGORIZE)
         self.assertTrue(self.store.progress_history[0]["categorize"])
@@ -615,12 +622,15 @@ class CategorizeTest(RunnerTest):
         self.categorize.assert_not_called()
         self.assertNotIn("categorized", run)
         self.assertFalse(self.store.progress_history[0]["categorize"])
+        self.assertIn("skipped (turned off)", self.categorize_logs[0])
 
     def test_no_gemini_key_on_the_server(self):
         del os.environ["GEMINI_API_KEY"]
         run = self.poll_one()
         self.categorize.assert_not_called()
         self.assertNotIn("categorized", run)
+        self.assertIn("WARNING", self.categorize_logs[0])
+        self.assertIn("skipped (GEMINI_API_KEY isn't set)", self.categorize_logs[0])
 
     def test_nothing_new_to_categorize(self):
         self.import_statement.return_value = imported(created=0)
@@ -640,6 +650,7 @@ class CategorizeTest(RunnerTest):
                 run = self.poll_one()
                 self.assertEqual((run["status"], run["created"]), (runner.OK, 4))
                 self.assertEqual(run["categorize_error"], message)
+                self.assertIn(f"failed: {message}", self.categorize_logs[0])
 
 
 class TransferRulesTest(RunnerTest):
