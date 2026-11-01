@@ -1,6 +1,6 @@
 # P5b. Gmail push: import a statement seconds after it arrives
 
-Status: In progress · Estimate: about 1–2 days, 2 PRs · Needs: P5
+Status: Built (PRs #39 and #41) and set up; one check left (see Done when) · Estimate: about 1–2 days, 2 PRs · Needs: P5
 
 ## Goal
 
@@ -47,9 +47,9 @@ Cloud Scheduler, every 15 min ─────────►  POST /tasks/poll-g
 
 ### A. Google Cloud setup (owner, once)
 
-- [ ] Create the topic: `gcloud pubsub topics create gmail-push`
-- [ ] Let Gmail publish to it: `gcloud pubsub topics add-iam-policy-binding gmail-push --member=serviceAccount:gmail-api-push@system.gserviceaccount.com --role=roles/pubsub.publisher`
-- [ ] Create the push subscription. It reuses `pubsub-push`, the service account budget-guard uses. Each subscription has its own audience, so their tokens can't be swapped.
+- [x] Create the topic: `gcloud pubsub topics create gmail-push`
+- [x] Let Gmail publish to it: `gcloud pubsub topics add-iam-policy-binding gmail-push --member=serviceAccount:gmail-api-push@system.gserviceaccount.com --role=roles/pubsub.publisher`
+- [x] Create the push subscription. It reuses `pubsub-push`, the service account budget-guard uses. Each subscription has its own audience, so their tokens can't be swapped.
   ```bash
   gcloud pubsub subscriptions create gmail-push --topic=gmail-push \
     --push-endpoint=<PUBLIC_URL>/tasks/gmail-push \
@@ -58,30 +58,30 @@ Cloud Scheduler, every 15 min ─────────►  POST /tasks/poll-g
     --ack-deadline=60 --message-retention-duration=10m \
     --min-retry-delay=10s --max-retry-delay=60s
   ```
-- [ ] Add the GitHub `production` variable `GMAIL_PUSH_TOPIC=projects/<project>/topics/gmail-push`. Empty leaves push off: the poll alone still works.
+- [x] Add the GitHub `production` variable `GMAIL_PUSH_TOPIC=projects/<project>/topics/gmail-push`. Empty leaves push off: the poll alone still works.
 
 ### PR 1: `feat/gmail-push-runner`, "feat: Gmail watch, and the runner gets a YNAB token only when needed"
 
-- [ ] `autoimport/gmail.py`: `watch(access_token, topic)` returns when the watch ends; `stop(access_token)`.
-- [ ] `autoimport/runner.py`:
+- [x] `autoimport/gmail.py`: `watch(access_token, topic)` returns when the watch ends; `stop(access_token)`.
+- [x] `autoimport/runner.py`:
   - `process_user()` finds new emails first, and refreshes YNAB only if there are any.
   - It renews the watch when less than a day is left (`_renew_watch()`).
   - `process_push(email)` and `start_watch(user)`.
   - A lock so only one run goes at a time.
-- [ ] Tests:
+- [x] Tests:
   - `tests/test_autoimport_push.py`
   - watch/stop in `tests/test_autoimport_gmail.py`
   - `tests/test_autoimport.py`: the token-rotation test now has an email to import
 
 ### PR 2: `feat/gmail-push-route`, "feat: import statement emails as soon as Gmail pushes them"
 
-- [ ] `web/auto_import.py`:
+- [x] `web/auto_import.py`:
   - `POST /tasks/gmail-push`, with the same OIDC check as `/tasks/poll-gmail`, factored into one helper. It answers 204, or 503 when busy.
   - Saving the settings calls `runner.start_watch()`.
   - "Turn off and delete" calls `gmail.stop()` before revoking.
-- [ ] `deploy.yml`: pass `GMAIL_PUSH_TOPIC`.
-- [ ] Privacy page: Google notifies the app when your inbox changes; the notification holds your address and a change number, never an email's content.
-- [ ] README "Auto-import (hosted)" and `docs/architecture.md`: the push path.
+- [x] `deploy.yml`: pass `GMAIL_PUSH_TOPIC`.
+- [x] Privacy page: Google notifies the app when your inbox changes; the notification holds your address and a change number, never an email's content.
+- [x] README "Auto-import (hosted)" and `docs/architecture.md`: the push path.
 
 ## Tests
 
