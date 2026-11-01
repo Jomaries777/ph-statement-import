@@ -481,7 +481,7 @@ def to_transactions(rows: list[dict[str, str]]) -> list[Transaction]:
                 date=datetime.strptime(row["Date"], DATE_FORMAT).date(),
                 payee=gotyme_payee(row["Details"]),
                 amount=amount,
-                memo=f"GoTyme: {row['Details']} | Ref: {transaction_ref('gotyme', key)}",
+                memo=f"GoTyme Ref: {transaction_ref('gotyme', key)}",
                 flagged=False,
             )
         )
