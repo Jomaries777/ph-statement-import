@@ -359,7 +359,8 @@ class ToTransactionsTest(unittest.TestCase):
                     date=date(2026, 10, 5),
                     payee="SHOPEE PH",
                     amount=Decimal("-249.00"),
-                    memo="GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                    memo="GoTyme: Card payment at SHOPEE PH, Card •••• 1234"
+                    " | Ref: 447d649bcac761c22c6a2807652d43",
                     flagged=False,
                 ),
                 Transaction(
@@ -368,7 +369,8 @@ class ToTransactionsTest(unittest.TestCase):
                     date=date(2026, 10, 6),
                     payee="Transfer from JUAN DELA CRUZ BPI",
                     amount=Decimal("1000.00"),
-                    memo="GoTyme: Transfer from JUAN DELA CRUZ BPI, Account No. •••••••1234",
+                    memo="GoTyme: Transfer from JUAN DELA CRUZ BPI, Account No. •••••••1234"
+                    " | Ref: c2d2ed3ec679f7f0edc5e31dab430c",
                     flagged=False,
                 ),
             ],
@@ -383,7 +385,8 @@ class ToTransactionsTest(unittest.TestCase):
                 "payee_name": "SHOPEE PH",
                 "import_id": make_import_id("gotyme", "05 Oct 2026|0.00|249.00|4751.00|0"),
                 "amount": -249000,
-                "memo": "GoTyme: Card payment at SHOPEE PH, Card •••• 1234",
+                "memo": "GoTyme: Card payment at SHOPEE PH, Card •••• 1234"
+                " | Ref: 447d649bcac761c22c6a2807652d43",
                 "flag_color": None,
             },
         )
@@ -392,6 +395,14 @@ class ToTransactionsTest(unittest.TestCase):
         first, second = gotyme.to_transactions([MADE_UP_ROWS[0], dict(MADE_UP_ROWS[0])])
         self.assertEqual(first.key, "05 Oct 2026|0.00|249.00|4751.00|0")
         self.assertEqual(second.key, "05 Oct 2026|0.00|249.00|4751.00|1")
+
+    def test_the_ref_is_the_hash_part_of_the_import_id(self):
+        # Searching the memo's Ref in YNAB finds the row it came from
+        first, second = gotyme.to_transactions([MADE_UP_ROWS[0], dict(MADE_UP_ROWS[0])])
+        for txn in (first, second):
+            ref = txn.memo.rpartition(" | Ref: ")[2]
+            self.assertEqual("ETLPH:" + ref, make_import_id("gotyme", txn.key))
+        self.assertNotEqual(first.memo, second.memo)  # identical rows, different refs
 
 
 # =============================================================================
