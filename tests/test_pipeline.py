@@ -24,6 +24,7 @@ from statement_etl.sources import SOURCES
 from statement_etl.ynab_api.balance import compare_balance
 from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
+from tests.test_parsers_gotyme_goalsave import TWO_ACCOUNT_ROWS
 
 ROWS = [
     gcash_row(
@@ -560,6 +561,69 @@ class RunPipelineTest(unittest.TestCase):
         )
 
 
+class SplitAccountsTest(unittest.TestCase):
+    """A statement that holds several accounts (Source.account_column): each
+    goes into its own YNAB account, one at a time."""
+
+    def setUp(self):
+        self.transactions = [
+            to_ynab(t) for t in rows_to_transactions(TWO_ACCOUNT_ROWS, "gotyme_goalsave")
+        ]
+
+    def test_each_accounts_rows_and_transactions_in_pdf_order(self):
+        accounts = pipeline.split_accounts(TWO_ACCOUNT_ROWS, self.transactions, "gotyme_goalsave")
+        self.assertEqual(list(accounts), ["11111", "22222"])
+        self.assertEqual(accounts["11111"], (TWO_ACCOUNT_ROWS[:1], self.transactions[:1]))
+        self.assertEqual(accounts["22222"], (TWO_ACCOUNT_ROWS[1:], self.transactions[1:]))
+
+    def test_a_source_without_account_column_is_one_account(self):
+        self.assertEqual(
+            pipeline.split_accounts(ROWS, TRANSACTIONS, "gcash"), {"": (ROWS, TRANSACTIONS)}
+        )
+
+    def run_pipeline(self, statement_account=None):
+        """A dry run of the two-account PDF: (result or None if it exited, stdout, stderr)."""
+        stdout, stderr, stack = capture()
+        result = None
+        with (
+            stack,
+            mock.patch.object(
+                pipeline, "parse_statement", return_value=(TWO_ACCOUNT_ROWS, self.transactions)
+            ),
+            contextlib.suppress(SystemExit),
+        ):
+            result = pipeline.run_pipeline(
+                "savings.pdf",
+                "secret",
+                ACCOUNT_ID,
+                PLAN_ID,
+                dry_run=True,
+                source="gotyme_goalsave",
+                statement_account=statement_account,
+            )
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_command_line_imports_the_account_asked_for(self):
+        result, out, _ = self.run_pipeline("22222")
+        self.assertEqual(result, self.transactions[1:])
+        self.assertIn("GoalSave No. 22222 (2 in this PDF: 11111, 22222)", out)
+        self.assertIn("Statement balance: starting 50,000.00, ending 42,200.00", out)
+
+    def test_command_line_asks_which_account(self):
+        result, _, err = self.run_pipeline()
+        self.assertIsNone(result)
+        self.assertEqual(
+            err,
+            "ERROR: This PDF has 2 GoTyme GoalSave accounts (GoalSave No. 11111, 22222). "
+            "Pick one with --statement-account.\n",
+        )
+
+    def test_command_line_says_which_accounts_there_are(self):
+        result, _, err = self.run_pipeline("99999")
+        self.assertIsNone(result)
+        self.assertEqual(err, "ERROR: This PDF has no GoalSave No. 99999. It has: 11111, 22222.\n")
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, args, env):
         _, stderr, stack = capture()
@@ -588,12 +652,14 @@ class MainTest(unittest.TestCase):
             ["statement.pdf", "--dry-run"], {"GCASH_PDF_PASSWORD": "secret"}
         )
         self.assertIsNone(code)
-        run.assert_called_once_with("statement.pdf", "secret", None, None, True, "gcash")
+        run.assert_called_once_with("statement.pdf", "secret", None, None, True, "gcash", None)
 
     def test_full_run_reads_ids_from_env(self):
         run, code, _ = self.run_main(["statement.pdf"], self.FULL_ENV)
         self.assertIsNone(code)
-        run.assert_called_once_with("statement.pdf", "secret", ACCOUNT_ID, PLAN_ID, False, "gcash")
+        run.assert_called_once_with(
+            "statement.pdf", "secret", ACCOUNT_ID, PLAN_ID, False, "gcash", None
+        )
 
     def test_command_line_ids_win(self):
         run, _, _ = self.run_main(
@@ -609,7 +675,7 @@ class MainTest(unittest.TestCase):
             self.FULL_ENV,
         )
         run.assert_called_once_with(
-            "statement.pdf", "secret", "account-x", "plan-x", False, "gcash"
+            "statement.pdf", "secret", "account-x", "plan-x", False, "gcash", None
         )
 
     def test_missing_settings(self):

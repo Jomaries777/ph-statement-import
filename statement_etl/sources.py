@@ -14,7 +14,7 @@ To add another e-wallet / bank, see docs/adding-an-e-wallet.md.
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from statement_etl.parsers import gcash, gotyme
+from statement_etl.parsers import gcash, gotyme, gotyme_goalsave
 
 
 def _no_summary(rows):
@@ -52,6 +52,12 @@ class Source:
         money_in_columns  - shown green on the page, e.g. ("Credit",)
         money_out_columns - shown red on the page, e.g. ("Debit",)
         text_column       - long free text that may wrap, e.g. "Description"
+        account_column    - for a statement that holds several accounts (GoTyme
+                            GoalSave): the column that tells them apart, e.g.
+                            "GoalSave No.". Each account goes into its own YNAB
+                            account, so callers import one account's rows at a
+                            time (pipeline.split_accounts); statement_balances,
+                            summary and to_transactions then get only those.
 
     Parser functions:
         parse              - (pdf, password, on_page=None) -> list of rows, each a
@@ -100,6 +106,7 @@ class Source:
     money_in_columns: tuple = ()
     money_out_columns: tuple = ()
     text_column: str | None = None
+    account_column: str | None = None
     summary: Callable = _no_summary
     is_correction_row: Callable = _never_correction
     balance_corrections: Callable = _no_corrections
@@ -168,10 +175,25 @@ SOURCES = {
                 "has:attachment filename:pdf"
             ),
             # One email carries two PDFs: this Everyday account's, and the savings
-            # (GoalSave) one, which needs its own source once its layout is known.
+            # one (gotyme_goalsave below).
             attachment_pattern=r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",
             password_inputs=("birth_date",),
             build_password=gotyme.build_password,
+        ),
+        Source(
+            key="gotyme_goalsave",
+            name="GoTyme GoalSave",
+            password_env="GOTYME_PDF_PASSWORD",  # the same date of birth as Everyday
+            columns=gotyme_goalsave.COLUMNS,
+            amount_columns=("Credits", "Debits", "Running Balance"),
+            money_in_columns=("Credits",),
+            money_out_columns=("Debits",),
+            text_column="Details",
+            account_column=gotyme_goalsave.ACCOUNT_COLUMN,
+            parse=gotyme_goalsave.parse_transactions,
+            statement_balances=gotyme_goalsave.statement_balances,
+            summary=gotyme_goalsave.summary,
+            to_transactions=gotyme_goalsave.to_transactions,
         ),
     ]
 }

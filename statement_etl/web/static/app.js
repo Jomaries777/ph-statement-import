@@ -153,9 +153,13 @@ function showParsed(parsed) {
   state.parsed = parsed;
   if (parsed.source) $("source").value = parsed.source;
   const extra = parsed.count - parsed.statement_count;
+  const accounts = parsed.accounts || [];
   message("parse-msg", `Parsing successful: ${parsed.statement_count} ${parsed.source_name} transactions ` +
     `from ${parsed.filename}` +
+    (accounts.length > 1 ? `, ${parsed.account_label} ${parsed.account} ` +
+      `(${accounts.length} accounts in this PDF)` : "") +
     (extra ? ` (+${extra} balance correction${extra === 1 ? "" : "s"})` : ""), "ok");
+  showAccountPicker(parsed);
   const amounts = new Set(parsed.amount_columns);
   const moneyIn = new Set(parsed.money_in_columns);
   const moneyOut = new Set(parsed.money_out_columns);
@@ -177,6 +181,30 @@ function showParsed(parsed) {
   refreshSteps();
   checkStartingBalance();
 }
+
+// A statement that holds several accounts (GoTyme GoalSave): pick the one to
+// upload. Each goes into its own YNAB account, so they're uploaded one at a time.
+function showAccountPicker(parsed) {
+  const accounts = parsed.accounts || [];
+  show($("statement-account-row"), accounts.length > 1);
+  if (accounts.length < 2) return;
+  $("statement-account-label").textContent = parsed.account_label;
+  $("statement-account").replaceChildren(...accounts.map((a) =>
+    new Option(`${a.account} · ${a.count} row${a.count === 1 ? "" : "s"}`, a.account)));
+  $("statement-account").value = parsed.account;
+}
+
+$("statement-account").addEventListener("change", async (e) => {
+  try {
+    showParsed(await api("/api/statement-account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account: e.target.value }),
+    }));
+  } catch (err) {
+    message("parse-msg", err.message);
+  }
+});
 
 // Running balance didn't add up: warning box listing the correction rows,
 // and the same rows highlighted in the preview table
@@ -540,9 +568,12 @@ $("upload-btn").addEventListener("click", async () => {
                              categorize: progress.categorize }),
     });
     stop();
+    const others = res.other_accounts || [];
     message("upload-msg",
       `Import successful: ${res.created.length} transactions created in YNAB (unapproved)` +
-      (res.transfers ? ` · ${res.transfers} transfer${res.transfers === 1 ? "" : "s"}` : ""), "ok");
+      (res.transfers ? ` · ${res.transfers} transfer${res.transfers === 1 ? "" : "s"}` : "") +
+      (others.length ? `. Pick the next ${state.parsed.account_label} above to import ` +
+        `${others.join(", ")}, with its own YNAB account.` : ""), "ok");
     if (res.skipped) message("upload-skipped", `Skipped ${res.skipped} already imported`, "info");
     if (res.created.length) showCreated(res.created, res.ynab_url);
     $("card-upload").classList.add("complete");

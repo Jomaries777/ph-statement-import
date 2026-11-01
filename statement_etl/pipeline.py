@@ -67,6 +67,8 @@ Usage:
     python -m statement_etl.pipeline statement.pdf --dry-run                 # parse only
     python -m statement_etl.pipeline statement.pdf                           # parse and import
     python -m statement_etl.pipeline statement.pdf --source gcash --dry-run  # pick the source
+    python -m statement_etl.pipeline savings.pdf --source gotyme_goalsave \
+        --statement-account 22222                                  # one of its accounts
 
 Output:
     1. The parsed rows, with the same columns as the PDF, and whether parsing succeeded
@@ -173,6 +175,30 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE, on_step=None):
 
     # Convert every row; correction rows are uploaded too (flagged red)
     return rows, [to_ynab(t) for t in rows_to_transactions(rows, source)]
+
+
+def split_accounts(rows, transactions, source=DEFAULT_SOURCE):
+    """ph-statement-import step: for a statement that holds several accounts
+    (Source.account_column, e.g. GoTyme GoalSave), each account's rows and
+    YNAB transactions, to import into its own YNAB account.
+
+    rows and transactions are what parse_statement() returns (one transaction
+    per row, in the same order). Accounts are in the order the PDF prints them:
+
+        split_accounts(rows, transactions, "gotyme_goalsave")
+        -> {"11111": ([row], [transaction]), "22222": ([row, ...], [transaction, ...])}
+
+    A source without account_column is one account: {"": (rows, transactions)}.
+    """
+    column = get_source(source).account_column
+    accounts = {}
+    for row, transaction in zip(rows, transactions, strict=True):
+        account_rows, account_transactions = accounts.setdefault(
+            row[column] if column else "", ([], [])
+        )
+        account_rows.append(row)
+        account_transactions.append(transaction)
+    return accounts
 
 
 def upload_transactions(transactions, account_id, plan_id, access_token=None):
@@ -370,7 +396,15 @@ def import_statement(
 # =============================================================================
 
 
-def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=DEFAULT_SOURCE):
+def run_pipeline(
+    pdf_path,
+    password,
+    account_id,
+    plan_id,
+    dry_run=False,
+    source=DEFAULT_SOURCE,
+    statement_account=None,
+):
     """Run ph-statement-import from the command line: parse a
     statement PDF from `source`, then import the transactions into YNAB.
 
@@ -383,6 +417,9 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         plan_id:    YNAB plan (budget) that contains that account
         dry_run:    if True, only parse and print the rows; nothing is sent to YNAB
         source:     key in sources.SOURCES, e.g. "gcash"
+        statement_account: for a statement that holds several accounts
+                    (Source.account_column), the one to import, e.g. "22222".
+                    Needed only when the PDF has more than one.
 
     Returns:
         The YNAB transactions (list of dicts with date, payee_name,
@@ -399,6 +436,10 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
         rows, transactions = parse_statement(pdf_path, password, source)
     except Exception as e:  # noqa: BLE001
         _fail(f"Parsing failed: {e}")
+
+    # One account at a time, for a statement that holds several (GoTyme GoalSave)
+    if src.account_column:
+        rows, transactions = _pick_account(rows, transactions, src, statement_account)
 
     # STEP 1 output: the rows as read from the PDF, plus any balance-correction rows
     print("STEP 1: PARSE")
@@ -504,6 +545,23 @@ def run_pipeline(pdf_path, password, account_id, plan_id, dry_run=False, source=
     return transactions
 
 
+def _pick_account(rows, transactions, src, statement_account):
+    """The rows and transactions of the account to import, from a statement
+    that holds several; exits naming the accounts if it isn't clear which."""
+    accounts = split_accounts(rows, transactions, src.key)
+    found = ", ".join(accounts)
+    if statement_account is None and len(accounts) > 1:
+        _fail(
+            f"This PDF has {len(accounts)} {src.name} accounts ({src.account_column} {found}). "
+            "Pick one with --statement-account."
+        )
+    chosen = statement_account or next(iter(accounts))
+    if chosen not in accounts:
+        _fail(f"This PDF has no {src.account_column} {chosen}. It has: {found}.")
+    print(f"{src.account_column} {chosen} ({len(accounts)} in this PDF: {found})\n")
+    return accounts[chosen]
+
+
 # =============================================================================
 # OUTPUT HELPERS - error exit and text tables for the command line (REUSABLE)
 # =============================================================================
@@ -584,6 +642,13 @@ def main():
         action="store_true",
         help="Parse and print only; don't send to YNAB",
     )
+    ap.add_argument(
+        "--statement-account",
+        help=(
+            "For a statement that holds several accounts (GoTyme GoalSave): the one to "
+            "import, e.g. 22222. Needed only when the PDF has more than one."
+        ),
+    )
     args = ap.parse_args()
 
     # YNAB settings are only needed when actually importing
@@ -602,7 +667,15 @@ def main():
     if not password:
         ap.error(f"{password_env} environment variable is not set")
 
-    run_pipeline(args.pdf, password, args.account_id, args.plan_id, args.dry_run, args.source)
+    run_pipeline(
+        args.pdf,
+        password,
+        args.account_id,
+        args.plan_id,
+        args.dry_run,
+        args.source,
+        args.statement_account,
+    )
 
 
 if __name__ == "__main__":

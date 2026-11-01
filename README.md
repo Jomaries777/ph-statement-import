@@ -1,6 +1,6 @@
 # ph-statement-import
 
-Import Philippine e-wallet and bank statement PDFs into your budgeting app. It currently supports [YNAB](https://www.ynab.com/). For statements, it currently supports **GCash** and **GoTyme** (Everyday Deposit Account). Want another e-wallet or bank? See [Adding an e-wallet or bank](docs/adding-an-e-wallet.md).
+Import Philippine e-wallet and bank statement PDFs into your budgeting app. It currently supports [YNAB](https://www.ynab.com/). For statements, it currently supports **GCash** and **GoTyme** (Everyday Deposit Account, and GoalSave savings: one PDF holds up to five GoalSave accounts, each imported into its own YNAB account; after parsing, pick the GoalSave No. to upload). Want another e-wallet or bank? See [Adding an e-wallet or bank](docs/adding-an-e-wallet.md).
 
 It parses the password-protected statement PDF, checks the running balance, and compares the statement's starting balance with your YNAB account. It then creates the transactions in YNAB, unapproved, so you can review them. Re-uploading the same statement doesn't create duplicates.
 

@@ -43,6 +43,10 @@
     <div id="parse-msg" class="msg hidden"></div>
     <div id="balance-msg" class="msg warn hidden"></div>
     <div id="preview" class="hidden">
+      <!-- A statement that holds several accounts (GoTyme GoalSave): the one to
+           upload. Each goes into its own YNAB account, one at a time. -->
+      <div id="statement-account-row" class="row hidden"><label for="statement-account" id="statement-account-label">Account</label>
+        <select id="statement-account"></select></div>
       <div class="table-wrap"><table id="preview-table"></table></div>
       <p id="preview-totals" class="muted"></p>
     </div>
