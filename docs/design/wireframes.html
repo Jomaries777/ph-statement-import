@@ -190,6 +190,23 @@
           </table>
         </div>
         <p class="small muted">3 transactions · starting balance 500.00 · ending balance 1,299.50</p>
+        <div style="position:relative;border:1.5px dashed var(--line);border-radius:8px;padding:12px;margin-top:14px">
+          <span class="pin-tag" style="right:-23px">4</span>
+          <p class="small muted" style="margin:0 0 8px">With a GoTyme GoalSave PDF that holds several accounts:</p>
+          <div class="row"><label>Source</label><div class="field select">GoTyme GoalSave</div></div>
+          <div class="row"><label>GoalSave No.</label><div class="field select">22222 · 5 rows</div></div>
+          <p class="small muted" style="margin:-4px 0 0 120px">2 GoalSave accounts in this PDF: 11111 (1 row), 22222 (5 rows).</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>GoalSave No.</th><th>Date</th><th>Details</th><th class="num-c">Credits</th><th class="num-c">Debits</th><th class="num-c">Running Balance</th></tr></thead>
+              <tbody>
+                <tr><td>22222</td><td>01 Oct 2026</td><td>Earned interest</td><td class="num-c in">200.00</td><td class="num-c">0.00</td><td class="num-c">50,200.00</td></tr>
+                <tr><td>22222</td><td>04 Oct 2026</td><td>Transfer to Deposit account</td><td class="num-c">0.00</td><td class="num-c out">3,000.00</td><td class="num-c">47,160.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small muted" style="margin:8px 0 0">After the upload, card 4 adds: "Pick the next GoalSave No. above to import 11111."</p>
+        </div>
       </div>
 
       <div class="step">
@@ -238,6 +255,7 @@
     <div class="note"><b class="pin">1</b>Same as today. The PDF and its password go to Cloud Run, stay in memory, and are cleared after the upload or after 30 minutes idle.</div>
     <div class="note"><b class="pin">2</b>Hosted mode has no token field and no "Remember this token" box. YNAB's terms don't allow asking for other people's personal access tokens. Toggle the state to see both.</div>
     <div class="note"><b class="pin">3</b>Footer links are required: YNAB's OAuth review checks that the privacy policy is shown prominently.</div>
+    <div class="note"><b class="pin">4</b>A GoalSave PDF holds one to five accounts. With two or more, a GoalSave No. picker appears; changing it parses again with that account, so the balance checks and the upload cover only that account. Upload one, then pick the next. With one account there's no picker.</div>
   </aside>
 </div>
 
@@ -309,12 +327,23 @@
                 </td>
                 <td><button class="btn ghost" style="padding:4px 10px">Test</button></td>
               </tr>
-              <tr style="opacity:.55">
-                <td><b>GoTyme</b><div class="small muted">Savings (GoalSave)</div></td>
-                <td><div class="field select">Coming soon</div></td>
-                <td class="small muted" style="white-space:normal">Same email and password. Needs a sample statement first.</td>
-                <td></td>
+              <tr>
+                <td><b>GoTyme GoalSave</b><div class="field" style="margin-top:4px">22222</div><div class="small muted">GoalSave No. (last 5 digits)</div></td>
+                <td><div class="field select">GoalSave Emergency</div></td>
+                <td style="white-space:normal;min-width:300px">
+                  <div class="field"><span class="muted">Date of birth</span><span class="small muted">mm / dd / yyyy</span></div>
+                  <div class="small muted" style="margin-top:4px">Asked once for every GoalSave account. Same as GoTyme Everyday: MMDDYYYY.</div>
+                </td>
+                <td><button class="btn ghost" style="padding:4px 10px">Test</button></td>
               </tr>
+              <tr>
+                <td><b>GoTyme GoalSave</b><div class="field" style="margin-top:4px">11111</div><div class="small muted">GoalSave No. (last 5 digits)</div></td>
+                <td><div class="field select">GoalSave Travel</div></td>
+                <td class="small muted" style="white-space:normal">Uses the date of birth above</td>
+                <td><button class="btn ghost" style="padding:4px 10px">Remove</button></td>
+              </tr>
+              <tr><td colspan="4"><button class="btn ghost" style="padding:4px 10px">+ Add another GoTyme GoalSave account</button>
+                <span class="small muted">Up to 5. Each needs its own last 5 digits (the PDF prints "GoalSave No.: *******22222"), all different.</span></td></tr>
               <tr>
                 <td><b>Maya</b></td>
                 <td><div class="field select">Don't import</div></td>
@@ -336,7 +365,7 @@
   <aside class="notes">
     <div class="note"><b class="pin">1</b>Google sign-in requests <code>openid email profile gmail.readonly</code>. <code>profile</code> gives the last name used to prefill the GCash password. Users see Google's "unverified app" warning once (fine for up to 100 users). The email must be in <code>ALLOWED_GOOGLE_EMAILS</code>.</div>
     <div class="note"><b class="pin">2</b>One plan for all wallets. Choosing it loads that plan's accounts into the mapping table below.</div>
-    <div class="note"><b class="pin">3</b>Each supported e-wallet maps to one YNAB account or "Don't import". The GCash email only gives the password rule and masks the last 4 digits. The last name is prefilled from your Google account, so you normally type only the 4 digits, once. GoTyme asks for your date of birth once (its password is MMDDYYYY). Other wallets show whatever their source declares, or a plain password field. "Test" opens that wallet's newest email and shows the row count. Saving rejects two wallets mapped to the same account.</div>
+    <div class="note"><b class="pin">3</b>Each supported e-wallet maps to one YNAB account or "Don't import". The GCash email only gives the password rule and masks the last 4 digits. The last name is prefilled from your Google account, so you normally type only the 4 digits, once. GoTyme asks for your date of birth once (its password is MMDDYYYY). One GoalSave PDF holds all your GoalSave accounts, so the date of birth is asked on the first GoalSave row only; each row adds its GoalSave No. digits, and GoalSave's Test names the accounts it found ("It has GoalSave No. 11111 and 22222"). Other wallets show whatever their source declares, or a plain password field. "Test" opens that wallet's newest email and shows the row count. Saving rejects two wallets mapped to the same account.</div>
   </aside>
 </div>
 
@@ -362,6 +391,8 @@
             <tr><td>GCash · 0917123</td><td><b>GCash1</b></td></tr>
             <tr><td>GCash · 0918765</td><td><b>GCash2</b></td></tr>
             <tr><td>GoTyme</td><td><b>GoTyme Everyday</b></td></tr>
+            <tr><td>GoTyme GoalSave · 22222</td><td><b>GoalSave Emergency</b></td></tr>
+            <tr><td>GoTyme GoalSave · 11111</td><td><b>GoalSave Travel</b></td></tr>
           </tbody>
         </table>
         <p class="small muted">Recent imports name the wallet the same way; a statement for a number that isn't mapped shows "⚠ No account: This statement is for 0999000****. Add that GCash account on this page."</p>
@@ -375,7 +406,11 @@
             <thead><tr><th>Received</th><th>Wallet</th><th>YNAB account</th><th>Status</th><th>Result</th></tr></thead>
             <tbody>
               <tr><td>Nov 1, 10:02 AM</td><td>GCash</td><td>GCash</td><td><span class="badge">⟳ Importing</span><br><span class="small muted">started 12s ago</span></td><td>✓ PDF downloaded · ✓ 72 rows read · <b>→ Uploading to YNAB</b> · <span class="muted">Checking the balance</span></td></tr>
+              <tr><td>Nov 1, 10:03 AM</td><td>GoTyme GoalSave</td><td>2 accounts</td><td><span class="badge">Waiting</span></td><td class="muted">Next in line · then: Uploading 22222 · Uploading 11111</td></tr>
               <tr><td>Nov 1, 10:03 AM</td><td>GoTyme</td><td>GoTyme Everyday</td><td><span class="badge">Waiting</span></td><td class="muted">Next in line</td></tr>
+              <tr><td>Oct 21, 10:49 PM</td><td>GoTyme GoalSave · 22222</td><td>GoalSave Emergency</td><td><span class="badge ok">✓ Imported</span></td><td>5 created · 0 skipped · 2 transfers</td></tr>
+              <tr><td class="muted">same email</td><td>GoTyme GoalSave · 11111</td><td>GoalSave Travel</td><td><span class="badge ok">✓ Imported</span></td><td>1 created · 0 skipped · 1 transfer</td></tr>
+              <tr><td class="muted">same email</td><td>GoTyme GoalSave · 61022</td><td>—</td><td><span class="badge warn">⚠ No account</span></td><td>This statement has GoalSave No. 61022. Add it on this page.</td></tr>
               <tr><td>Oct 30, 9:02 AM</td><td>GCash</td><td>GCash</td><td><span class="badge ok">✓ Imported</span></td><td>38 created · 0 skipped</td></tr>
               <tr><td>Oct 21, 10:49 PM</td><td>GoTyme</td><td>GoTyme Everyday</td><td><span class="badge ok">✓ Imported</span></td><td>66 created · 0 skipped</td></tr>
               <tr><td>Sep 30, 9:01 AM</td><td>GCash</td><td>GCash</td><td><span class="badge warn">⚠ Balance</span></td><td>41 created · ending off by +12.00</td></tr>
@@ -393,7 +428,7 @@
   </div>
   <aside class="notes">
     <div class="note"><b class="pin">1</b>Cloud Scheduler polls every 15 minutes. "Last checked" comes from <code>store.set_last_checked()</code>.</div>
-    <div class="note"><b class="pin">2</b>One row per Gmail message (<code>runs/{gmail_msg_id}</code>), across all wallets, showing which account it went to. An email is never processed twice, and YNAB's <code>import_id</code> also stops duplicates.</div>
+    <div class="note"><b class="pin">2</b>One run per Gmail message and source (<code>runs/{gmail_msg_id}:{source}</code>), across all wallets, showing which account it went to. A GoalSave email lists each of its accounts as its own row (the later ones say "same email"). An email is never processed twice, and YNAB's <code>import_id</code> also stops duplicates.</div>
     <div class="note"><b class="pin">3</b>Deletes the Firestore record and run log, and revokes Google access. The YNAB connection can be removed in YNAB → Settings → Connected apps.</div>
   </aside>
 </div>

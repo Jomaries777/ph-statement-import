@@ -33,13 +33,14 @@ New here? Read [CONTRIBUTING.md](../../CONTRIBUTING.md) first (added in P0), the
 | P6 | [P6-gotyme-auto-import.md](P6-gotyme-auto-import.md) | GoTyme in the auto-import mapping table | A real GoTyme email imports only its Everyday account PDF |
 | P7 | [P7-public-release.md](P7-public-release.md) | Open to all YNAB users | YNAB review approved |
 | P8 | [P8-transactions.md](P8-transactions.md) | Less hand work after an import: categories, references, transfers, several GCash accounts, live progress | Each item in its "Done when" checked on the hosted app |
+| P9 | [P9-gotyme-goalsave.md](P9-gotyme-goalsave.md) | GoTyme GoalSave statements: 1–5 accounts, each to its own YNAB account | The sample parses into its accounts; a real email imports them all once |
 
 ## Order
 
 ```
 P0 ──► P1 ──┬──► P2 ───────────────────────┐
             └──► P3 ──► P4 ──► P5 ──► P6 ◄─┘ ──► P7
-                                 └──► P5b ──────► P8
+                                 └──► P5b ──────► P8 ──► P9
 ```
 
 - P1 comes first because P2, P3 and P5 build on its new modules.
@@ -49,6 +50,7 @@ P0 ──► P1 ──┬──► P2 ──────────────
 - P6 needs both P2 (the parser) and P5 (auto-import).
 - P5b (Gmail push) needs P5 only, and can go before or after P6.
 - P8 needs P5b and P6 (auto-import for both wallets). It doesn't wait for P7.
+- P9 needs P8 (several accounts per source, transfers).
 
 ## Design files
 
