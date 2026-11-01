@@ -279,6 +279,8 @@ def process_message(
         msg_id,
         source.key,
         account_id=mapping["account_id"],
+        # Kept with the run, so editing the mapping later doesn't change the run log
+        account_name=mapping.get("account_name", ""),
         status=status,
         received_at=received_at,
         **result,

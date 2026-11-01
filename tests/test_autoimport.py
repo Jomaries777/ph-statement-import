@@ -224,6 +224,7 @@ class PollTest(RunnerTest):
         run = self.runs()["msg-1:gcash"]
         self.assertEqual((run["status"], run["created"], run["skipped"]), (runner.OK, 4, 0))
         self.assertEqual((run["account_id"], run["received_at"]), (ACCOUNT_ID, NEW))
+        self.assertEqual(run["account_name"], "GCash")
 
         # The next poll finds the same email, but its run is already there
         self.assertEqual(runner.poll_all()["runs"], 0)

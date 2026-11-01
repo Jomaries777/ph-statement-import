@@ -241,14 +241,21 @@ def format_run(run: dict, mappings: dict) -> dict:
     """Turn one stored run record into display strings for the Recent imports table.
 
     format_run(
-        {"source": "gcash", "status": "ok", "created": 12, "skipped": 0, ...},
-        {"gcash": {"account_name": "GCash"}},
-    ) -> {"received": "...", "target": "GCash → GCash", "badge_kind": "ok", ...}
+        {"source": "gcash", "account_name": "GCash", "status": "ok", "created": 12, ...},
+        {"gcash": {"account_name": "GCash1"}},
+    ) -> {"received": "...", "wallet": "GCash", "account": "GCash", "badge_kind": "ok", ...}
+
+    The account is the one the run imported into, even if the mapping has
+    changed since. Runs saved before runs kept their account name fall back
+    to the current mapping.
     """
     source_key = run.get("source", "")
     source_name = SOURCES[source_key].name if source_key in SOURCES else source_key
     account_name = (
-        (mappings.get(source_key) or {}).get("account_name") or run.get("account_id") or "—"
+        run.get("account_name")
+        or (mappings.get(source_key) or {}).get("account_name")
+        or run.get("account_id")
+        or "—"
     )
     status = run.get("status", "")
     badge_kind, badge_text = RUN_BADGES.get(status, ("warn", status or "Unknown"))
@@ -266,7 +273,8 @@ def format_run(run: dict, mappings: dict) -> dict:
 
     return {
         "received": _format_time(run.get("received_at") or run.get("ran_at")),
-        "target": f"{source_name} → {account_name}",
+        "wallet": source_name,
+        "account": account_name,
         "badge_kind": badge_kind,
         "badge_text": badge_text,
         "result": result,

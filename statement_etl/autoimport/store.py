@@ -13,7 +13,8 @@ document per account, in the project's (default) database:
         mappings: {gcash: {account_id, account_name, enabled}}
         password_inputs: {gcash: <encrypted JSON {last_name, mobile_last4}>}
         runs/{gmail_msg_id}:{source}
-            source, account_id, status, created, skipped, message, received_at, ran_at
+            source, account_id, account_name, status, created, skipped, message,
+            received_at, ran_at
 
 Nothing is stored for users who don't turn it on, and "Turn off and delete"
 removes the document and its runs (delete_user()).
@@ -225,8 +226,8 @@ def run_exists(sub: str, msg_id: str, source_key: str) -> bool:
 def write_run(sub: str, msg_id: str, source_key: str, **result) -> None:
     """Record one email's import, with ran_at set to now (UTC).
 
-    write_run("1234", "18c2f0a1b2", "gcash", account_id="...", status="ok",
-              created=12, skipped=0, message="", received_at=<datetime>)
+    write_run("1234", "18c2f0a1b2", "gcash", account_id="...", account_name="GCash",
+              status="ok", created=12, skipped=0, message="", received_at=<datetime>)
     """
     record = {**result, "source": source_key, "ran_at": datetime.now(UTC)}
     _run_document(sub, msg_id, source_key).set(record)
