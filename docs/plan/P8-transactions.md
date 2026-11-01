@@ -80,14 +80,14 @@ Local and hosted alike. Wireframe (add to `docs/design/wireframes.html`, W1): ca
 GoTyme statements have no reference numbers, so the ref is the hash part of the row's import_id: search it in YNAB to find the row. It never changes for the same row.
 
 - [ ] Keep the layers (sources never import `ynab_api`): the hash moves to a neutral `transaction_ref(source, key)` in `transaction.py`, and `make_import_id()` becomes `IMPORT_ID_PREFIX + transaction_ref(source, key)`, giving **exactly the same import_ids as before** (a test pins one), so nothing already imported is duplicated.
-- [ ] `parsers/gotyme.py`: memo `GoTyme: <Details> | Ref: <transaction_ref>`. Example:
+- [ ] `parsers/gotyme.py`: memo `GoTyme Ref: <transaction_ref>`. Example:
 
   | | |
   |---|---|
   | key | `28 Oct 2026\|0.00\|500.00\|3568.34\|0` |
   | import_id | `ETLPH:9ac288af95f6925425a5154d159507` |
   | GoTyme Ref | `9ac288af95f6925425a5154d159507` |
-  | memo | `GoTyme: Card payment at STARBUCKS COFFEE WEB, Card •••• 1234 \| Ref: 9ac288af95f6925425a5154d159507` |
+  | memo | `GoTyme Ref: 9ac288af95f6925425a5154d159507` |
 
 - [ ] GCash: correction rows already get `GCash Ref: R1000000000002` (and `S…`, `P…`, `M0000123456789`). Add tests for the S, P and M memos next to the R one.
 - [ ] Rows already in YNAB keep their old memo; only new imports get the ref.
