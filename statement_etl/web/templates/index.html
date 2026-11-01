@@ -35,6 +35,8 @@
         <input id="password" name="password" type="password" autocomplete="off"></div>
       <div class="actions"><button id="parse-btn" type="submit">Parse</button></div>
     </form>
+    <!-- While parsing: the step it's on, from /api/progress (app.js) -->
+    <ol id="parse-steps" class="run-steps vertical hidden"></ol>
     <div id="parse-msg" class="msg hidden"></div>
     <div id="balance-msg" class="msg warn hidden"></div>
     <div id="preview" class="hidden">
@@ -97,6 +99,12 @@
     <!-- Before the upload: YNAB balance vs. statement starting balance (warning only) -->
     <div id="start-check" class="msg hidden"></div>
     <div class="actions"><button id="upload-btn" type="button" disabled>Upload to YNAB</button></div>
+    <!-- While uploading (and after): the steps, from /api/progress (app.js) -->
+    <div id="upload-progress" class="hidden">
+      <ol id="upload-steps" class="run-steps vertical"></ol>
+      <progress id="upload-bar" max="1" value="0"></progress>
+      <p id="upload-elapsed" class="small-note muted"></p>
+    </div>
     <div id="upload-msg" class="msg hidden"></div>
     <!-- After the upload: YNAB balance vs. statement ending balance (warning only) -->
     <div id="end-check" class="msg hidden"></div>

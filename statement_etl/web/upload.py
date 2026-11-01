@@ -9,6 +9,13 @@ Routes, in the order the page uses them:
     GET  /api/plans/<plan_id>/accounts  - ③ the Account dropdown
     POST /api/starting-balance          - ④ check before the upload
     POST /api/upload                    - ④ upload, then the ending balance check
+    GET  /api/progress                  - the step ① or ④ is on, asked while it runs
+
+While /api/parse or /api/upload runs, pipeline's on_step callback keeps the
+step it's on in this browser's state["progress"] (in memory, like the
+statement itself), and the page asks GET /api/progress to show it. gunicorn
+and the local server both answer requests in threads, so the question is
+answered while the parse or upload is still going.
 
 Step ② (connecting to YNAB) is in ynab_auth.py. Parsing, the starting balance
 check and the upload reuse pipeline.parse_statement(), starting_balance_check()
@@ -81,6 +88,25 @@ def api_status():
     )
 
 
+def _progress_reporter(state):
+    """An on_step callback (pipeline.py) keeping the step in state["progress"]."""
+
+    def report(step, detail):
+        state["progress"] = {"step": step, "detail": detail}
+
+    return report
+
+
+@blueprint.get("/api/progress")
+def api_progress():
+    """The step /api/parse or /api/upload is on, while it runs.
+
+    GET /api/progress -> {"step": "read", "detail": {"page": 3, "pages": 5}}
+    -> null when neither is running
+    """
+    return jsonify(session_state().get("progress"))
+
+
 @blueprint.post("/api/parse")
 @limiter.limit(PARSE_LIMIT)
 def api_parse():
@@ -95,8 +121,11 @@ def api_parse():
     if not upload or not upload.filename:
         return error_response("Choose a PDF file.", 400)
 
+    state = session_state()
     try:
-        rows, transactions = parse_statement(io.BytesIO(upload.read()), password, source)
+        rows, transactions = parse_statement(
+            io.BytesIO(upload.read()), password, source, on_step=_progress_reporter(state)
+        )
     except StatementError as e:
         # Written for the user (wrong password, totals off), so shown as it is
         return error_response(str(e), 400)
@@ -105,6 +134,8 @@ def api_parse():
         # and the log gets only the error type (never the PDF or its contents).
         current_app.logger.warning("Could not read the uploaded PDF: %s", type(e).__name__)
         return error_response("Could not read the PDF. Is it the statement PDF?", 400)
+    finally:
+        state.pop("progress", None)
 
     # Statement rows vs. balance-correction rows added by the parser
     real_rows = [r for r in rows if not src.is_correction_row(r)]
@@ -135,7 +166,6 @@ def api_parse():
         "starting_balance": f"{balances['starting']:,.2f}",
         "ending_balance": f"{balances['ending']:,.2f}",
     }
-    state = session_state()
     state["source"] = source
     state["rows"] = rows
     state["transactions"] = transactions
@@ -223,11 +253,20 @@ def api_upload():
     # New account's Starting Balance, upload, ending balance check. After a
     # token refresh ynab_call() runs it again, which is safe: YNAB skips
     # import_ids it already has, and the Starting Balance already matches.
-    imported, err = ynab_call(
-        lambda token: import_statement(
-            rows, transactions, account_id, plan_id, token, source=state["source"]
+    try:
+        imported, err = ynab_call(
+            lambda token: import_statement(
+                rows,
+                transactions,
+                account_id,
+                plan_id,
+                token,
+                source=state["source"],
+                on_step=_progress_reporter(state),
+            )
         )
-    )
+    finally:
+        state.pop("progress", None)
     if err:
         return err
     if HOSTED:

@@ -22,12 +22,13 @@ from statement_etl.web.config import HOSTED
 
 # Server-side state, one entry per browser session:
 #   {sid: {"access_token", "token_kind", "refresh_token", "expires_at",
-#          "source", "rows", "transactions", "parsed"}}
+#          "source", "rows", "transactions", "parsed", "progress"}}
 #   source:     key in sources.SOURCES of the parsed statement
 #   token_kind: "personal" (typed on the page, never expires), "saved" (loaded
 #               from the OS secure store, never expires) or "oauth"
 #   skip_saved: True after Disconnect, so the saved token isn't loaded again
 #               until the next Connect
+#   progress:   the step /api/parse or /api/upload is on while it runs (upload.py)
 #   last_seen:  hosted mode only: time.time() of this browser's last request
 # Tokens and parsed transactions never go into the browser cookie; the cookie
 # only holds the random session id. Everything is lost when the app stops.

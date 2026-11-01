@@ -175,7 +175,9 @@
         <div class="row"><label>Source</label><div class="field select">GCash</div></div>
         <div class="row"><label>PDF</label><div class="field"><span>statement_oct.pdf</span><span class="small muted">Choose file…</span></div></div>
         <div class="row"><label>Password</label><div class="field">••••••••</div></div>
-        <div class="actions"><button class="btn">Parse</button></div>
+        <div class="actions"><button class="btn">Parsing…</button></div>
+        <p class="small">While parsing (hidden once it succeeds; a failed step turns red with the error below it):<br>
+          ✓ Opening the PDF<br><b>→ Reading rows: page 3 of 5</b><br><span class="muted">Checking totals and running balance</span></p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="num-c">Debit</th><th class="num-c">Credit</th><th class="num-c">Balance</th></tr></thead>
@@ -216,6 +218,9 @@
       <div class="step">
         <h3><span><span class="num">4</span>Upload</span></h3>
         <div class="actions"><button class="btn">Upload to YNAB</button></div>
+        <p class="small">✓ Statement read: 3 rows<br>✓ Starting balance checked<br>✓ Uploaded 3 transactions to YNAB<br>✓ Ending balance checked<br>
+          <span class="muted">[progress bar, full] Finished in 4s</span><br>
+          <span class="muted">While it runs: <b>→ Uploading 3 transactions to YNAB</b> · Checking the ending balance, "12s so far". On an error the step it stopped at turns red (✗) and YNAB's message shows below.</span></p>
         <div class="msg ok">✓ 3 created in YNAB (unapproved) · 0 already there · Ending balance matches: 1,299.50</div>
         <div class="actions" style="margin-top:10px"><button class="btn ghost">Open in YNAB ↗</button></div>
       </div>
