@@ -12,11 +12,16 @@ document per account, in the project's (default) database:
         ynab_refresh_token    (encrypted)
         plan_id, plan_name
         categorize            (True: Gemini categorizes what each import creates)
-        mappings: {gcash: {account_id, account_name, enabled}}
-        password_inputs: {gcash: <encrypted JSON {last_name, mobile_last4}>}
+        mappings: {wallet id: {source, account_id, account_name, enabled}}
+                  A wallet is one account at a source: "gcash", then "gcash-2",
+                  ... for more GCash accounts. Saved before there could be
+                  several: no "source", and the id is the source key
+                  (runner.wallet_source()).
+        password_inputs: {wallet id: <encrypted JSON {last_name, mobile_last4,
+                          mobile_first7}>}  (mobile_first7 tells GCash accounts apart)
         runs/{gmail_msg_id}:{source}
             source, account_id, account_name, status, created, skipped, message,
-            received_at, ran_at, step, duration_seconds,
+            received_at, ran_at, step, duration_seconds, wallet, wallet_name,
             categorized, categorize_error   (only when categorize is on)
 
 Nothing is stored for users who don't turn it on, and "Turn off and delete"

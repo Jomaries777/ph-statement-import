@@ -24,6 +24,7 @@ from statement_etl import pipeline
 from statement_etl.parsers import gcash, gotyme
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, Source, get_source
 from statement_etl.transaction import Transaction
+from statement_etl.web.auto_import import INPUT_FIELDS
 from statement_etl.ynab_api.format import make_import_id, to_ynab
 
 # =============================================================================
@@ -67,6 +68,17 @@ class RegistryTest(unittest.TestCase):
             if source.password_inputs:
                 with self.subTest(source=source.key):
                     self.assertTrue(callable(source.build_password))
+
+    def test_every_source_with_an_account_input_can_read_it_from_the_email(self):
+        for source in SOURCES.values():
+            if source.account_input:
+                with self.subTest(source=source.key):
+                    self.assertTrue(callable(source.email_account))
+                    self.assertIn("pattern", INPUT_FIELDS[source.account_input])
+
+    def test_wallet_name(self):
+        self.assertEqual(SOURCES["gcash"].wallet_name(), "GCash")
+        self.assertEqual(SOURCES["gcash"].wallet_name("0917123"), "GCash · 0917123")
 
     def test_unknown_source(self):
         with self.assertRaisesRegex(ValueError, "Known sources: gcash, gotyme"):

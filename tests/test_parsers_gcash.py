@@ -809,6 +809,24 @@ class ToTransactionsTest(unittest.TestCase):
 # =============================================================================
 
 
+class EmailAccountTest(unittest.TestCase):
+    def test_from_the_body(self):
+        body = "Hi Juan,\nMobile number: 0917123****\nPeriod: Oct 1 - Oct 31"
+        self.assertEqual(gcash.email_account(body, "statement.pdf"), "0917123")
+
+    def test_from_the_pdfs_name(self):
+        self.assertEqual(gcash.email_account("", "enc-0918765_20261101120000.pdf"), "0918765")
+
+    def test_the_body_comes_first(self):
+        body = "Mobile number: 0917123****"
+        self.assertEqual(gcash.email_account(body, "enc-0918765_1.pdf"), "0917123")
+
+    def test_neither_says(self):
+        self.assertIsNone(gcash.email_account("No number here", "statement.pdf"))
+        # Not the masked form: never a whole number
+        self.assertIsNone(gcash.email_account("Mobile number: 09171234567", ""))
+
+
 class BuildPasswordTest(unittest.TestCase):
     def test_last_name_and_mobile_last4(self):
         self.assertEqual(gcash.build_password("Dela Cruz", "1234"), "delacruz1234")

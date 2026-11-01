@@ -351,7 +351,7 @@ class PageViewTest(AutoImportWebTest):
     def test_gotyme_row_asks_for_the_date_of_birth_in_a_date_field(self):
         self.sign_in_google()
         html = self.client.get("/auto-import").data.decode()
-        row = html.split('<tr data-source="gotyme"', 1)[1].split("</tr>", 1)[0]
+        row = html.split('<tr data-wallet="gotyme"', 1)[1].split("</tr>", 1)[0]
 
         self.assertRegex(row, r'type="date"\s+data-input="birth_date"\s+aria-label="Date of birth"')
         self.assertIn('autocomplete="bday"', row)
@@ -809,6 +809,100 @@ class SaveSettingsTest(AutoImportWebTest):
 # =============================================================================
 
 
+def two_gcash_payload(first7="0917123", second7="0918765", second_account=OTHER_ACCOUNT_ID):
+    """Settings with two GCash accounts, told apart by their mobile numbers' first 7 digits."""
+    payload = valid_settings_payload()
+    payload["mappings"]["gcash"]["source"] = "gcash"
+    payload["mappings"]["gcash-2"] = {
+        "source": "gcash",
+        "account_id": second_account,
+        "account_name": "GCash2",
+        "enabled": True,
+    }
+    payload["password_inputs"]["gcash"]["mobile_first7"] = first7
+    payload["password_inputs"]["gcash-2"] = {
+        "last_name": "Dela Cruz",
+        "mobile_last4": "5678",
+        "mobile_first7": second7,
+    }
+    return payload
+
+
+class SeveralWalletsTest(AutoImportWebTest):
+    def save(self, payload):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+            return self.client.post("/api/auto-import", json=payload)
+
+    def test_saves_two_gcash_accounts(self):
+        self.assertEqual(self.save(two_gcash_payload()).status_code, 200)
+        saved = self.store.get_user(SUB)
+        self.assertEqual(
+            {wallet: (m["source"], m["account_id"]) for wallet, m in saved["mappings"].items()},
+            {
+                "gcash": ("gcash", ACCOUNT_ID),
+                "gcash-2": ("gcash", OTHER_ACCOUNT_ID),
+                "gotyme": ("gotyme", ""),
+            },
+        )
+        inputs = json.loads(self.store.decrypt(saved["password_inputs"]["gcash-2"]))
+        self.assertEqual(inputs["mobile_first7"], "0918765")  # encrypted with the password inputs
+
+        html = self.client.get("/auto-import").get_data(as_text=True)
+        self.assertIn('<tr data-wallet="gcash-2" data-source="gcash"', html)
+        self.assertIn('value="0918765"', html)
+        self.assertIn("+ Add another GCash account", html)
+        self.assertNotIn("+ Add another GoTyme account", html)  # GoTyme has no account_input
+        self.assertRegex(html, r"<td>GCash · 0918765</td>\s*<td><strong>GCash2</strong></td>")
+
+    def test_rejects_unclear_accounts(self):
+        cases = [
+            (two_gcash_payload(first7=""), "enter the first 7 digits of mobile for each"),
+            (two_gcash_payload(second7="0917123"), "same first 7 digits of mobile"),
+            (two_gcash_payload(second7="12345"), "must look like 0917123"),
+            (two_gcash_payload(second_account=ACCOUNT_ID), "cannot use the same YNAB account"),
+        ]
+        for payload, error in cases:
+            with self.subTest(error):
+                response = self.save(payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(error, response.get_json()["error"])
+
+    def test_one_account_needs_no_digits(self):
+        self.assertEqual(self.save(valid_settings_payload()).status_code, 200)
+        saved = self.store.get_user(SUB)
+        self.assertEqual(saved["mappings"]["gcash"]["source"], "gcash")
+        inputs = json.loads(self.store.decrypt(saved["password_inputs"]["gcash"]))
+        self.assertNotIn("mobile_first7", inputs)
+
+    def test_only_sources_with_an_account_input_can_have_several(self):
+        payload = valid_settings_payload()
+        payload["mappings"]["gotyme-2"] = {"source": "gotyme", "enabled": False}
+        response = self.save(payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "Only one GoTyme account can be mapped.")
+
+    def test_a_wallet_id_must_match_its_source(self):
+        payload = valid_settings_payload()
+        payload["mappings"]["gotyme-2"] = {"source": "gcash", "enabled": False}
+        self.assertEqual(self.save(payload).get_json()["error"], "Invalid wallet 'gotyme-2'.")
+
+    def test_a_run_for_an_account_not_on_the_page(self):
+        run = {
+            "source": "gcash",
+            "status": runner.NO_WALLET,
+            "wallet_name": "GCash · 0999000",
+            "message": "This statement is for 0999000****.",
+        }
+        shown = auto_import.format_run(run, {})
+        self.assertEqual(
+            (shown["wallet"], shown["account"], shown["badge_text"], shown["result"]),
+            ("GCash · 0999000", "—", "⚠ No account", "This statement is for 0999000****."),
+        )
+
+
 class CategorizeSettingTest(AutoImportWebTest):
     """The server has a Gemini key: each user can turn categorizing on."""
 
@@ -1049,10 +1143,11 @@ class TestPasswordRouteTest(AutoImportWebTest):
             response.get_json(),
             {"ok": True, "message": "The password opens your newest GCash statement."},
         )
-        called_user, called_source, called_inputs = test_pw.call_args.args
+        called_user, called_source, called_inputs, called_account = test_pw.call_args.args
         self.assertEqual(called_user["sub"], SUB)
         self.assertEqual(called_source, "gcash")
         self.assertEqual(called_inputs, inputs)
+        self.assertIsNone(called_account)  # one GCash account: its newest email
 
     def test_validates_source_inputs_and_surfaces_gmail_error(self):
         self.sign_in_google()
@@ -1630,8 +1725,8 @@ class AutoImportBrowserTest(unittest.TestCase):
 
         # 3. Single plan auto-selects; pick YNAB account and fill mobile_last4
         expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)
-        page.select_option('tr[data-source="gcash"] .account-select', fake_ynab.EXISTING_ACCOUNT_ID)
-        page.fill('tr[data-source="gcash"] input[data-input="mobile_last4"]', "1234")
+        page.select_option('tr[data-wallet="gcash"] .account-select', fake_ynab.EXISTING_ACCOUNT_ID)
+        page.fill('tr[data-wallet="gcash"] input[data-input="mobile_last4"]', "1234")
 
         # 4. Test password button
         with mock.patch.object(
@@ -1639,10 +1734,26 @@ class AutoImportBrowserTest(unittest.TestCase):
             "test_password",
             return_value=(True, "The password opens your newest GCash statement."),
         ):
-            page.click('tr[data-source="gcash"] .test-btn')
+            page.click('tr[data-wallet="gcash"] .test-btn')
             expect(page.locator("#test-msg-gcash")).to_contain_text(
                 "✓ The password opens your newest GCash statement."
             )
+
+        # 4b. A second GCash account: same row, emptied, told apart by its mobile digits
+        page.click('.add-wallet-btn[data-source="gcash"]')
+        second = page.locator('tr[data-wallet="gcash-2"]')
+        expect(second.locator('input[data-input="last_name"]')).to_have_value(FAMILY_NAME)
+        expect(second.locator('input[data-input="mobile_last4"]')).to_have_value("")
+        expect(second.locator(".remove-wallet-btn")).to_be_visible()
+        second.locator(".account-select").select_option(fake_ynab.NEW_ACCOUNT_ID)
+        second.locator('input[data-input="mobile_last4"]').fill("5678")
+        expect(page.locator("#save-msg")).to_contain_text("enter the first 7 digits of mobile")
+        expect(page.locator("#save-btn")).to_be_disabled()
+        page.fill('tr[data-wallet="gcash"] input[data-account-input]', "0917123")
+        second.locator("input[data-account-input]").fill("0917123")
+        expect(page.locator("#save-msg")).to_contain_text("same first 7 digits")
+        second.locator("input[data-account-input]").fill("0918765")
+        expect(page.locator("#save-msg")).to_be_hidden()
 
         # 5. Turn on -> switches to W3 active view
         rotated = {
@@ -1663,7 +1774,16 @@ class AutoImportBrowserTest(unittest.TestCase):
 
         expect(page.locator("#auto-on-view")).to_be_visible()
         expect(page.locator("#card-active")).to_contain_text("On")
-        expect(page.locator("#card-active")).to_contain_text(fake_ynab.EXISTING_ACCOUNT_NAME)
+        expect(page.locator("#wallets-table tbody tr")).to_have_text(
+            [
+                f"GCash · 0917123 {fake_ynab.EXISTING_ACCOUNT_NAME}",
+                f"GCash · 0918765 {fake_ynab.NEW_ACCOUNT_NAME}",
+                "GoTyme Not imported",
+            ]
+        )
+        saved = self.store.get_user(SUB)["mappings"]
+        self.assertEqual(saved["gcash-2"]["source"], "gcash")
+        self.assertEqual(saved["gcash-2"]["account_id"], fake_ynab.NEW_ACCOUNT_ID)
 
         # Recent imports refreshes itself: an import that starts shows its steps
         now = datetime.now(UTC)
@@ -1698,8 +1818,11 @@ class AutoImportBrowserTest(unittest.TestCase):
             expect(page.locator("#auto-setup-view")).to_be_visible()
         expect(page.locator("#ynab-on")).to_be_visible()
         expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)
-        expect(page.locator('tr[data-source="gcash"] .account-select')).to_have_value(
+        expect(page.locator('tr[data-wallet="gcash"] .account-select')).to_have_value(
             fake_ynab.EXISTING_ACCOUNT_ID
+        )
+        expect(page.locator('tr[data-wallet="gcash-2"] input[data-account-input]')).to_have_value(
+            "0918765"
         )
         page.click("#cancel-edit-btn")
 

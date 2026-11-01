@@ -259,7 +259,7 @@ Checklist:
 
 In hosted mode, `/auto-import` polls Gmail for new statement emails and imports each matching PDF attachment to the mapped YNAB account using the same `parse_statement()` and `import_statement()` pipeline as manual upload.
 
-A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py`:
+A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py` (six, if one person can have several accounts there):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -267,6 +267,8 @@ A source opts in by setting four optional fields on its `Source` entry in `state
 | `attachment_pattern` | `str \| None` | Regex matched against attachment filenames to pick the right PDF when one email carries several attachments. Required whenever `email_query` is set. |
 | `password_inputs` | `tuple[str, ...]` | Input names the user enters once on `/auto-import` (stored encrypted) so background runs can open the encrypted PDF, e.g. `("last_name", "mobile_last4")`. Leave empty `()` if the PDF is not password-protected. |
 | `build_password` | `Callable \| None` | Function in the parser module taking the `dict` of `password_inputs` values (or positional inputs in unit tests) and returning the PDF password string. Required whenever `password_inputs` is non-empty. |
+| `account_input` | `str \| None` | Only if one person can have several accounts at this source: the input that tells them apart, e.g. `"mobile_first7"` for GCash. `/auto-import` then shows it in the Wallet cell and offers "+ Add another … account". Give it an `INPUT_FIELDS` entry with a format check. |
+| `email_account` | `Callable \| None` | With `account_input`: `(email body text, PDF filename) -> value or None`, the account the email is for. GCash's `email_account()` reads `Mobile number: 0917123****` from the body, then `enc-0917123_….pdf` from the filename. The runner sends each email to the wallet saved with that value; an email for an account that isn't on the page is recorded as "⚠ No account". |
 
 **Example: GCash (`gcash`)**
 

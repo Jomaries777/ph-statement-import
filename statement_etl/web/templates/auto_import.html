@@ -48,17 +48,24 @@
         <dt>Categorize</dt>
         <dd>{% if categorize %}With Gemini, after each import{% else %}<span class="muted">Off</span>{% endif %}</dd>
         {%- endif %}
-        <dt>Wallets</dt>
-        <dd>
-          {%- for s in sources %}
-          {%- if s.enabled %}
-          <div>{{ s.name }} → <strong>{{ s.account_name }}</strong></div>
-          {%- else %}
-          <div class="muted">{{ s.name }} → not imported</div>
-          {%- endif %}
-          {%- endfor %}
-        </dd>
       </dl>
+      <div class="table-wrap">
+        <table id="wallets-table">
+          <thead><tr><th>Wallet</th><th>YNAB account</th></tr></thead>
+          <tbody>
+            {%- for s in sources %}
+            <tr>
+              <td>{{ s.wallet_name }}</td>
+              {%- if s.enabled %}
+              <td><strong>{{ s.account_name }}</strong></td>
+              {%- else %}
+              <td class="muted">Not imported</td>
+              {%- endif %}
+            </tr>
+            {%- endfor %}
+          </tbody>
+        </table>
+      </div>
       <div class="actions">
         <button id="edit-btn" class="secondary" type="button">Edit mappings</button>
       </div>
@@ -115,25 +122,42 @@
 
     <!-- ④ Map e-wallets to YNAB accounts -->
     <section id="card-mappings" class="card">
-      <h2><span><span class="num">4</span>Map e-wallets to YNAB accounts</span><span class="done">✓</span></h2>
+      <h2><span><span class="num">4</span>Map wallets to YNAB accounts</span><span class="done">✓</span></h2>
       <div class="table-wrap no-top-margin">
         <table id="mapping-table">
           <thead>
             <tr>
-              <th>E-wallet</th>
+              <th>Wallet</th>
               <th id="account-col-header">YNAB account</th>
               <th>To open the PDF</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
+            {#- One row per wallet: an account at a source. A source with an
+                account_input (GCash) can have several, told apart by it. #}
             {%- for s in sources %}
-            <tr data-source="{{ s.key }}" data-source-name="{{ s.name }}">
-              <td class="wallet-cell"><strong>{{ s.name }}</strong></td>
+            <tr data-wallet="{{ s.wallet_id }}" data-source="{{ s.key }}" data-source-name="{{ s.name }}">
+              <td class="wallet-cell"><strong>{{ s.name }}</strong>
+                {%- if s.account_input %}
+                <div class="input-field">
+                  <input
+                    type="{{ s.account_input.type }}"
+                    data-account-input="{{ s.account_input.name }}"
+                    aria-label="{{ s.account_input.label }}"
+                    placeholder="{{ s.account_input.placeholder }}"
+                    value="{{ s.account_input.value }}"
+                    autocomplete="off"
+                    inputmode="{{ s.account_input.inputmode }}"
+                    maxlength="{{ s.account_input.maxlength }}">
+                  <span class="field-note muted">{{ s.account_input.label }}</span>
+                </div>
+                {%- endif %}
+              </td>
               <td class="account-cell">
                 <select class="account-select" data-source="{{ s.key }}"
                         data-saved-account-id="{{ s.account_id }}"
-                        aria-label="YNAB account for {{ s.name }}" disabled>
+                        aria-label="YNAB account for {{ s.wallet_name }}" disabled>
                   <option value="">Don't import</option>
                   {%- if s.account_id %}
                   <option value="{{ s.account_id }}" selected>{{ s.account_name }}</option>
@@ -162,18 +186,30 @@
                 {%- if s.password_hint %}
                 <div class="small-note muted">{{ s.password_hint }}</div>
                 {%- endif %}
-                <div class="msg hidden test-msg" id="test-msg-{{ s.key }}"></div>
+                <div class="msg hidden test-msg" id="test-msg-{{ s.wallet_id }}"></div>
               </td>
               <td class="test-cell">
                 <button type="button" class="secondary small-btn test-btn"
                         data-source="{{ s.key }}"{% if not gmail_connected %} disabled{% endif %}>Test</button>
+                <button type="button" class="secondary small-btn remove-wallet-btn{% if not s.extra %} hidden{% endif %}"
+                        aria-label="Remove this {{ s.name }} account">Remove</button>
               </td>
             </tr>
+            {%- if s.last and s.account_input %}
+            <tr class="add-wallet-row" data-add-for="{{ s.key }}">
+              <td colspan="4">
+                <button type="button" class="secondary small-btn add-wallet-btn"
+                        data-source="{{ s.key }}">+ Add another {{ s.name }} account</button>
+              </td>
+            </tr>
+            {%- endif %}
             {%- endfor %}
           </tbody>
         </table>
       </div>
-      <p class="small-note muted">One row per supported e-wallet or bank account. Each needs its own YNAB account.</p>
+      <p class="small-note muted">One row per e-wallet or bank account. Each needs its own YNAB account.
+        With more than one GCash account, add each one and enter the first 7 digits of its mobile
+        number: the statement email names it, so each statement goes to the right account.</p>
       {%- if categorize_available %}
       <!-- Hosted with a Gemini key only (config.CATEGORIZE_AVAILABLE) -->
       <div class="opt-in">

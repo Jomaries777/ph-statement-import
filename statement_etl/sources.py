@@ -80,6 +80,13 @@ class Source:
                              label and field type from INPUT_FIELDS
                              (web/auto_import.py).
         build_password     - dict of inputs -> PDF password
+        account_input      - for sources where one person can have several
+                             accounts: the input that tells them apart, e.g.
+                             "mobile_first7" (INPUT_FIELDS in web/auto_import.py)
+        email_account      - (email body text, PDF filename) -> the account_input
+                             value the email is for, or None if it doesn't say.
+                             Auto-import sends each email to the wallet with
+                             that value.
     """
 
     key: str
@@ -101,6 +108,13 @@ class Source:
     attachment_pattern: str | None = None
     password_inputs: tuple = ()
     build_password: Callable | None = None
+    account_input: str | None = None
+    email_account: Callable | None = None
+
+    def wallet_name(self, account: str | None = None) -> str:
+        """How one of this source's wallets is shown: "GCash", or "GCash · 0917123"
+        with its account_input value."""
+        return f"{self.name} · {account}" if account else self.name
 
 
 # =============================================================================
@@ -133,6 +147,8 @@ SOURCES = {
             attachment_pattern=r"\.pdf$",
             password_inputs=("last_name", "mobile_last4"),
             build_password=gcash.build_password,
+            account_input="mobile_first7",
+            email_account=gcash.email_account,
         ),
         Source(
             key="gotyme",

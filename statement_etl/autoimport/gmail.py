@@ -10,6 +10,8 @@ ph-statement-import - Google OAuth and Gmail REST client, with no Flask session.
     list_messages()         - search messages (adding after:<epoch>), following nextPageToken
     get_message()           - fetch one Gmail message's metadata and MIME payload
     get_pdf_attachment()    - first attachment matching a filename regex, in memory only
+    message_text()          - a fetched message's text, e.g. to see which account it's for
+    attachment_names()      - a fetched message's attachment filenames
     watch()                 - ask Gmail to notify a Pub/Sub topic when the inbox changes
     stop()                  - stop those notifications
     revoke()                - POST https://oauth2.googleapis.com/revoke
@@ -318,6 +320,35 @@ def _iter_parts(part: dict) -> Iterator[dict]:
     for child in part.get("parts") or ():
         if isinstance(child, dict):
             yield from _iter_parts(child)
+
+
+def message_text(message: dict) -> str:
+    """The text of a message from get_message(): its text/plain parts, or, if it
+    has none, its text/html parts with the tags taken out.
+
+    message_text({"payload": {"mimeType": "text/plain", "body": {"data": "SGk="}}}) -> "Hi"
+    """
+    payload = message.get("payload")
+    if not isinstance(payload, dict):
+        return ""
+    texts: dict[str, list[str]] = {"text/plain": [], "text/html": []}
+    for part in _iter_parts(payload):
+        body = part.get("body")
+        data = body.get("data") if isinstance(body, dict) else None
+        if part.get("mimeType") in texts and isinstance(data, str) and data:
+            texts[part["mimeType"]].append(_b64url_decode(data).decode("utf-8", "replace"))
+    if texts["text/plain"]:
+        return "\n".join(texts["text/plain"])
+    html = "\n".join(texts["text/html"])
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+
+
+def attachment_names(message: dict) -> list[str]:
+    """The attachment filenames of a message from get_message(), in order."""
+    payload = message.get("payload")
+    if not isinstance(payload, dict):
+        return []
+    return [part["filename"] for part in _iter_parts(payload) if part.get("filename")]
 
 
 def get_pdf_attachment(
