@@ -5,6 +5,8 @@ Routes, in the order the page uses them:
     GET  /                              - the page (templates/index.html)
     GET  /api/status                    - restore the page after a reload or the OAuth redirect
     POST /api/parse                     - ① parse the statement PDF (in memory only)
+    POST /api/statement-account         - ① a statement that holds several accounts
+                                          (GoTyme GoalSave): show and upload this one
     GET  /api/plans                     - ③ the Plan dropdown
     GET  /api/plans/<plan_id>/accounts  - ③ the Account dropdown
     POST /api/starting-balance          - ④ check before the upload
@@ -18,6 +20,12 @@ step it's on in this browser's state["progress"] (in memory, like the
 statement itself), and the page asks GET /api/progress to show it. gunicorn
 and the local server both answer requests in threads, so the question is
 answered while the parse or upload is still going.
+
+A statement that holds several accounts (Source.account_column) is uploaded
+one account at a time, each into its own YNAB account: /api/parse keeps
+every account's rows in state["accounts"] and shows the first;
+/api/statement-account switches to another. state["uploaded_accounts"]
+lists the ones already uploaded, so the page names only the others.
 
 Step ② (connecting to YNAB) is in ynab_auth.py. Parsing, the starting balance
 check and the upload reuse pipeline.parse_statement(), starting_balance_check()
@@ -36,6 +44,7 @@ from statement_etl.parsers.common import StatementError
 from statement_etl.pipeline import (
     import_statement,
     parse_statement,
+    split_accounts,
     starting_balance_check,
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
@@ -132,7 +141,6 @@ def api_parse():
     if source not in SOURCES:
         known = ", ".join(sorted(SOURCES))
         return error_response(f"Unknown source {source!r}. Known sources: {known}", 400)
-    src = SOURCES[source]
     if not upload or not upload.filename:
         return error_response("Choose a PDF file.", 400)
 
@@ -152,13 +160,43 @@ def api_parse():
     finally:
         state.pop("progress", None)
 
+    state["source"] = source
+    state["filename"] = upload.filename
+    # Each account's rows, for a statement that holds several; {"": all} otherwise
+    state["accounts"] = split_accounts(rows, transactions, source)
+    state["uploaded_accounts"] = []  # a new statement: none of its accounts uploaded yet
+    return jsonify(_show_account(state, next(iter(state["accounts"]))))
+
+
+@blueprint.post("/api/statement-account")
+def api_statement_account():
+    """Show and upload another account of the parsed statement, for a
+    statement that holds several (GoTyme GoalSave).
+
+    POST /api/statement-account {"account": "22222"} -> what /api/parse returns,
+    for that account's rows
+    """
+    state = session_state()
+    account = (request.get_json(silent=True) or {}).get("account")
+    if not state.get("accounts"):
+        return error_response("Parse a statement first.", 400)
+    if account not in state["accounts"]:
+        return error_response(f"This statement has no account {account!r}.", 400)
+    return jsonify(_show_account(state, account))
+
+
+def _show_account(state, account):
+    """Make `account` of the parsed statement the one the page shows and
+    uploads (state["rows"], state["transactions"]); returns its parsed JSON."""
+    src = get_source(state["source"])
+    rows, transactions = state["accounts"][account]
     # Statement rows vs. balance-correction rows added by the parser
     real_rows = [r for r in rows if not src.is_correction_row(r)]
     balances = src.statement_balances(rows)
     parsed = {
-        "source": source,
+        "source": src.key,
         "source_name": src.name,
-        "filename": upload.filename,
+        "filename": state["filename"],
         # the statement's own columns; the page styles them from the lists below
         "columns": list(src.columns),
         "rows": [[row[c] for c in src.columns] for row in rows],
@@ -180,12 +218,22 @@ def api_parse():
         # compared with the YNAB account balance before / after the upload
         "starting_balance": f"{balances['starting']:,.2f}",
         "ending_balance": f"{balances['ending']:,.2f}",
+        # a statement that holds several accounts: the page's picker
+        # (Source.account_column), e.g. [{"account": "22222", "count": 5}]
+        "account_label": src.account_column,
+        "account": account,
+        "accounts": [
+            {"account": key, "count": len(account_rows)}
+            for key, (account_rows, _) in state["accounts"].items()
+        ]
+        if src.account_column
+        else [],
     }
-    state["source"] = source
+    state["account"] = account
     state["rows"] = rows
     state["transactions"] = transactions
     state["parsed"] = parsed
-    return jsonify(parsed)
+    return parsed
 
 
 @blueprint.get("/api/plans")
@@ -323,9 +371,19 @@ def api_upload():
         state.pop("progress", None)
     if err:
         return err
+    # The statement's other accounts, still to upload (GoTyme GoalSave)
+    uploaded = state.setdefault("uploaded_accounts", [])
+    if state.get("account") not in uploaded:
+        uploaded.append(state.get("account"))
+    other_accounts = [a for a in state.get("accounts", {}) if a not in uploaded]
     if HOSTED:
-        for key in ("source", "rows", "transactions", "parsed"):
+        # This account is in YNAB now: the server keeps only the others
+        state.get("accounts", {}).pop(state.get("account"), None)
+        for key in ("rows", "transactions", "parsed", "account"):
             state.pop(key, None)
+        if not other_accounts:
+            for key in ("source", "filename", "accounts", "uploaded_accounts"):
+                state.pop(key, None)
 
     # Only this upload's transactions, never anything else in the plan
     state.pop("to_categorize", None)
@@ -360,6 +418,7 @@ def api_upload():
             "transfers": imported.transfers,
             "to_categorize": len(to_categorize),
             "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
+            "other_accounts": other_accounts,
             "ending_check": ending_check,
             "ending_check_error": ending_error,
             # set when a new account's Starting Balance was set (or already matched)

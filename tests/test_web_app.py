@@ -34,6 +34,7 @@ from statement_etl.ynab_api.balance import compare_balance
 from statement_etl.ynab_api.format import to_ynab
 from tests.fakes import ACCOUNT_ID, PLAN_ID, gcash_row, ynab_txn
 from tests.hosted import HOSTED_ENV, PUBLIC_URL, SECRETS, hosted_mode
+from tests.test_parsers_gotyme_goalsave import TWO_ACCOUNT_ROWS
 
 ROWS = [
     gcash_row(
@@ -135,6 +136,7 @@ class RoutesTest(unittest.TestCase):
                 ("/api/status", "GET"),
                 ("/api/progress", "GET"),
                 ("/api/parse", "POST"),
+                ("/api/statement-account", "POST"),
                 ("/api/plans", "GET"),
                 ("/api/plans/<plan_id>/accounts", "GET"),
                 ("/api/starting-balance", "POST"),
@@ -632,6 +634,66 @@ class YnabCallTest(WebTest):
 
 # =============================================================================
 # PARSE
+class StatementAccountTest(WebTest):
+    """A statement that holds several accounts (GoTyme GoalSave): the page shows
+    and uploads one at a time, each into its own YNAB account."""
+
+    TRANSACTIONS = [to_ynab(t) for t in rows_to_transactions(TWO_ACCOUNT_ROWS, "gotyme_goalsave")]
+
+    def setUp(self):
+        super().setUp()
+        self.patch(upload, "parse_statement", return_value=(TWO_ACCOUNT_ROWS, self.TRANSACTIONS))
+        form = {
+            "source": "gotyme_goalsave",
+            "password": "secret",
+            "pdf": (io.BytesIO(b"%PDF-test"), "savings.pdf"),
+        }
+        self.parsed = self.client.post(
+            "/api/parse", data=form, content_type="multipart/form-data"
+        ).get_json()
+
+    def switch(self, account):
+        return self.client.post("/api/statement-account", json={"account": account})
+
+    def test_parse_shows_the_first_account(self):
+        self.assertEqual(self.parsed["account_label"], "GoalSave No.")
+        self.assertEqual(self.parsed["account"], "11111")
+        self.assertEqual(
+            self.parsed["accounts"],
+            [{"account": "11111", "count": 1}, {"account": "22222", "count": 2}],
+        )
+        self.assertEqual(
+            self.parsed["rows"], [[TWO_ACCOUNT_ROWS[0][c] for c in self.parsed["columns"]]]
+        )
+        self.assertEqual(self.parsed["starting_balance"], "0.00")
+        state = self.state()
+        self.assertEqual(state["rows"], TWO_ACCOUNT_ROWS[:1])
+        self.assertEqual(state["transactions"], self.TRANSACTIONS[:1])
+
+    def test_switch_to_another_account(self):
+        response = self.switch("22222")
+        self.assertEqual(response.status_code, 200)
+        parsed = response.get_json()
+        self.assertEqual(parsed["account"], "22222")
+        self.assertEqual(parsed["statement_count"], 2)
+        self.assertEqual(parsed["starting_balance"], "50,000.00")
+        self.assertEqual(parsed["ending_balance"], "42,200.00")
+        self.assertEqual(self.state()["rows"], TWO_ACCOUNT_ROWS[1:])
+        self.assertEqual(self.client.get("/api/status").get_json()["parsed"], parsed)
+
+    def test_an_account_the_statement_does_not_have(self):
+        response = self.switch("99999")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "This statement has no account '99999'.")
+        self.assertEqual(self.state()["rows"], TWO_ACCOUNT_ROWS[:1])  # unchanged
+
+    def test_needs_a_parsed_statement(self):
+        web_state.STORE.clear()
+        response = self.switch("22222")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "Parse a statement first.")
+
+
 # =============================================================================
 
 
@@ -646,7 +708,8 @@ class ParseTest(WebTest):
         response = self.post(self.pdf(source="nope"))
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            response.get_json()["error"], "Unknown source 'nope'. Known sources: gcash, gotyme"
+            response.get_json()["error"],
+            "Unknown source 'nope'. Known sources: gcash, gotyme, gotyme_goalsave",
         )
 
     def test_no_file(self):
@@ -735,6 +798,10 @@ class ParseTest(WebTest):
                 "balance_warning": parsed["balance_warning"],
                 "starting_balance": "500.00",
                 "ending_balance": "1,299.50",
+                # one account: no GoalSave No. picker
+                "account_label": None,
+                "account": "",
+                "accounts": [],
             },
         )
         self.assertTrue(
@@ -907,6 +974,19 @@ class UploadTest(WebTest):
         """What GET /api/progress answers now."""
         return self.client.get("/api/progress").get_json()
 
+    def test_the_page_names_only_the_accounts_not_uploaded_yet(self):
+        # A statement with several accounts (GoTyme GoalSave), uploaded one at a time
+        self.parsed(
+            filename="savings.pdf",
+            account="11111",
+            accounts={"11111": (ROWS, TRANSACTIONS), "22222": (ROWS, TRANSACTIONS)},
+        )
+        self.assertEqual(self.post().get_json()["other_accounts"], ["22222"])
+
+        switched = self.client.post("/api/statement-account", json={"account": "22222"})
+        self.assertEqual(switched.status_code, 200)
+        self.assertEqual(self.post().get_json()["other_accounts"], [])
+
     def test_keeps_the_step_while_it_runs(self):
         self.parsed()
         seen = []
@@ -973,6 +1053,7 @@ class UploadTest(WebTest):
                 "transfers": 0,
                 "to_categorize": 0,
                 "ynab_url": f"https://app.ynab.com/{PLAN_ID}/accounts/{ACCOUNT_ID}",
+                "other_accounts": [],
                 "ending_check": upload._check_json(self.ending),
                 "ending_check_error": None,
                 "new_account_message": None,
@@ -1358,6 +1439,19 @@ class HostedTest(Hosted, WebTest):
 
 class HostedUploadTest(Hosted, UploadTest):
     """Every upload test again in hosted mode, and the statement is dropped after it."""
+
+    def test_the_other_accounts_are_kept_after_the_upload(self):
+        self.parsed(
+            filename="savings.pdf",
+            account="11111",
+            accounts={"11111": (ROWS, TRANSACTIONS), "22222": (ROWS, TRANSACTIONS)},
+        )
+        self.assertEqual(self.post().get_json()["other_accounts"], ["22222"])
+        state = self.state()
+        self.assertEqual(list(state["accounts"]), ["22222"])
+        self.assertEqual(state["source"], "gcash")
+        for key in ("rows", "transactions", "parsed", "account"):
+            self.assertNotIn(key, state)
 
     def test_statement_is_dropped_after_the_upload(self):
         self.parsed(parsed={"filename": "statement.pdf"})

@@ -51,6 +51,8 @@ class RegistryTest(unittest.TestCase):
                 self.assertLessEqual(set(source.money_out_columns), set(source.amount_columns))
                 if source.text_column is not None:
                     self.assertIn(source.text_column, columns)
+                if source.account_column is not None:
+                    self.assertIn(source.account_column, columns)
 
     def test_password_env_names(self):
         for source in SOURCES.values():
@@ -106,6 +108,7 @@ class SourceDefaultsTest(unittest.TestCase):
         row = {"Date": "2026-10-01"}
         self.assertEqual(source.amount_columns, ())
         self.assertIsNone(source.text_column)
+        self.assertIsNone(source.account_column)  # one account per statement
         self.assertIsNone(source.summary([row]))
         self.assertFalse(source.is_correction_row(row))
         self.assertEqual(source.balance_corrections([row]), [])
