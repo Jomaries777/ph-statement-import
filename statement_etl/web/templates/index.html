@@ -96,6 +96,10 @@
       <select id="plan"><option value="">— connect to YNAB first —</option></select></div>
     <div class="row"><label for="account">Account</label>
       <select id="account"><option value="">—</option></select></div>
+    <!-- Rows that are always transfers (GoTyme GoalSave's "Deposit account",
+         Source.own_transfers): the YNAB account they're with -->
+    <div id="own-transfer-row" class="row hidden"><label for="own-transfer-account" id="own-transfer-label">Transfers go to</label>
+      <select id="own-transfer-account"><option value="">Not a transfer</option></select></div>
     <div id="target-msg" class="msg hidden"></div>
   </section>
 
@@ -105,6 +109,8 @@
     <p id="upload-summary" class="muted">Parse a statement, connect to YNAB and choose an account.</p>
     <!-- Before the upload: YNAB balance vs. statement starting balance (warning only) -->
     <div id="start-check" class="msg hidden"></div>
+    <!-- Transfer rows that found no transfer to link to (import the other statement first) -->
+    <div id="transfer-msg" class="msg hidden"></div>
     <!-- Hosted mode with a Gemini key only (/api/status categorize_available) -->
     <div id="categorize-row" class="hidden">
       <label class="check"><input id="categorize" type="checkbox">

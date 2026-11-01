@@ -5,8 +5,9 @@ const $ = (id) => document.getElementById(id);
 // balance check; null until checked). 0 disables the Upload button.
 // categorizeAvailable: /api/status says Gemini can categorize after the upload.
 // transfers: how many rows a transfer rule matches for the chosen account.
+// ownTransferPick: the account picked for rows that are always transfers (GoalSave).
 const state = { parsed: null, connected: false, plans: [], uploading: false, startCheckId: 0,
-                toUpload: null, categorizeAvailable: false, transfers: 0 };
+                toUpload: null, categorizeAvailable: false, transfers: 0, ownTransferPick: "" };
 
 // ---- small helpers ---------------------------------------------------------
 
@@ -160,6 +161,7 @@ function showParsed(parsed) {
       `(${accounts.length} accounts in this PDF)` : "") +
     (extra ? ` (+${extra} balance correction${extra === 1 ? "" : "s"})` : ""), "ok");
   showAccountPicker(parsed);
+  showOwnTransfers(parsed);
   const amounts = new Set(parsed.amount_columns);
   const moneyIn = new Set(parsed.money_in_columns);
   const moneyOut = new Set(parsed.money_out_columns);
@@ -205,6 +207,44 @@ $("statement-account").addEventListener("change", async (e) => {
     message("parse-msg", err.message);
   }
 });
+
+// Rows that are always transfers (GoTyme GoalSave's "Deposit account" rows,
+// Source.own_transfers): which YNAB account they go to. Prefilled from
+// /auto-import's mapping when there is one, else the last pick in this browser.
+const OWN_TRANSFER_KEY = "own-transfer-account:";
+
+function showOwnTransfers(parsed) {
+  const own = parsed.own_transfers;
+  show($("own-transfer-row"), !!own);
+  if (!own) return;
+  $("own-transfer-label").textContent = `Transfers to/from ${own.description} go to`;
+  let remembered = "";
+  try { remembered = localStorage.getItem(OWN_TRANSFER_KEY + parsed.source) || ""; }
+  catch (_) { /* private window: nothing remembered */ }
+  state.ownTransferPick = own.account_id || remembered;
+  fillOwnTransferAccounts();
+}
+
+// The same accounts as the Account select, with "Not a transfer" first
+function fillOwnTransferAccounts() {
+  const select = $("own-transfer-account");
+  const accounts = Array.from($("account").options).filter((o) => o.value);
+  select.replaceChildren(new Option("Not a transfer", ""),
+    ...accounts.map((o) => new Option(o.text, o.value)));
+  select.value = accounts.some((o) => o.value === state.ownTransferPick) ? state.ownTransferPick : "";
+}
+
+$("own-transfer-account").addEventListener("change", (e) => {
+  state.ownTransferPick = e.target.value;
+  try { localStorage.setItem(OWN_TRANSFER_KEY + state.parsed.source, e.target.value); }
+  catch (_) { /* private window: it just isn't remembered */ }
+  checkStartingBalance();
+});
+
+// What the balance check and the upload send for those rows
+function ownTransferAccount() {
+  return state.parsed && state.parsed.own_transfers ? $("own-transfer-account").value : "";
+}
 
 // Running balance didn't add up: warning box listing the correction rows,
 // and the same rows highlighted in the preview table
@@ -362,6 +402,7 @@ async function loadAccounts() {
     const accounts = await api(`/api/plans/${encodeURIComponent(planId)}/accounts`);
     select.replaceChildren(new Option(accounts.length ? "Choose an account…" : "No open accounts", ""));
     accounts.forEach((a) => select.add(new Option(`${a.name} (${a.type}) – ${a.balance}`, a.id)));
+    fillOwnTransferAccounts();
     message("target-msg", "");
   } catch (err) {
     select.replaceChildren(new Option("—", ""));
@@ -429,6 +470,7 @@ async function checkStartingBalance() {
   const id = ++state.startCheckId;
   state.toUpload = null;
   markTransfers([]);
+  message("transfer-msg", "");
   showBalanceCheck("start-check", null);
   refreshSteps();
   if (!state.parsed || !state.connected || !planId || !accountId) return;
@@ -437,11 +479,13 @@ async function checkStartingBalance() {
     const check = await api("/api/starting-balance", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan_id: planId, account_id: accountId }),
+      body: JSON.stringify({ plan_id: planId, account_id: accountId,
+                             own_transfer_account_id: ownTransferAccount() }),
     });
     if (id === state.startCheckId) {
       showBalanceCheck("start-check", check);
       markTransfers(check.transfers || []);
+      if (check.unlinked_message) message("transfer-msg", "⚠ " + check.unlinked_message, "warn");
       state.toUpload = check.to_upload ?? null;
       refreshSteps();
     }
@@ -565,6 +609,7 @@ $("upload-btn").addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plan_id: $("plan").value, account_id: $("account").value,
+                             own_transfer_account_id: ownTransferAccount(),
                              categorize: progress.categorize }),
     });
     stop();
@@ -575,6 +620,7 @@ $("upload-btn").addEventListener("click", async () => {
       (others.length ? `. Pick the next ${state.parsed.account_label} above to import ` +
         `${others.join(", ")}, with its own YNAB account.` : ""), "ok");
     if (res.skipped) message("upload-skipped", `Skipped ${res.skipped} already imported`, "info");
+    if (res.unlinked_message) message("transfer-msg", "⚠ " + res.unlinked_message, "warn");
     if (res.created.length) showCreated(res.created, res.ynab_url);
     $("card-upload").classList.add("complete");
     // Everything is in YNAB now: uploading again would add nothing

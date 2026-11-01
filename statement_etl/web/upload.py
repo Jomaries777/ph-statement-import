@@ -48,7 +48,7 @@ from statement_etl.pipeline import (
     starting_balance_check,
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
-from statement_etl.transfers import find_transfers
+from statement_etl.transfers import find_transfers, unlinked_message
 from statement_etl.web import token_store, transfer_rules
 from statement_etl.web.config import CATEGORIZE_AVAILABLE, HOSTED, TRANSFER_RULES
 from statement_etl.web.limits import CATEGORIZE_LIMIT, PARSE_LIMIT, limiter
@@ -228,12 +228,30 @@ def _show_account(state, account):
         ]
         if src.account_column
         else [],
+        # rows that are always transfers (Source.own_transfers): the page asks
+        # which YNAB account they go to, prefilled from /auto-import if mapped
+        "own_transfers": _own_transfers_json(src),
     }
     state["account"] = account
     state["rows"] = rows
     state["transactions"] = transactions
     state["parsed"] = parsed
     return parsed
+
+
+def _own_transfers_json(src) -> dict | None:
+    """The "Transfers to/from Deposit account go to" select for a GoalSave
+    upload: {"description": "Deposit account", "other_name": "GoTyme",
+    "account_id": the Everyday account mapped on /auto-import, or ""}."""
+    own = src.own_transfers
+    if not own:
+        return None
+    mapped = transfer_rules.saved_own_accounts().get(own.other_source) if TRANSFER_RULES else None
+    return {
+        "description": own.description,
+        "other_name": SOURCES[own.other_source].name,
+        "account_id": mapped[0] if mapped else "",
+    }
 
 
 @blueprint.get("/api/plans")
@@ -270,20 +288,46 @@ def _money(amount):
     return None if amount is None else f"{amount:,.2f}"
 
 
-def _transfers(state, account_id) -> tuple[dict[int, str], dict[str, str]]:
-    """The parsed rows a saved transfer rule matches, for an upload into
-    `account_id` (transfers.find_transfers()): ({row index: the other YNAB
-    account id}, {account id: its name}). Empty without rules, and in hosted
-    mode without auto-import's Google sign-in."""
-    if not TRANSFER_RULES:
-        return {}, {}
-    rules = transfer_rules.saved_rules()
-    transfers = find_transfers(state["rows"], get_source(state["source"]), account_id, rules)
+def _transfers(state, account_id, body) -> tuple[dict[int, str | tuple], dict[str, str]]:
+    """The parsed rows that are transfers, for an upload into `account_id`
+    (transfers.find_transfers()): ({row index: the other YNAB account id},
+    {account id: its name}).
+
+    Rows a saved transfer rule matches: none without rules, and in hosted
+    mode without auto-import's Google sign-in. Then the moves that need no
+    rule (Source.own_transfers): GoalSave's "Deposit account" rows go to the
+    account the page's "Transfers to/from" select names (body's
+    "own_transfer_account_id"); Everyday's "GoalSave" rows link to a
+    transfer from any GoalSave account mapped on /auto-import, or, with none
+    mapped, from any account.
+    """
+    source = get_source(state["source"])
+    rules = transfer_rules.saved_rules() if TRANSFER_RULES else []
+    own_accounts = transfer_rules.saved_own_accounts() if TRANSFER_RULES else {}
+    picked = body.get("own_transfer_account_id")
+    if source.own_transfers and isinstance(picked, str) and picked:
+        own_accounts[source.own_transfers.other_source] = [picked]
+    transfers = find_transfers(state["rows"], source, account_id, rules, own_accounts)
     names = {}
     for rule in rules:
         names[rule.account_1_id] = rule.account_1_name
         names[rule.account_2_id] = rule.account_2_name
     return transfers, names
+
+
+def _transfer_label(source, to, names) -> str:
+    """What a transfer row's "→ …" mark on the page says: the rule's account
+    name, or for a move that needs no rule, the other source's name
+    ("GoTyme" on a GoalSave row, "GoTyme GoalSave" on an Everyday one)."""
+    if isinstance(to, str) and to in names:
+        return names[to]
+    if source.own_transfers:
+        return SOURCES[source.own_transfers.other_source].name
+    return next(
+        s.name
+        for s in SOURCES.values()
+        if s.own_transfers and s.own_transfers.other_source == source.key
+    )
 
 
 @blueprint.post("/api/starting-balance")
@@ -301,7 +345,8 @@ def api_starting_balance():
     if not plan_id or not account_id:
         return error_response("Choose a plan and an account.", 400)
 
-    transfers, account_names = _transfers(state, account_id)
+    transfers, account_names = _transfers(state, account_id, body)
+    source = get_source(state["source"])
     check, err = ynab_call(
         lambda token: starting_balance_check(
             rows,
@@ -315,14 +360,18 @@ def api_starting_balance():
     )
     if err:
         return err
+    unlinked = check.get("unlinked_transfers") or []
     return jsonify(
         {
             **_check_json(check),
-            # rows a transfer rule matched, so the page can mark them
+            # rows a transfer rule matched, so the page can mark them; not
+            # the ones that found no transfer to link to (they go as ordinary rows)
             "transfers": [
-                {"row": index, "to": account_names[to_account]}
-                for index, to_account in sorted(transfers.items())
+                {"row": index, "to": _transfer_label(source, to, account_names)}
+                for index, to in sorted(transfers.items())
+                if index not in unlinked
             ],
+            "unlinked_message": unlinked_message(source, len(unlinked)) if unlinked else None,
         }
     )
 
@@ -349,7 +398,8 @@ def api_upload():
         return error_response("Choose a plan and an account.", 400)
 
     rows = state["rows"]
-    transfers, _ = _transfers(state, account_id)
+    source = get_source(state["source"])  # read before the hosted clean-up below
+    transfers, _ = _transfers(state, account_id, body)
 
     # New account's Starting Balance, upload, ending balance check. After a
     # token refresh ynab_call() runs it again, which is safe: YNAB skips
@@ -371,6 +421,7 @@ def api_upload():
         state.pop("progress", None)
     if err:
         return err
+    unlinked = getattr(imported, "unlinked_transfers", [])
     # The statement's other accounts, still to upload (GoTyme GoalSave)
     uploaded = state.setdefault("uploaded_accounts", [])
     if state.get("account") not in uploaded:
@@ -416,6 +467,7 @@ def api_upload():
             "created": created,
             "skipped": imported.skipped,
             "transfers": imported.transfers,
+            "unlinked_message": unlinked_message(source, len(unlinked)) if unlinked else None,
             "to_categorize": len(to_categorize),
             "ynab_url": f"https://app.ynab.com/{plan_id}/accounts/{account_id}",
             "other_accounts": other_accounts,

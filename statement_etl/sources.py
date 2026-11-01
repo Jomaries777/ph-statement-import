@@ -34,6 +34,25 @@ def _no_warning(rows):
 
 
 @dataclass(frozen=True)
+class OwnTransfers:
+    """Money a source's rows always move to or from the same person's account
+    at another source, so no transfer rule (transfers.py) is needed:
+
+        OwnTransfers(description="Deposit account", other_source="gotyme",
+                     other_description="GoalSave")
+
+    on gotyme_goalsave: a GoalSave row containing "Deposit account" is a
+    transfer with the person's GoTyme Everyday account, and an Everyday row
+    containing "GoalSave" is a transfer with one of their GoalSave accounts.
+    Matching ignores case and extra spaces, like a rule's.
+    """
+
+    description: str  # in this source's text_column, e.g. "Deposit account"
+    other_source: str  # the other source's key, e.g. "gotyme"
+    other_description: str  # in the other source's text_column, e.g. "GoalSave"
+
+
+@dataclass(frozen=True)
 class Source:
     """One e-wallet or bank statement format.
 
@@ -76,6 +95,11 @@ class Source:
                               "reference", "amount" (signed Decimal)}]
         balance_warning     - rows -> warning text, or None if the statement adds up
 
+    Optional, for money a source only ever moves to the same person's account
+    at another source (GoTyme GoalSave and GoTyme Everyday):
+        own_transfers - an OwnTransfers: those rows become YNAB transfers with
+                        no transfer rule (transfers.find_transfers)
+
     Optional, for Gmail auto-import (/auto-import in hosted mode):
         email_query        - Gmail search for this source's statement emails.
                              Sources without it don't appear on /auto-import.
@@ -116,6 +140,7 @@ class Source:
     is_correction_row: Callable = _never_correction
     balance_corrections: Callable = _no_corrections
     balance_warning: Callable = _no_warning
+    own_transfers: OwnTransfers | None = None
     email_query: str | None = None
     attachment_pattern: str | None = None
     password_inputs: tuple = ()
@@ -200,6 +225,13 @@ SOURCES = {
             statement_balances=gotyme_goalsave.statement_balances,
             summary=gotyme_goalsave.summary,
             to_transactions=gotyme_goalsave.to_transactions,
+            # "Transfer to/from Deposit account" here is "Transfer to/from
+            # GoalSave" on the Everyday statement
+            own_transfers=OwnTransfers(
+                description="Deposit account",
+                other_source="gotyme",
+                other_description="GoalSave",
+            ),
             # The same email as GoTyme Everyday, its other PDF
             email_query=(
                 'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" '

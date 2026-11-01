@@ -231,6 +231,8 @@
         <div class="row"><label>Plan</label><div class="field select">My Budget</div></div>
         <div class="row"><label>Account</label><div class="field select">GCash</div></div>
         <div class="msg ok">✓ Starting balance matches: YNAB 500.00 = statement 500.00</div>
+        <p class="small muted" style="margin:8px 0 4px">With a GoTyme GoalSave statement, one more row (<b class="pin">5</b>):</p>
+        <div class="row"><label>Transfers to/from Deposit account go to</label><div class="field select">GoTyme Everyday</div></div>
       </div>
 
       <div class="step">
@@ -256,6 +258,7 @@
     <div class="note"><b class="pin">2</b>Hosted mode has no token field and no "Remember this token" box. YNAB's terms don't allow asking for other people's personal access tokens. Toggle the state to see both.</div>
     <div class="note"><b class="pin">3</b>Footer links are required: YNAB's OAuth review checks that the privacy policy is shown prominently.</div>
     <div class="note"><b class="pin">4</b>A GoalSave PDF holds one to five accounts. With two or more, a GoalSave No. picker appears; changing it parses again with that account, so the balance checks and the upload cover only that account. Upload one, then pick the next. With one account there's no picker.</div>
+    <div class="note"><b class="pin">5</b>GoalSave's "Transfer to/from Deposit account" rows always move money to or from GoTyme Everyday, so they become YNAB transfers with no transfer rule. The select starts on the Everyday account mapped on Auto-import (hosted), or the last pick in this browser; "Not a transfer" imports them as ordinary rows. Everyday's "Transfer to/from GoalSave" rows don't say which GoalSave account, so they link to the transfer a GoalSave import already made (same amount, within 3 days). Imported before GoalSave, they go as ordinary rows, and card 4 says "Import the GoTyme GoalSave statement first, so its transfers link up."</div>
   </aside>
 </div>
 
