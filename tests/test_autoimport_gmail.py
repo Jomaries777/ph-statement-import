@@ -421,6 +421,40 @@ class GetPdfAttachmentTest(GmailTestCase):
 # =============================================================================
 
 
+def b64(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode()
+
+
+class MessageTextTest(unittest.TestCase):
+    def test_plain_text_parts(self) -> None:
+        message = {
+            "payload": mime_part(
+                mime="multipart/mixed",
+                parts=[
+                    mime_part(
+                        mime="multipart/alternative",
+                        parts=[
+                            mime_part(mime="text/plain", data=b64("Mobile number: 0917123****")),
+                            mime_part(mime="text/html", data=b64("<p>ignored</p>")),
+                        ],
+                    ),
+                    mime_part("enc-0917123_1.pdf", att_id="att-1"),
+                ],
+            )
+        }
+        self.assertEqual(gmail.message_text(message), "Mobile number: 0917123****")
+        self.assertEqual(gmail.attachment_names(message), ["enc-0917123_1.pdf"])
+
+    def test_html_only_loses_its_tags(self) -> None:
+        html = "<td>Mobile number:</td>\n<td><b>0917123****</b></td>"
+        message = {"payload": mime_part(mime="text/html", data=b64(html))}
+        self.assertEqual(gmail.message_text(message), "Mobile number: 0917123****")
+
+    def test_no_payload(self) -> None:
+        self.assertEqual(gmail.message_text({}), "")
+        self.assertEqual(gmail.attachment_names({}), [])
+
+
 class WatchTest(GmailTestCase):
     TOPIC = "projects/example-project/topics/gmail-push"
 

@@ -39,8 +39,49 @@ async function api(path, options = {}) {
   return body;
 }
 
-function sourceRows() {
-  return Array.from(document.querySelectorAll("#mapping-table tbody tr[data-source]"));
+// One row per wallet: an account at a source ("gcash", "gcash-2", ...)
+function walletRows() {
+  return Array.from(document.querySelectorAll("#mapping-table tbody tr[data-wallet]"));
+}
+
+// The digits that tell several accounts at one source apart ("" if the row has none)
+function rowAccount(row) {
+  const input = row.querySelector("input[data-account-input]");
+  return input ? input.value.trim() : "";
+}
+
+// "GCash" or "GCash · 0917123", as the server names wallets (sources.py wallet_name)
+function walletName(row) {
+  const account = rowAccount(row);
+  const name = row.dataset.sourceName || row.dataset.source;
+  return account ? `${name} · ${account}` : name;
+}
+
+// The first 7 digits of a mobile number (INPUT_FIELDS["mobile_first7"] in auto_import.py)
+const ACCOUNT_PATTERN = /^09\d{5}$/;
+
+// Problems with the accounts' digits: several at one source need distinct ones
+function walletsMessage() {
+  const bySource = new Map();
+  walletRows().forEach((row) => {
+    if (!row.querySelector("input[data-account-input]")) return;
+    if (!bySource.has(row.dataset.source)) bySource.set(row.dataset.source, []);
+    bySource.get(row.dataset.source).push(row);
+  });
+  for (const rows of bySource.values()) {
+    const name = rows[0].dataset.sourceName;
+    const accounts = rows.map(rowAccount);
+    if (accounts.some((a) => a && !ACCOUNT_PATTERN.test(a))) {
+      return "First 7 digits of mobile must look like 0917123.";
+    }
+    if (rows.length > 1 && accounts.some((a) => !a)) {
+      return `With more than one ${name} account, enter the first 7 digits of mobile for each.`;
+    }
+    if (new Set(accounts).size < accounts.length) {
+      return `Two ${name} accounts have the same first 7 digits of mobile.`;
+    }
+  }
+  return "";
 }
 
 function readRowInputs(row) {
@@ -80,10 +121,10 @@ function refreshState() {
 
   let mappedCount = 0;
   let allInputsFilled = true;
-  let duplicateMessage = "";
+  let duplicateMessage = walletsMessage();
   const seenAccounts = new Map();
 
-  sourceRows().forEach((row) => {
+  walletRows().forEach((row) => {
     const select = row.querySelector(".account-select");
     const testBtn = row.querySelector(".test-btn");
     select.disabled = !state.ynabConnected || !planId;
@@ -93,7 +134,7 @@ function refreshState() {
     if (!accountId) return;
     mappedCount += 1;
 
-    const sourceName = row.dataset.sourceName || row.dataset.source;
+    const sourceName = walletName(row);
     if (seenAccounts.has(accountId) && !duplicateMessage) {
       duplicateMessage =
         `${seenAccounts.get(accountId)} and ${sourceName} cannot use the same YNAB account, ` +
@@ -107,8 +148,10 @@ function refreshState() {
 
   if (duplicateMessage) {
     message("save-msg", duplicateMessage, "err");
-  } else if ($("save-msg") && $("save-msg").textContent.includes("same YNAB account")) {
+    state.shownRowsMessage = duplicateMessage;
+  } else if (state.shownRowsMessage && $("save-msg").textContent === state.shownRowsMessage) {
     message("save-msg", "");
+    state.shownRowsMessage = "";
   }
 
   const ready =
@@ -134,7 +177,7 @@ function setYnabConnected(on, reason) {
   if (!on) {
     state.plans = [];
     $("plan").replaceChildren(new Option("— connect to YNAB first —", ""));
-    sourceRows().forEach((row) => {
+    walletRows().forEach((row) => {
       const select = row.querySelector(".account-select");
       select.replaceChildren(new Option("Don't import", ""));
     });
@@ -187,7 +230,7 @@ async function loadPlans() {
 
 async function loadAccounts() {
   const planId = $("plan").value;
-  const selects = sourceRows().map((r) => r.querySelector(".account-select"));
+  const selects = walletRows().map((r) => r.querySelector(".account-select"));
   selects.forEach((s) => s.replaceChildren(new Option(planId ? "Loading…" : "Don't import", "")));
   refreshState();
   if (!planId) return;
@@ -220,7 +263,7 @@ async function loadAccounts() {
 async function testSource(row) {
   const sourceKey = row.dataset.source;
   const btn = row.querySelector(".test-btn");
-  const msgId = `test-msg-${sourceKey}`;
+  const msgId = `test-msg-${row.dataset.wallet}`;
   const { inputs, complete } = readRowInputs(row);
   if (!complete) {
     message(msgId, "Fill in every password field before testing.", "err");
@@ -234,7 +277,8 @@ async function testSource(row) {
     const res = await api("/api/auto-import/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: sourceKey, inputs }),
+      // With the account's digits, the newest email for that account is tried
+      body: JSON.stringify({ source: sourceKey, inputs, account: rowAccount(row) || null }),
     });
     message(msgId, (res.ok ? "✓ " : "✗ ") + res.message, res.ok ? "ok" : "err");
   } catch (err) {
@@ -252,21 +296,23 @@ async function saveSettings() {
   const mappings = {};
   const passwordInputs = {};
 
-  sourceRows().forEach((row) => {
-    const sourceKey = row.dataset.source;
+  walletRows().forEach((row) => {
+    const walletId = row.dataset.wallet;
     const select = row.querySelector(".account-select");
     const accountId = select.value;
     const opt = select.selectedOptions[0];
     const accountName = (opt && opt.dataset.accountName) || (opt ? opt.text : "");
     const enabled = !!accountId;
-    mappings[sourceKey] = {
+    mappings[walletId] = {
+      source: row.dataset.source,
       account_id: enabled ? accountId : "",
       account_name: enabled ? accountName : "",
       enabled,
     };
-    if (enabled) {
-      passwordInputs[sourceKey] = readRowInputs(row).inputs;
-    }
+    const inputs = enabled ? readRowInputs(row).inputs : {};
+    const accountInput = row.querySelector("input[data-account-input]");
+    if (accountInput && rowAccount(row)) inputs[accountInput.dataset.accountInput] = rowAccount(row);
+    if (Object.keys(inputs).length) passwordInputs[walletId] = inputs;
   });
 
   state.saving = true;
@@ -297,6 +343,48 @@ async function saveSettings() {
   }
 }
 
+// ---- ④ Several accounts at one source (GCash) --------------------------------
+
+function wireWalletRow(row) {
+  row.querySelector(".account-select").addEventListener("change", refreshState);
+  row.querySelectorAll("input[data-input], input[data-account-input]").forEach((input) => {
+    input.addEventListener("input", refreshState);
+  });
+  row.querySelector(".test-btn").addEventListener("click", () => testSource(row));
+  row.querySelector(".remove-wallet-btn").addEventListener("click", () => {
+    row.remove();
+    refreshState();
+  });
+}
+
+// "+ Add another GCash account": a copy of the source's first row, emptied,
+// as wallet "gcash-2", "gcash-3", ... (the next number not in use)
+function addWallet(sourceKey) {
+  const rows = walletRows().filter((r) => r.dataset.source === sourceKey);
+  const numbers = rows.map((r) => Number(r.dataset.wallet.split("-")[1] || 1));
+  const walletId = `${sourceKey}-${Math.max(...numbers) + 1}`;
+
+  // A copy keeps what was typed: each field goes back to what the page came
+  // with (e.g. the last name from Google), the account's digits to empty
+  const row = rows[0].cloneNode(true);
+  row.dataset.wallet = walletId;
+  const select = row.querySelector(".account-select");
+  select.dataset.savedAccountId = "";
+  select.value = "";
+  row.querySelectorAll("input[data-input]").forEach((input) => { input.value = input.defaultValue; });
+  row.querySelector("input[data-account-input]").value = "";
+  const testMsg = row.querySelector('[id^="test-msg-"]');  // message() replaces its classes
+  testMsg.id = `test-msg-${walletId}`;
+  testMsg.textContent = "";
+  show(testMsg, false);
+  show(row.querySelector(".remove-wallet-btn"));
+
+  rows[rows.length - 1].after(row);
+  wireWalletRow(row);
+  row.querySelector("input[data-account-input]").focus();
+  refreshState();
+}
+
 async function deleteAllData() {
   if (state.deleting) return;
   state.deleting = true;
@@ -313,11 +401,17 @@ async function deleteAllData() {
     show($("auto-setup-view"), true);
     if ($("cancel-edit-btn")) show($("cancel-edit-btn"), false);
     $("save-btn").textContent = "Turn on";
-    sourceRows().forEach((row) => {
+    walletRows().forEach((row) => {
+      if (row.dataset.wallet !== row.dataset.source) {  // an added account
+        row.remove();
+        return;
+      }
       row.querySelector(".account-select").value = "";
-      row.querySelectorAll("input[data-input]").forEach((input) => { input.value = ""; });
-      row.querySelectorAll(".field-note").forEach((note) => show(note, false));
-      message(`test-msg-${row.dataset.source}`, "");
+      row.querySelectorAll("input[data-input], input[data-account-input]").forEach((input) => {
+        input.value = "";
+      });
+      row.querySelectorAll("[data-input] + .field-note").forEach((note) => show(note, false));
+      message(`test-msg-${row.dataset.wallet}`, "");
     });
     refreshState();
     if (res.warning) {
@@ -414,12 +508,9 @@ if ($("auto-setup-view")) {
   });
   if ($("card-runs")) scheduleRunsRefresh();
 
-  sourceRows().forEach((row) => {
-    row.querySelector(".account-select").addEventListener("change", refreshState);
-    row.querySelectorAll("input[data-input]").forEach((input) => {
-      input.addEventListener("input", refreshState);
-    });
-    row.querySelector(".test-btn").addEventListener("click", () => testSource(row));
+  walletRows().forEach(wireWalletRow);
+  document.querySelectorAll(".add-wallet-btn").forEach((btn) => {
+    btn.addEventListener("click", () => addWallet(btn.dataset.source));
   });
 
   (async function init() {

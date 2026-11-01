@@ -99,6 +99,19 @@ INPUT_FIELDS = {
         "pattern": re.compile(r"^\d{4}$"),
         "pattern_error": "Last 4 of mobile must be 4 digits.",
     },
+    # Tells several GCash accounts apart (Source.account_input): the email says
+    # "Mobile number: 0917123****". Not secret on its own, but stored encrypted
+    # with the password inputs: with the last 4 it's the whole number.
+    "mobile_first7": {
+        "label": "First 7 digits of mobile",
+        "type": "text",
+        "placeholder": "0917123",
+        "inputmode": "numeric",
+        "maxlength": "7",
+        "autocomplete": "off",
+        "pattern": re.compile(r"^09\d{5}$"),
+        "pattern_error": "First 7 digits of mobile must look like 0917123.",
+    },
     # A date field: the browser sends YYYY-MM-DD whatever format it shows
     "birth_date": {
         "label": "Date of birth",
@@ -148,7 +161,13 @@ RUN_BADGES = {
     runner.PARSE_ERROR: ("err", "✗ Parse error"),
     runner.YNAB_ERROR: ("err", "✗ YNAB error"),
     runner.NO_ATTACHMENT: ("warn", "⚠ No PDF"),
+    runner.NO_WALLET: ("warn", "⚠ No account"),
 }
+
+# Wallet ids in the mappings (runner.wallet_source()): the source key for the
+# first account, then "gcash-2", "gcash-3", ... for more accounts of one source
+WALLET_ID_RE = re.compile(r"(?P<source>[a-z0-9_]+)(?:-(?P<number>[2-9]|[1-9]\d))?")
+MAX_WALLETS_PER_SOURCE = 5
 
 
 # =============================================================================
@@ -232,25 +251,60 @@ def _password_hint(source) -> str:
     return f"Asked once. {first_line}" if first_line else ""
 
 
-def _source_rows(user: dict | None) -> list[dict]:
-    """Template rows for Step 4, built solely from `Source` metadata."""
+def _wallet_rows(user: dict | None) -> list[dict]:
+    """Template rows for Step 4 and the "Auto-import is on" card: each wallet the
+    user saved, and one for each source with none yet. Built from `Source`
+    metadata only."""
     mappings = (user or {}).get("mappings") or {}
     rows = []
     for source in auto_import_sources():
-        mapping = mappings.get(source.key) or {}
-        enabled = bool(mapping.get("enabled"))
-        rows.append(
-            {
-                "key": source.key,
-                "name": source.name,
-                "enabled": enabled,
-                "account_id": mapping.get("account_id", "") if enabled else "",
-                "account_name": mapping.get("account_name", "") if enabled else "",
-                "inputs": [_input_spec(name, user) for name in source.password_inputs],
-                "password_hint": _password_hint(source),
-            }
-        )
+        wallet_ids = [
+            wallet_id
+            for wallet_id, mapping in mappings.items()
+            if runner.wallet_source(wallet_id, mapping) == source.key
+        ]
+        for wallet_id in sorted(wallet_ids or [source.key], key=_wallet_number):
+            mapping = mappings.get(wallet_id) or {}
+            enabled = bool(mapping.get("enabled"))
+            account = _saved_account(user, source, wallet_id)
+            rows.append(
+                {
+                    "wallet_id": wallet_id,
+                    "key": source.key,
+                    "name": source.name,
+                    "wallet_name": source.wallet_name(account),
+                    "enabled": enabled,
+                    "account_id": mapping.get("account_id", "") if enabled else "",
+                    "account_name": mapping.get("account_name", "") if enabled else "",
+                    "account_input": (
+                        {**_input_spec(source.account_input, user), "value": account}
+                        if source.account_input
+                        else None
+                    ),
+                    "inputs": [_input_spec(name, user) for name in source.password_inputs],
+                    "password_hint": _password_hint(source),
+                    "extra": wallet_id != source.key,  # an added account: it can be removed
+                    "last": False,
+                }
+            )
+        rows[-1]["last"] = True  # "+ Add another <source> account" goes after it
     return rows
+
+
+def _wallet_number(wallet_id: str) -> int:
+    """1 for "gcash", 2 for "gcash-2", ...: the order wallets are listed in."""
+    match = WALLET_ID_RE.fullmatch(wallet_id)
+    return int(match.group("number")) if match and match.group("number") else 1
+
+
+def _saved_account(user: dict | None, source, wallet_id: str) -> str:
+    """The account_input value saved for a wallet, or "" (also if it can't be read)."""
+    if not user:
+        return ""
+    try:
+        return runner.wallet_account(user, source, wallet_id)
+    except (store.DecryptError, ValueError):
+        return ""
 
 
 def _format_time(when: datetime | None, fmt: str = "%b %d, %I:%M %p") -> str:
@@ -276,6 +330,7 @@ def format_run(run: dict, mappings: dict) -> dict:
     """
     source_key = run.get("source", "")
     source_name = SOURCES[source_key].name if source_key in SOURCES else source_key
+    wallet_name = run.get("wallet_name") or source_name  # "GCash · 0917123"
     account_name = (
         run.get("account_name")
         or (mappings.get(source_key) or {}).get("account_name")
@@ -307,7 +362,7 @@ def format_run(run: dict, mappings: dict) -> dict:
     seconds = run.get("duration_seconds")
     return {
         "received": _format_time(run.get("received_at") or run.get("ran_at")),
-        "wallet": source_name,
+        "wallet": wallet_name,
         "account": account_name,
         "badge_kind": badge_kind,
         "badge_text": badge_text,
@@ -360,7 +415,8 @@ def format_progress(progress: dict | None, now: datetime | None = None) -> dict 
         source_key = email.get("source", "")
         row = {
             "received": _format_time(email.get("received_at")),
-            "wallet": SOURCES[source_key].name if source_key in SOURCES else source_key,
+            "wallet": email.get("wallet_name")
+            or (SOURCES[source_key].name if source_key in SOURCES else source_key),
             "account": email.get("account_name") or "—",
             "state": "waiting",
             "steps": [],
@@ -458,7 +514,7 @@ def page():
         plan_id=(user or {}).get("plan_id", ""),
         plan_name=(user or {}).get("plan_name", ""),
         last_checked=last_checked,
-        sources=_source_rows(user),
+        sources=_wallet_rows(user),
         google_error=_google_error_text(request.args.get("google_error")),
         **_recent_imports(user),
     )
@@ -574,6 +630,36 @@ def _clean_source_inputs(source, raw_inputs: object) -> tuple[dict | None, str |
     return cleaned, None
 
 
+def _clean_wallet_accounts(
+    source, wallet_ids: list[str], raw_inputs: dict
+) -> tuple[dict[str, str], str | None]:
+    """Each wallet's account_input value (e.g. the first 7 digits of the mobile),
+    "" where there's none; returns `(accounts, error_message)`.
+
+    One wallet may leave it blank (every email goes to it, as before). With
+    several, each needs its own, so each email can be sent to the right one.
+    """
+    accounts = {wallet_id: "" for wallet_id in wallet_ids}
+    if not source.account_input:
+        return accounts, None
+    spec = INPUT_FIELDS[source.account_input]
+    for wallet_id in wallet_ids:
+        inputs = raw_inputs.get(wallet_id)
+        value = inputs.get(source.account_input) if isinstance(inputs, dict) else None
+        text = value.strip() if isinstance(value, str) else ""
+        if text and not spec["pattern"].fullmatch(text):
+            return accounts, spec["pattern_error"]
+        if not text and len(wallet_ids) > 1:
+            return accounts, (
+                f"With more than one {source.name} account, enter the "
+                f"{spec['label'].lower()} for each."
+            )
+        accounts[wallet_id] = text
+    if len(set(accounts.values())) < len(accounts):
+        return accounts, f"Two {source.name} accounts have the same {spec['label'].lower()}."
+    return accounts, None
+
+
 def _validate_settings(body: object) -> tuple[dict | None, str | None]:
     """Validate a POST /api/auto-import payload; returns `(cleaned, error_message)`."""
     if not isinstance(body, dict):
@@ -591,42 +677,69 @@ def _validate_settings(body: object) -> tuple[dict | None, str | None]:
         return None, "Invalid password inputs."
     raw_inputs = raw_inputs or {}
 
+    # Wallets: "gcash", "gcash-2", ...; each entry names its source (or, saved
+    # before there could be several, its id is the source key)
     allowed_sources = {s.key: s for s in auto_import_sources()}
-    for source_key in set(raw_mappings) | set(raw_inputs):
+    wallets: dict[str, list[str]] = {key: [] for key in allowed_sources}
+    for wallet_id, entry in raw_mappings.items():
+        source_key = entry.get("source") if isinstance(entry, dict) else None
+        source_key = source_key or wallet_id
         if source_key not in SOURCES:
             return None, f"Unknown source {source_key!r}."
         if source_key not in allowed_sources:
             return None, f"Auto-import is not available for {SOURCES[source_key].name}."
+        match = WALLET_ID_RE.fullmatch(wallet_id)
+        if not match or match.group("source") != source_key:
+            return None, f"Invalid wallet {wallet_id!r}."
+        if match.group("number") and not allowed_sources[source_key].account_input:
+            return None, f"Only one {SOURCES[source_key].name} account can be mapped."
+        wallets[source_key].append(wallet_id)
+    for wallet_id in raw_inputs:
+        if wallet_id not in raw_mappings and wallet_id not in allowed_sources:
+            return None, f"Unknown source {wallet_id!r}."
 
     clean_mappings = {}
     clean_inputs = {}
     seen_accounts: dict[str, str] = {}
     for source_key, source in allowed_sources.items():
-        entry = raw_mappings.get(source_key) or {}
-        if not isinstance(entry, dict):
-            return None, f"Invalid mapping for {source.name}."
-        enabled = bool(entry.get("enabled"))
-        account_id = (entry.get("account_id") or "").strip() if enabled else ""
-        account_name = (entry.get("account_name") or "").strip() if enabled else ""
-        if enabled:
-            if not account_id:
-                return None, f"Choose a YNAB account for {source.name}."
-            if account_id in seen_accounts:
-                other = seen_accounts[account_id]
-                return None, (
-                    f"{other} and {source.name} cannot use the same YNAB account, "
-                    "because their balance checks would conflict."
-                )
-            seen_accounts[account_id] = source.name
-            inputs, err = _clean_source_inputs(source, raw_inputs.get(source_key))
-            if err:
-                return None, err
-            clean_inputs[source_key] = inputs
-        clean_mappings[source_key] = {
-            "account_id": account_id,
-            "account_name": account_name or account_id,
-            "enabled": enabled,
-        }
+        wallet_ids = sorted(wallets[source_key] or [source_key], key=_wallet_number)
+        if len(wallet_ids) > MAX_WALLETS_PER_SOURCE:
+            return None, f"At most {MAX_WALLETS_PER_SOURCE} {source.name} accounts."
+        accounts, err = _clean_wallet_accounts(source, wallet_ids, raw_inputs)
+        if err:
+            return None, err
+        for wallet_id in wallet_ids:
+            entry = raw_mappings.get(wallet_id) or {}
+            if not isinstance(entry, dict):
+                return None, f"Invalid mapping for {source.name}."
+            name = source.wallet_name(accounts[wallet_id])
+            enabled = bool(entry.get("enabled"))
+            account_id = (entry.get("account_id") or "").strip() if enabled else ""
+            account_name = (entry.get("account_name") or "").strip() if enabled else ""
+            inputs = {}
+            if enabled:
+                if not account_id:
+                    return None, f"Choose a YNAB account for {name}."
+                if account_id in seen_accounts:
+                    other = seen_accounts[account_id]
+                    return None, (
+                        f"{other} and {name} cannot use the same YNAB account, "
+                        "because their balance checks would conflict."
+                    )
+                seen_accounts[account_id] = name
+                inputs, err = _clean_source_inputs(source, raw_inputs.get(wallet_id))
+                if err:
+                    return None, err
+            if accounts[wallet_id]:
+                inputs[source.account_input] = accounts[wallet_id]
+            if inputs:
+                clean_inputs[wallet_id] = inputs
+            clean_mappings[wallet_id] = {
+                "source": source_key,
+                "account_id": account_id,
+                "account_name": account_name or account_id,
+                "enabled": enabled,
+            }
 
     if not seen_accounts:
         return None, "Map at least one e-wallet to a YNAB account."
@@ -776,8 +889,11 @@ def connect_saved_ynab():
 def test_source_password():
     """Try the typed password inputs on the newest statement email without importing.
 
-    POST /api/auto-import/test {"source": "gcash", "inputs": {...}}
+    POST /api/auto-import/test {"source": "gcash", "inputs": {...}, "account": "0917123"}
     -> {"ok": True, "message": "The password opens your newest GCash statement."}
+
+    "account" (optional, one of several accounts at the source): test the
+    newest email for that account.
     """
     user = _current_user()
     if not user or not user.get("gmail_refresh_token"):
@@ -798,9 +914,14 @@ def test_source_password():
     inputs, err = _clean_source_inputs(source, body.get("inputs"))
     if err:
         return error_response(err, 400)
+    account = body.get("account") or None
+    if account is not None:
+        spec = INPUT_FIELDS.get(source.account_input or "")
+        if not spec or not isinstance(account, str) or not spec["pattern"].fullmatch(account):
+            return error_response(spec["pattern_error"] if spec else "Invalid account.", 400)
 
     try:
-        ok, message = runner.test_password(user, source_key, inputs)
+        ok, message = runner.test_password(user, source_key, inputs, account)
     except gmail.GmailError:
         return error_response("Could not reach Gmail right now. Try again in a minute.", 502)
     except store.DecryptError:

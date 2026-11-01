@@ -665,6 +665,26 @@ def build_password(inputs: Mapping[str, str] | str, mobile_last4: str | None = N
     return last_name.lower().replace(" ", "") + mobile_last4
 
 
+# The GCash email names the account it's for by the first 7 digits of its
+# mobile number, in the body ("Mobile number: 0917123****") and in the PDF's
+# name ("enc-0917123_20261101120000.pdf"). Auto-import uses it to tell several
+# GCash accounts apart (sources.py email_account).
+EMAIL_MOBILE_RE = re.compile(r"Mobile number:\s*(\d{7})\*{4}", re.IGNORECASE)
+FILENAME_MOBILE_RE = re.compile(r"^enc-(\d{7})_")
+
+
+def email_account(body_text: str, filename: str) -> str | None:
+    """The first 7 digits of the mobile number a GCash statement email is for.
+
+        email_account("... Mobile number: 0917123**** ...", "enc-0917123_1.pdf") -> "0917123"
+        email_account("", "statement.pdf") -> None
+
+    The body first, then the PDF's filename; None if neither says.
+    """
+    match = EMAIL_MOBILE_RE.search(body_text or "") or FILENAME_MOBILE_RE.match(filename or "")
+    return match.group(1) if match else None
+
+
 # =============================================================================
 # MAIN - runs the steps in order: get PDF -> parse -> output (REUSABLE)
 # =============================================================================

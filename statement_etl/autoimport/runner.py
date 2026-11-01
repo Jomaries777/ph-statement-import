@@ -12,7 +12,10 @@ everything comes from the user's stored settings (store.py):
     process_push(email)       - the one user whose inbox changed. Never raises.
       process_user(user)        1. a fresh Gmail access token
                                 2. renew Gmail push if it ends within a day
-                                3. find_new_emails() for each source mapped to an account
+                                3. find_new_emails() for each source with a wallet mapped
+                                   to an account, and the wallet each email is for
+                                   (_wallet_for(): with several GCash accounts, the
+                                   mobile number the email names)
                                 4. only if there are any: a fresh YNAB access token (save
                                    YNAB's new refresh token), then process_message() each,
                                    keeping the progress on the user's document for the page
@@ -58,6 +61,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -84,6 +88,7 @@ PARSE_ERROR = "parse error"
 BALANCE_MISMATCH = "balance mismatch"
 YNAB_ERROR = "YNAB error"
 NO_ATTACHMENT = "no attachment"
+NO_WALLET = "no account"  # for an account of the source that isn't on the page
 
 # The step an email's import is on, shown on the page while it runs (Progress).
 # Downloading is the runner's own; the others are pipeline's: STEP_READ,
@@ -233,12 +238,22 @@ def process_user(user: dict) -> int:
     # 2. Keep Gmail push going
     _renew_watch(user, gmail_token)
 
-    # 3. New emails for each source mapped to a YNAB account ("Don't import" ones are off)
-    new_emails = []  # (source, mapping, Gmail message ID), oldest first per source
-    for source_key, mapping in user.get("mappings", {}).items():
-        if mapping.get("enabled"):
-            source, msg_ids = find_new_emails(user, source_key, gmail_token)
-            new_emails += [(source, mapping, msg_id) for msg_id in msg_ids]
+    # 3. New emails for each source with a wallet mapped to a YNAB account ("Don't
+    #    import" ones are off), each with the wallet it's for
+    new_emails = []  # (source, wallet id, mapping, Gmail message ID), oldest first per source
+    unmatched = 0
+    for source_key, wallets in _wallets_by_source(user).items():
+        if not any(mapping.get("enabled") for mapping in wallets.values()):
+            continue
+        source, msg_ids = find_new_emails(user, source_key, gmail_token)
+        for msg_id in msg_ids:
+            wallet_id, account = _wallet_for(user, source, wallets, gmail_token, msg_id)
+            if wallet_id is None:
+                _record_no_wallet(user, msg_id, source, account, gmail_token)
+                unmatched += 1
+            elif wallets[wallet_id].get("enabled"):
+                new_emails.append((source, wallet_id, wallets[wallet_id], msg_id))
+            # else: that account is set to "Don't import"
 
     # 4. Only now a fresh YNAB access token. YNAB rotates refresh tokens, and the
     #    old one stops working, so the new one is saved before anything else can fail.
@@ -247,15 +262,23 @@ def process_user(user: dict) -> int:
         store.save_ynab_tokens(user["sub"], ynab_tokens)
         progress = Progress(
             user["sub"],
-            new_emails,
+            [
+                {
+                    "source": source.key,
+                    "wallet_name": source.wallet_name(wallet_account(user, source, wallet_id)),
+                    "account_name": mapping.get("account_name", ""),
+                }
+                for source, wallet_id, mapping, _msg_id in new_emails
+            ],
             categorize=bool(user.get("categorize") and os.environ.get("GEMINI_API_KEY")),
         )
         try:
-            for source, mapping, msg_id in new_emails:
+            for source, wallet_id, mapping, msg_id in new_emails:
                 process_message(
                     user,
                     msg_id,
                     source,
+                    wallet_id,
                     mapping,
                     gmail_token,
                     ynab_tokens["access_token"],
@@ -267,7 +290,90 @@ def process_user(user: dict) -> int:
     # 5. Next time, search from here. Not reached if anything above raised, so
     #    the emails since the last check are searched again.
     store.set_last_checked(user["sub"], checked_at)
-    return len(new_emails)
+    return len(new_emails) + unmatched
+
+
+def wallet_source(wallet_id: str, mapping: dict) -> str:
+    """The source key of one wallet in the user's mappings (store.py):
+    wallet_source("gcash-2", {"source": "gcash", ...}) -> "gcash". Saved before
+    there could be several wallets per source, a mapping has no "source", and
+    the wallet id is the source key."""
+    return mapping.get("source") or wallet_id
+
+
+def _wallets_by_source(user: dict) -> dict[str, dict[str, dict]]:
+    """The user's wallets grouped by source: {"gcash": {"gcash": {...}, "gcash-2": {...}}}."""
+    wallets: dict[str, dict[str, dict]] = {}
+    for wallet_id, mapping in (user.get("mappings") or {}).items():
+        wallets.setdefault(wallet_source(wallet_id, mapping), {})[wallet_id] = mapping
+    return wallets
+
+
+def wallet_account(user: dict, source, wallet_id: str) -> str:
+    """The source.account_input value saved for a wallet, e.g. the first 7 digits
+    of a GCash mobile number ("0917123"); "" if there's none."""
+    stored = (user.get("password_inputs") or {}).get(wallet_id)
+    if not source.account_input or not stored:
+        return ""
+    return json.loads(store.decrypt(stored)).get(source.account_input, "")
+
+
+def _wallet_for(
+    user: dict, source, wallets: dict, gmail_token: str, msg_id: str
+) -> tuple[str | None, str | None]:
+    """Which of this source's `wallets` an email is for: (wallet id, the account
+    the email names). (None, account) when it's none of them.
+
+    A single wallet with no account saved gets every email, as before there
+    could be several. Otherwise the email must name the account
+    (source.email_account()), and it goes to the wallet saved with it.
+    """
+    accounts = {wallet_id: wallet_account(user, source, wallet_id) for wallet_id in wallets}
+    only_wallet = next(iter(wallets)) if len(wallets) == 1 else None
+    if source.email_account is None or (only_wallet and not accounts[only_wallet]):
+        return next(iter(wallets)), None
+
+    account = _email_account(gmail_token, source, msg_id)
+    if only_wallet and account is None:  # the email doesn't say: the one wallet, as before
+        return only_wallet, None
+    wallet_id = next((w for w, saved in accounts.items() if saved and saved == account), None)
+    return wallet_id, account
+
+
+def _email_account(gmail_token: str, source, msg_id: str) -> str | None:
+    """The account an email says it's for (source.email_account()), e.g. "0917123"."""
+    message = gmail.get_message(gmail_token, msg_id)
+    names = gmail.attachment_names(message)
+    pdf_name = next((n for n in names if re.search(source.attachment_pattern, n, re.I)), "")
+    return source.email_account(gmail.message_text(message), pdf_name)
+
+
+def _record_no_wallet(user: dict, msg_id: str, source, account: str | None, gmail_token: str):
+    """Record an email for an account that isn't on the page, so it isn't checked again."""
+    if account:
+        message = (
+            f"This statement is for {account}****. Add that {source.name} account on this "
+            "page, then request the statement again."
+        )
+    else:
+        message = (
+            f"Couldn't tell which {source.name} account this statement is for. Enter each "
+            f"{source.name} account's mobile number digits on this page."
+        )
+    store.write_run(
+        user["sub"],
+        msg_id,
+        source.key,
+        account_id="",
+        account_name="",
+        wallet_name=source.wallet_name(account),
+        status=NO_WALLET,
+        received_at=_received_at(gmail_token, msg_id),
+        created=0,
+        skipped=0,
+        message=message,
+    )
+    log.info("Auto-import run: user %s, %s, %s.", user_id(user), source.key, NO_WALLET)
 
 
 def find_new_emails(
@@ -300,12 +406,13 @@ def process_message(
     user: dict,
     msg_id: str,
     source,
+    wallet_id: str,
     mapping: dict,
     gmail_token: str,
     ynab_token: str,
     progress: "Progress",
 ) -> str:
-    """Import one statement email into the mapped account and record the run; returns its status.
+    """Import one statement email into its wallet's account and record the run; returns its status.
 
     progress shows each step on the page as it starts (see Progress).
     Raises, recording nothing, when Gmail or YNAB may work next time.
@@ -313,7 +420,9 @@ def process_message(
     received_at = _received_at(gmail_token, msg_id)
     progress.next_email(received_at)
     result = {"created": 0, "skipped": 0, "message": ""}
-    status = _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result, progress)
+    status = _import_email(
+        user, msg_id, source, wallet_id, mapping, gmail_token, ynab_token, result, progress
+    )
 
     # 5. Record the run, so this email isn't imported again
     store.write_run(
@@ -323,6 +432,8 @@ def process_message(
         account_id=mapping["account_id"],
         # Kept with the run, so editing the mapping later doesn't change the run log
         account_name=mapping.get("account_name", ""),
+        wallet=wallet_id,
+        wallet_name=source.wallet_name(wallet_account(user, source, wallet_id)),
         status=status,
         received_at=received_at,
         step=progress.step,  # where it stopped, for a failed run
@@ -333,7 +444,9 @@ def process_message(
     return status
 
 
-def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result, progress) -> str:
+def _import_email(
+    user, msg_id, source, wallet_id, mapping, gmail_token, ynab_token, result, progress
+) -> str:
     """Steps 1-4 of process_message(). Fills in `result` and returns the run's status."""
     # 1. The PDF attachment, in memory only
     progress.report(STEP_DOWNLOAD, {})
@@ -342,8 +455,8 @@ def _import_email(user, msg_id, source, mapping, gmail_token, ynab_token, result
         return NO_ATTACHMENT
     _filename, pdf_bytes = attachment
 
-    # 2. The PDF password, built from the inputs the user entered once
-    password = pdf_password(user, source)
+    # 2. The PDF password, built from the inputs the user entered once for this wallet
+    password = pdf_password(user, source, wallet_id=wallet_id)
 
     # 3. Parse
     try:
@@ -417,14 +530,15 @@ def _categorize(user, created, ynab_token, result, progress) -> None:
 class Progress:
     """One run's progress, kept on the user's document so the page can show it.
 
-        progress = Progress(sub, new_emails)  # [(source, mapping, msg_id)], in order
+        progress = Progress(sub, emails)      # [{"source", "wallet_name", "account_name"}]
         progress.next_email(received_at)      # the next email starts (step: download)
         progress.report(pipeline.STEP_READ, {"page": 1, "pages": 5})
 
     The document's "progress" field (store.set_progress()) is written only when
     the step changes, so reading a 5-page PDF is one write, not five:
         {"categorize": False,
-         "emails": [{"source": "gcash", "account_name": "GCash", "received_at": ...}],
+         "emails": [{"source": "gcash", "wallet_name": "GCash · 0917123",
+                     "account_name": "GCash", "received_at": ...}],
          "index": 0, "step": "upload", "rows": 72, "started_at": ..., "updated_at": ...}
     process_user() removes it when the run ends (store.clear_progress()).
     """
@@ -433,10 +547,7 @@ class Progress:
         self.sub = sub
         self.record = {
             "categorize": categorize,  # the page lists Gemini's step only then
-            "emails": [
-                {"source": source.key, "account_name": mapping.get("account_name", "")}
-                for source, mapping, _msg_id in emails
-            ],
+            "emails": [dict(email) for email in emails],  # in import order
             "index": -1,  # next_email() moves to 0
             "step": None,
             "rows": None,
@@ -534,13 +645,16 @@ def start_watch(user: dict) -> None:
     _renew_watch({**user, "gmail_watch_expires": None}, gmail_token)
 
 
-def pdf_password(user: dict, source, inputs: dict | None = None) -> str:
-    """The PDF password from the user's stored inputs, or from `inputs` if given.
+def pdf_password(
+    user: dict, source, inputs: dict | None = None, wallet_id: str | None = None
+) -> str:
+    """The PDF password from the inputs stored for a wallet (the source's first
+    one by default), or from `inputs` if given.
 
-    pdf_password(user, gcash_source) -> "delacruz1234"
+    pdf_password(user, gcash_source, wallet_id="gcash-2") -> "delacruz1234"
     """
     if inputs is None:
-        inputs = json.loads(store.decrypt(user["password_inputs"][source.key]))
+        inputs = json.loads(store.decrypt(user["password_inputs"][wallet_id or source.key]))
     return source.build_password(inputs)
 
 
@@ -548,14 +662,22 @@ def pdf_password(user: dict, source, inputs: dict | None = None) -> str:
 # TEST BUTTON - try the password on the newest email, without importing
 # =============================================================================
 
+# With several accounts at one source, how many of the newest emails the Test
+# button looks through for the one account's (one Gmail read each)
+TEST_EMAILS = 10
 
-def test_password(user: dict, source_key: str, inputs: dict) -> tuple[bool, str]:
+
+def test_password(
+    user: dict, source_key: str, inputs: dict, account: str | None = None
+) -> tuple[bool, str]:
     """Try password `inputs` on the newest statement email for `source_key`. Imports nothing.
 
     For the page's Test button, before the inputs are saved:
     test_password(user, "gcash", {"last_name": "Dela Cruz", "mobile_last4": "1234"})
     -> (True, "The password opens your newest GCash statement.")
     -> (False, "Wrong password. Check the inputs.")
+    With `account` (e.g. "0917123", one of several GCash accounts), the newest
+    email for that account, among the newest TEST_EMAILS.
     Raises GmailError if Gmail can't be reached.
     """
     source = get_source(source_key)
@@ -565,6 +687,17 @@ def test_password(user: dict, source_key: str, inputs: dict) -> tuple[bool, str]
     messages = gmail.list_messages(gmail_token, source.email_query)
     if not messages:
         return False, f"No {source.name} statement email in Gmail yet. Request one in the app."
+    if account and source.email_account:
+        messages = [
+            m
+            for m in messages[:TEST_EMAILS]
+            if _email_account(gmail_token, source, m["id"]) == account
+        ]
+        if not messages:
+            return False, (
+                f"No {source.name} statement email for {account}**** among the newest "
+                f"{TEST_EMAILS}. Request one in the app."
+            )
     attachment = gmail.get_pdf_attachment(gmail_token, messages[0]["id"], source.attachment_pattern)
     if attachment is None:
         return False, f"The newest {source.name} statement email has no PDF attached."

@@ -269,14 +269,14 @@
       </div>
       <div class="step">
         <span class="pin-tag">3</span>
-        <h3><span><span class="num">4</span>Map e-wallets to YNAB accounts</span></h3>
+        <h3><span><span class="num">4</span>Map wallets to YNAB accounts</span></h3>
         <div class="table-wrap" style="margin-top:0">
           <table>
-            <thead><tr><th>E-wallet</th><th>YNAB account in "My Budget"</th><th>To open the PDF</th><th></th></tr></thead>
+            <thead><tr><th>Wallet</th><th>YNAB account in "My Budget"</th><th>To open the PDF</th><th></th></tr></thead>
             <tbody>
               <tr>
-                <td><b>GCash</b></td>
-                <td><div class="field select">GCash</div></td>
+                <td><b>GCash</b><div class="field" style="margin-top:4px">0917123</div><div class="small muted">First 7 digits of mobile</div></td>
+                <td><div class="field select">GCash1</div></td>
                 <td style="white-space:normal;min-width:300px">
                   <div style="display:flex;gap:6px">
                     <div class="field" style="flex:2"><span>Dela Cruz</span><span class="small muted">from Google · edit</span></div>
@@ -286,6 +286,19 @@
                 </td>
                 <td><button class="btn ghost" style="padding:4px 10px">Test</button></td>
               </tr>
+              <tr>
+                <td><b>GCash</b><div class="field" style="margin-top:4px">0918765</div><div class="small muted">First 7 digits of mobile</div></td>
+                <td><div class="field select">GCash2</div></td>
+                <td style="white-space:normal;min-width:300px">
+                  <div style="display:flex;gap:6px">
+                    <div class="field" style="flex:2"><span>Dela Cruz</span><span class="small muted">from Google · edit</span></div>
+                    <div class="field" style="flex:1">Last 4 of mobile</div>
+                  </div>
+                </td>
+                <td><button class="btn ghost" style="padding:4px 10px">Test</button> <button class="btn ghost" style="padding:4px 10px">Remove</button></td>
+              </tr>
+              <tr><td colspan="4"><button class="btn ghost" style="padding:4px 10px">+ Add another GCash account</button>
+                <span class="small muted">With 2+ GCash accounts each needs its first 7 digits (the email says "Mobile number: 0917123****"), all different.</span></td></tr>
               <tr>
                 <td><b>GoTyme</b><div class="small muted">Everyday account</div></td>
                 <td><div class="field select">GoTyme Everyday</div></td>
@@ -341,8 +354,16 @@
         <dl class="kv">
           <dt>Gmail</dt><dd>you@gmail.com ✓</dd>
           <dt>YNAB plan</dt><dd>My Budget ✓</dd>
-          <dt>Wallets</dt><dd>GCash → <b>GCash</b><br>GoTyme Everyday → <b>GoTyme Everyday</b><br><span class="muted">Maya → not imported</span></dd>
         </dl>
+        <table>
+          <thead><tr><th>Wallet</th><th>YNAB account</th></tr></thead>
+          <tbody>
+            <tr><td>GCash · 0917123</td><td><b>GCash1</b></td></tr>
+            <tr><td>GCash · 0918765</td><td><b>GCash2</b></td></tr>
+            <tr><td>GoTyme</td><td><b>GoTyme Everyday</b></td></tr>
+          </tbody>
+        </table>
+        <p class="small muted">Recent imports name the wallet the same way; a statement for a number that isn't mapped shows "⚠ No account: This statement is for 0999000****. Add that GCash account on this page."</p>
         <div class="actions"><button class="btn ghost" data-go="v-auto-off">Edit mappings</button></div>
       </div>
       <div class="step">

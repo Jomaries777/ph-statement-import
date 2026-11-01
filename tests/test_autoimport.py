@@ -12,6 +12,7 @@ FakeStore (tests/fakes.py). YNAB is faked at the edges: ynab_oauth.refresh()
 and pipeline.import_statement(). All values here are made up.
 """
 
+import base64
 import dataclasses
 import os
 import re
@@ -85,11 +86,15 @@ class FakeGmail:
         gmail.add("msg-1", received=NEW)          # a GCash statement email with PDF
         gmail.add("msg-2", attachment=None)       # an email without a PDF
         gmail.add("msg-3", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+        gmail.add("msg-4", body="Mobile number: 0918765****")  # for one GCash account
     searches lists every (query, after) the runner asked for; downloads every
     attachment filename it got.
     """
 
     GmailError = gmail.GmailError
+    # Plain functions of a fetched message: the real ones
+    message_text = staticmethod(gmail.message_text)
+    attachment_names = staticmethod(gmail.attachment_names)
 
     def __init__(self):
         self.emails = []  # oldest first: {"id", "query", "received", "attachments"}
@@ -104,12 +109,19 @@ class FakeGmail:
         query=GCASH_QUERY,
         attachment=("statement.pdf", PDF),
         attachments=None,
+        body="",
     ):
         """`attachment` is one (filename, bytes) or None; `attachments` a list of them."""
         if attachments is None:
             attachments = [attachment] if attachment else []
         self.emails.append(
-            {"id": msg_id, "query": query, "received": received, "attachments": attachments}
+            {
+                "id": msg_id,
+                "query": query,
+                "received": received,
+                "attachments": attachments,
+                "body": body,
+            }
         )
 
     def refresh_access_token(self, refresh_token):
@@ -128,7 +140,16 @@ class FakeGmail:
 
     def get_message(self, access_token, msg_id):
         email = self._email(msg_id)
-        return {"id": msg_id, "internalDate": str(int(email["received"].timestamp() * 1000))}
+        text = base64.urlsafe_b64encode(email["body"].encode()).decode()
+        return {
+            "id": msg_id,
+            "internalDate": str(int(email["received"].timestamp() * 1000)),
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [{"mimeType": "text/plain", "body": {"data": text}}]
+                + [{"filename": name, "body": {}} for name, _pdf in email["attachments"]],
+            },
+        }
 
     def get_pdf_attachment(self, access_token, msg_id, pattern):
         """The first attachment whose filename matches, like gmail.get_pdf_attachment()."""
@@ -618,6 +639,112 @@ class CategorizeTest(RunnerTest):
                 run = self.poll_one()
                 self.assertEqual((run["status"], run["created"]), (runner.OK, 4))
                 self.assertEqual(run["categorize_error"], message)
+
+
+class SeveralWalletsTest(RunnerTest):
+    """Two GCash accounts: each email goes to the one whose mobile digits it names."""
+
+    def add_two_gcash(self, second_enabled=True):
+        self.add_user(
+            mappings={
+                "gcash": {
+                    "source": "gcash",
+                    "account_id": ACCOUNT_ID,
+                    "account_name": "GCash1",
+                    "enabled": True,
+                },
+                "gcash-2": {
+                    "source": "gcash",
+                    "account_id": OTHER_ACCOUNT_ID,
+                    "account_name": "GCash2",
+                    "enabled": second_enabled,
+                },
+            },
+            password_inputs={
+                "gcash": {**INPUTS, "mobile_first7": "0917123"},
+                "gcash-2": {
+                    "last_name": "Dela Cruz",
+                    "mobile_last4": "5678",
+                    "mobile_first7": "0918765",
+                },
+            },
+        )
+
+    def test_each_email_goes_to_its_account(self):
+        self.add_two_gcash()
+        self.gmail.add("msg-1", body="Your statement. Mobile number: 0918765****")
+        # No digits in the body: the PDF's name says
+        self.gmail.add("msg-2", attachment=("enc-0917123_20261101.pdf", PDF))
+        passwords = []
+        parse = runner.pipeline.parse_statement
+
+        def parse_statement(pdf, password, *args, **kwargs):
+            passwords.append(password)
+            return parse(pdf, PASSWORD, *args, **kwargs)  # the made-up PDF opens with one
+
+        with mock.patch.object(runner.pipeline, "parse_statement", side_effect=parse_statement):
+            runner.poll_all()
+
+        accounts = [c.args[2] for c in self.import_statement.call_args_list]
+        self.assertEqual(accounts, [OTHER_ACCOUNT_ID, ACCOUNT_ID])
+        self.assertEqual(passwords, ["delacruz5678", PASSWORD])  # each account's own inputs
+        run = self.runs()["msg-1:gcash"]
+        self.assertEqual(
+            (run["wallet"], run["wallet_name"], run["account_name"]),
+            ("gcash-2", "GCash · 0918765", "GCash2"),
+        )
+
+    def test_an_account_not_on_the_page(self):
+        self.add_two_gcash()
+        self.gmail.add("msg-1", body="Mobile number: 0999000****")
+        runner.poll_all()
+        self.import_statement.assert_not_called()
+        run = self.runs()["msg-1:gcash"]
+        self.assertEqual((run["status"], run["wallet_name"]), (runner.NO_WALLET, "GCash · 0999000"))
+        self.assertIn("This statement is for 0999000****", run["message"])
+
+    def test_an_email_that_does_not_say(self):
+        self.add_two_gcash()
+        self.gmail.add("msg-1")  # no digits in the body or the PDF's name
+        runner.poll_all()
+        run = self.runs()["msg-1:gcash"]
+        self.assertEqual(run["status"], runner.NO_WALLET)
+        self.assertIn("Couldn't tell which GCash account", run["message"])
+
+    def test_an_account_set_to_dont_import_is_skipped(self):
+        self.add_two_gcash(second_enabled=False)
+        self.gmail.add("msg-1", body="Mobile number: 0918765****")
+        runner.poll_all()
+        self.import_statement.assert_not_called()
+        self.assertEqual(self.runs(), {})
+
+    def test_one_account_with_digits_takes_only_its_own(self):
+        self.add_user(password_inputs={"gcash": {**INPUTS, "mobile_first7": "0917123"}})
+        self.gmail.add("msg-1", body="Mobile number: 0917123****")
+        self.gmail.add("msg-2", body="Mobile number: 0918765****")
+        self.gmail.add("msg-3")  # doesn't say: the one account, as before
+        runner.poll_all()
+        statuses = {key: run["status"] for key, run in self.runs().items()}
+        self.assertEqual(
+            statuses,
+            {"msg-1:gcash": runner.OK, "msg-2:gcash": runner.NO_WALLET, "msg-3:gcash": runner.OK},
+        )
+
+    def test_the_test_button_tries_that_accounts_newest_email(self):
+        self.add_two_gcash()
+        self.gmail.add("msg-1", body="Mobile number: 0918765****")
+        self.gmail.add("msg-2", body="Mobile number: 0917123****")
+        user = self.store.get_user(SUB)
+        with mock.patch.object(
+            runner.pipeline, "parse_statement", wraps=runner.pipeline.parse_statement
+        ):
+            ok, _ = runner.test_password(user, "gcash", INPUTS, "0917123")
+        self.assertTrue(ok)
+        self.assertEqual(self.gmail.downloads, ["statement.pdf"])
+
+        ok, message = runner.test_password(user, "gcash", INPUTS, "0999000")
+        self.assertFalse(ok)
+        self.assertIn("No GCash statement email for 0999000****", message)
 
 
 class LoggingTest(RunnerTest):
