@@ -78,7 +78,7 @@ def apply_transfers(
 
     transactions - dicts from ynab_api.format.to_ynab(), one per statement row
     transfers    - {row index: destination YNAB account id}
-                   (statement_etl.transfers.transfer_accounts())
+                   (statement_etl.transfers.find_transfers())
 
     Returns (transactions, already_in_ynab):
         transactions    - a copy; each transfer row gets "payee_id", the

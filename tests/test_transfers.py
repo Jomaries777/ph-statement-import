@@ -1,6 +1,6 @@
 """
-Tests for transfers.py: which statement rows a transfer rule matches, and the
-checks on rules sent by the page.
+Tests for transfers.py: which statement rows a transfer rule matches, on
+either bank's side, and the checks on rules sent by the page.
 
 Run from the project folder:  python -m unittest discover tests
 All data here is made up.
@@ -16,13 +16,22 @@ from statement_etl.transfers import (
     find_transfers,
     normalize,
     rules_from_dicts,
-    transfer_accounts,
 )
 
 GCASH = SOURCES["gcash"]
 GOTYME = SOURCES["gotyme"]
 
-TO_GOTYME = TransferRule("Transfer to 0917123", from_wallet="gcash", to_wallet="gotyme")
+# The plan's open accounts, {id: name}, as clean_rules() gets them
+ACCOUNTS = {"acc-gcash": "GCash - 1161", "acc-gotyme": "GoTyme", "acc-bpi": "BPI Savings"}
+
+GCASH_GOTYME = TransferRule(
+    account_1_id="acc-gcash",
+    account_1_name="GCash - 1161",
+    description_1="Transfer to 0917123",
+    account_2_id="acc-gotyme",
+    account_2_name="GoTyme",
+    description_2="InstaPay from GCash",
+)
 
 
 def gcash_row(description):
@@ -34,123 +43,135 @@ def gcash_row(description):
     }
 
 
+def gotyme_row(details):
+    return {"Details": details, "Credits": "500.00"}
+
+
+def page_rule(account_1="acc-gcash", description_1="Transfer", account_2="acc-gotyme", **more):
+    """A rule as the page sends it."""
+    return {
+        "account_1_id": account_1,
+        "description_1": description_1,
+        "account_2_id": account_2,
+        "description_2": more.get("description_2", ""),
+    }
+
+
 class NormalizeTest(unittest.TestCase):
     def test_ignores_case_and_extra_spaces(self):
         self.assertEqual(normalize("  Transfer\tTO   0917123 "), "transfer to 0917123")
 
 
 class FindTransfersTest(unittest.TestCase):
-    def test_a_row_containing_the_text_is_a_transfer(self):
+    def test_bank_1s_rows_go_to_bank_2(self):
         rows = [gcash_row("Load"), gcash_row("transfer  to 0917123 JUAN D.")]
-        self.assertEqual(find_transfers(rows, GCASH, "gcash", [TO_GOTYME]), {1: "gotyme"})
+        self.assertEqual(
+            find_transfers(rows, GCASH, "acc-gcash", [GCASH_GOTYME]), {1: "acc-gotyme"}
+        )
 
-    def test_only_rules_from_this_wallet_apply(self):
+    def test_bank_2s_rows_go_to_bank_1(self):
+        rows = [gotyme_row("InstaPay from GCash 0917123")]
+        self.assertEqual(
+            find_transfers(rows, GOTYME, "acc-gotyme", [GCASH_GOTYME]), {0: "acc-gcash"}
+        )
+
+    def test_each_side_uses_only_its_own_description(self):
+        rows = [gotyme_row("Transfer to 0917123")]  # Bank #1's text in Bank #2's statement
+        self.assertEqual(find_transfers(rows, GOTYME, "acc-gotyme", [GCASH_GOTYME]), {})
+
+    def test_an_empty_bank_2_description_matches_nothing(self):
+        one_sided = TransferRule(
+            "acc-gcash", "GCash - 1161", "Transfer", "acc-gotyme", "GoTyme", ""
+        )
+        rows = [gotyme_row("Transfer from GCash")]
+        self.assertEqual(find_transfers(rows, GOTYME, "acc-gotyme", [one_sided]), {})
+
+    def test_an_account_in_no_rule_has_no_transfers(self):
         rows = [gcash_row("Transfer to 0917123")]
-        self.assertEqual(find_transfers(rows, GCASH, "gcash-2", [TO_GOTYME]), {})
+        self.assertEqual(find_transfers(rows, GCASH, "acc-bpi", [GCASH_GOTYME]), {})
 
     def test_the_first_matching_rule_wins(self):
-        to_savings = TransferRule("Transfer to", from_wallet="gcash", to_wallet="gcash-2")
+        to_bpi = TransferRule("acc-gcash", "GCash - 1161", "Transfer to", "acc-bpi", "BPI", "")
         rows = [gcash_row("Transfer to 0917123")]
         self.assertEqual(
-            find_transfers(rows, GCASH, "gcash", [to_savings, TO_GOTYME]), {0: "gcash-2"}
+            find_transfers(rows, GCASH, "acc-gcash", [to_bpi, GCASH_GOTYME]), {0: "acc-bpi"}
         )
-
-    def test_reads_each_sources_own_text_column(self):
-        rule = TransferRule("InstaPay to GCash", from_wallet="gotyme", to_wallet="gcash")
-        rows = [{"Details": "InstaPay to GCash 0917123", "Debits": "500.00"}]
-        self.assertEqual(find_transfers(rows, GOTYME, "gotyme", [rule]), {0: "gcash"})
 
     def test_rows_the_parser_added_never_match(self):
-        rule = TransferRule("Transfer", from_wallet="gcash", to_wallet="gotyme")
         real = gcash_row("Transfer to 0917123")
         added = {**gcash_row("Transfer to 0917123 (missing)"), "Reference No.": "M0000123456789"}
-        self.assertEqual(find_transfers([added, real], GCASH, "gcash", [rule]), {1: "gotyme"})
-
-    def test_no_rules_no_transfers(self):
-        self.assertEqual(find_transfers([gcash_row("Transfer to 0917123")], GCASH, "gcash", []), {})
-
-
-class TransferAccountsTest(unittest.TestCase):
-    WALLETS = {"gcash": "acc-gcash", "gotyme": "acc-gotyme", "gcash-2": ""}
-
-    def test_destination_wallets_become_their_accounts(self):
-        rows = [gcash_row("Transfer to 0917123")]
         self.assertEqual(
-            transfer_accounts(rows, GCASH, "acc-gcash", self.WALLETS, [TO_GOTYME]),
-            {0: "acc-gotyme"},
+            find_transfers([added, real], GCASH, "acc-gcash", [GCASH_GOTYME]), {1: "acc-gotyme"}
         )
 
-    def test_an_account_that_is_no_wallet_has_no_transfers(self):
+    def test_no_rules_no_transfers(self):
         rows = [gcash_row("Transfer to 0917123")]
-        self.assertEqual(transfer_accounts(rows, GCASH, "acc-bpi", self.WALLETS, [TO_GOTYME]), {})
-
-    def test_a_destination_without_an_account_is_no_transfer(self):
-        rule = TransferRule("Transfer", from_wallet="gcash", to_wallet="gcash-2")
-        rows = [gcash_row("Transfer to 0917123")]
-        self.assertEqual(transfer_accounts(rows, GCASH, "acc-gcash", self.WALLETS, [rule]), {})
+        self.assertEqual(find_transfers(rows, GCASH, "acc-gcash", []), {})
 
 
 class RulesFromDictsTest(unittest.TestCase):
     def test_round_trip(self):
-        self.assertEqual(rules_from_dicts([TO_GOTYME.to_dict()]), [TO_GOTYME])
+        self.assertEqual(rules_from_dicts([GCASH_GOTYME.to_dict()]), [GCASH_GOTYME])
 
     def test_none_is_no_rules(self):
         self.assertEqual(rules_from_dicts(None), [])
 
 
 class CleanRulesTest(unittest.TestCase):
-    WALLETS = {"gcash", "gotyme"}
+    def test_a_valid_rule_with_names_from_the_plan(self):
+        sent = {
+            "account_1_id": "acc-gcash",
+            "account_1_name": "Not used",  # the name comes from the plan's accounts
+            "description_1": "  Transfer   to 0917123 ",
+            "account_2_id": "acc-gotyme",
+            "description_2": "InstaPay from GCash",
+        }
+        self.assertEqual(clean_rules([sent], ACCOUNTS), ([GCASH_GOTYME], None))
 
-    def clean(self, *rules):
-        return clean_rules(list(rules), self.WALLETS)
-
-    def test_a_valid_rule_with_its_spaces_tidied(self):
-        rules, error = self.clean(
-            {
-                "description": "  Transfer   to 0917123 ",
-                "from_wallet": "gcash",
-                "to_wallet": "gotyme",
-            }
-        )
+    def test_bank_2s_description_is_optional(self):
+        rules, error = clean_rules([page_rule(description_2=" ")], ACCOUNTS)
         self.assertIsNone(error)
-        self.assertEqual(rules, [TO_GOTYME])
+        self.assertEqual(rules[0].description_2, "")
 
     def test_refused(self):
         cases = {
             "not a list": ({"rules": []}, "Send the rules as a list."),
-            "no text": (
-                [{"description": " ", "from_wallet": "gcash", "to_wallet": "gotyme"}],
-                "Rule 1: enter the text the description contains.",
+            "not a dict": (["Transfer"], "Rule 1 is not valid."),
+            "no bank #2": ([page_rule(account_2="")], "Rule 1: choose both banks."),
+            "not in the plan": ([page_rule(account_2="acc-other")], "Rule 1: choose both banks."),
+            "same bank": (
+                [page_rule(account_2="acc-gcash")],
+                "Rule 1: Bank #1 and Bank #2 must differ.",
             ),
-            "unknown wallet": (
-                [{"description": "x", "from_wallet": "gcash", "to_wallet": "bpi"}],
-                "Rule 1: choose the source and destination banks.",
-            ),
-            "same wallet": (
-                [{"description": "x", "from_wallet": "gcash", "to_wallet": "gcash"}],
-                "Rule 1: the source and destination banks must differ.",
+            "no description 1": (
+                [page_rule(description_1=" ")],
+                "Rule 1: enter Bank #1's description.",
             ),
             "too long": (
-                [{"description": "x" * 101, "from_wallet": "gcash", "to_wallet": "gotyme"}],
-                "Rule 1: keep the text under 100 characters.",
+                [page_rule(description_2="x" * 101)],
+                "Rule 1: keep each description under 100 characters.",
             ),
-            "duplicate": (
+            "same side twice": (
+                [page_rule(), page_rule(description_1="TRANSFER ", account_2="acc-bpi")],
+                "Rule 2 is the same as an earlier one.",
+            ),
+            "the other side of an earlier rule": (
                 [
-                    {"description": "Transfer", "from_wallet": "gcash", "to_wallet": "gotyme"},
-                    {"description": "TRANSFER ", "from_wallet": "gcash", "to_wallet": "gotyme"},
+                    page_rule(description_2="InstaPay"),
+                    page_rule(
+                        account_1="acc-gotyme", description_1="instapay", account_2="acc-bpi"
+                    ),
                 ],
                 "Rule 2 is the same as an earlier one.",
             ),
-            "not a dict": (["Transfer"], "Rule 1 is not valid."),
             "too many": (
-                [{"description": "r", "from_wallet": "gcash", "to_wallet": "gotyme"}]
-                * (MAX_RULES + 1),
+                [page_rule()] * (MAX_RULES + 1),
                 f"Save at most {MAX_RULES} transfer rules.",
             ),
         }
         for name, (raw, expected) in cases.items():
             with self.subTest(name):
-                self.assertEqual(clean_rules(raw, self.WALLETS), (None, expected))
+                self.assertEqual(clean_rules(raw, ACCOUNTS), (None, expected))
 
 
 if __name__ == "__main__":

@@ -34,9 +34,9 @@ The app binds to `127.0.0.1` only, so nothing is reachable from your network.
 
 ### Transfer rules
 
-Money you move between your own wallets (say GCash to GoTyme) shows on both statements. On **Transfer rules** (top of the page) you list your wallets, each with its YNAB account, and add rules such as "in GCash statements, a description containing `Transfer to 0917123` is a transfer to GoTyme". Capital letters and extra spaces don't matter. Locally they're saved in `~/.config/ph-statement-import/settings.json` (set `LOCAL_SETTINGS_PATH` to use another file); hosted, they're saved with your Google account and the wallets are the ones mapped on the Auto-import page.
+Money you move between your own wallets (say GCash to GoTyme) shows on both statements. On **Transfer rules** (top of the page) each rule pairs two of your YNAB accounts, with the text each one's statement shows for the move: Bank #1 `GCash - 1161`, description `Transfer to 0917123`; Bank #2 `GoTyme`, description `InstaPay from GCash`. Capital letters and extra spaces don't matter. Locally they're saved in `~/.config/ph-statement-import/settings.json` (set `LOCAL_SETTINGS_PATH` to use another file); hosted, they're saved with your Google account.
 
-When you upload (or auto-import) a statement, the rows a rule matches are marked "→ GoTyme" and imported as YNAB transfers, so YNAB adds the other side to the GoTyme account. Add a rule for the GoTyme side too: then importing the GoTyme statement finds that transfer already in YNAB and doesn't add the row again.
+When you upload (or auto-import) a statement, the rows a rule matches are marked "→ GoTyme" and imported as YNAB transfers, so YNAB adds the other side to the GoTyme account. Import the other statement later, in either order, and its row is found already in YNAB and not added again. Bank #2's description is optional; without it only Bank #1's statements are matched.
 
 ### Saving your YNAB token
 
@@ -165,8 +165,8 @@ statement_etl/
 ├── transaction.py  # the neutral Transaction, in no budgeting app's format
 ├── convert.py      # parsed rows -> Transactions, using the source's converter
 ├── pipeline.py     # command-line pipeline
-├── transfers.py    # transfer rules: which rows are money moved between your wallets
-├── local_settings.py # local mode's settings file (wallets, transfer rules)
+├── transfers.py    # transfer rules: which rows are money moved between two of your accounts
+├── local_settings.py # local mode's settings file (transfer rules)
 ├── categorize.py   # optional: categorize uncategorized YNAB transactions with Gemini
 ├── gemini.py       # Gemini REST client (urllib)
 ├── ynab_api/       # YNAB: format.py (Transaction -> YNAB), client.py (upload), balance.py, accounts.py, categories.py

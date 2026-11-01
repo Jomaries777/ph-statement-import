@@ -450,36 +450,25 @@ class WebFlowTest(BrowserTest):
         self.enterContext(mock.patch.dict(os.environ, {"LOCAL_SETTINGS_PATH": str(settings)}))
         self.connect()
         page.click("#transfer-rules-link")
+        expect(page.locator("#ynab-on")).to_be_visible()
         expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)  # the only plan
-        expect(page.locator("#add-rule-btn")).to_be_disabled()  # needs two wallets first
-
-        # Two wallets: GCash into one YNAB account, GoTyme into the other
-        wallets = page.locator("#local-wallets-table tbody tr")
-        for source, account in (
-            ("gcash", fake_ynab.EXISTING_ACCOUNT_ID),
-            ("gotyme", fake_ynab.NEW_ACCOUNT_ID),
-        ):
-            page.click("#add-wallet-btn")
-            wallets.last.locator("select").first.select_option(source)
-            wallets.last.locator("select").last.select_option(account)
 
         page.click("#add-rule-btn")
         expect(page.locator("#rules-table th")).to_have_text(
-            ["Description", "Source bank", "Destination bank", ""]
+            ["Bank #1", "Bank #1 description", "Bank #2", "Bank #2 description", ""]
         )
         rule = page.locator("#rules-table tbody tr")
-        rule.locator("input").fill("Transfer to 0917123")
+        # The plan's first two accounts are picked; Bank #2 is then changed
         expect(rule.locator("select").first).to_have_value(fake_ynab.EXISTING_ACCOUNT_ID)
-        expect(rule.locator("select").last).to_have_value(fake_ynab.NEW_ACCOUNT_ID)
-        expect(rule.locator("select").last.locator("option:checked")).to_have_text(
-            f"GoTyme → {fake_ynab.NEW_ACCOUNT_NAME}"
-        )
+        rule.locator("select").last.select_option(fake_ynab.NEW_ACCOUNT_ID)
+        rule.locator("input").first.fill("Transfer to 0917123")
+        expect(rule.locator("input").last).to_have_attribute("placeholder", "Optional")
         page.click("#save-btn")
         expect(page.locator("#save-msg")).to_have_text("Saved 1 rule.")
 
         page.reload(wait_until="networkidle")
-        expect(page.locator("#rules-table tbody input")).to_have_value("Transfer to 0917123")
-        expect(wallets).to_have_count(2)
+        expect(rule.locator("input").first).to_have_value("Transfer to 0917123")
+        expect(rule.locator("select").last).to_have_value(fake_ynab.NEW_ACCOUNT_ID)
         self.assertTrue(settings.exists())
         self.assertEqual(self.console_errors, [])
 
@@ -489,13 +478,16 @@ class WebFlowTest(BrowserTest):
         self.enterContext(mock.patch.dict(os.environ, {"LOCAL_SETTINGS_PATH": str(settings)}))
         gcash, gotyme = fake_ynab.EXISTING_ACCOUNT_ID, fake_ynab.NEW_ACCOUNT_ID
         local_settings.save_settings(
-            wallets=[
-                {"id": gcash, "source": "gcash", "account_name": fake_ynab.EXISTING_ACCOUNT_NAME},
-                {"id": gotyme, "source": "gotyme", "account_name": fake_ynab.NEW_ACCOUNT_NAME},
-            ],
             # make_pdf.BALANCED_ROWS[2]: "Cash-in from Test Bank", +250.00
-            transfer_rules=[
-                {"description": "cash-in from test bank", "from_wallet": gcash, "to_wallet": gotyme}
+            transfer_pairs=[
+                {
+                    "account_1_id": gcash,
+                    "account_1_name": fake_ynab.EXISTING_ACCOUNT_NAME,
+                    "description_1": "cash-in from test bank",
+                    "account_2_id": gotyme,
+                    "account_2_name": "GoTyme",
+                    "description_2": "",
+                }
             ],
         )
         self.parse(self.balanced_pdf)

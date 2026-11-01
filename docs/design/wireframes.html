@@ -452,44 +452,19 @@
       </div>
       <div class="step">
         <span class="pin-tag">1</span>
-        <h3><span>Your banks</span>
-          <span class="toggle" role="group" aria-label="Mode">
-            <button data-state="hosted" aria-pressed="true">Hosted</button>
-            <button data-state="local" aria-pressed="false">Local</button>
-          </span>
-        </h3>
-        <div data-show="hosted">
-          <table>
-            <thead><tr><th>Bank</th><th>YNAB account</th></tr></thead>
-            <tbody>
-              <tr><td>GCash · 0917123</td><td><b>GCash1</b></td></tr>
-              <tr><td>GCash · 0918765</td><td><b>GCash2</b></td></tr>
-              <tr><td>GoTyme</td><td><b>GoTyme Everyday</b></td></tr>
-            </tbody>
-          </table>
-          <p class="small muted">The ones mapped on the Auto-import page. <a href="#" data-go="v-auto-off">Change them there.</a></p>
-        </div>
-        <div data-show="local" hidden>
-          <div class="row"><label>YNAB plan</label><div class="field select">My Budget</div></div>
-          <table>
-            <thead><tr><th>Bank</th><th>YNAB account</th><th></th></tr></thead>
-            <tbody>
-              <tr><td><div class="field select">GCash</div></td><td><div class="field select">GCash1</div></td><td><button class="btn ghost">Remove</button></td></tr>
-              <tr><td><div class="field select">GoTyme</div></td><td><div class="field select">GoTyme Everyday</div></td><td><button class="btn ghost">Remove</button></td></tr>
-            </tbody>
-          </table>
-          <div class="actions" style="justify-content:flex-start"><button class="btn ghost">+ Add a bank</button></div>
-        </div>
+        <h3><span>YNAB</span></h3>
+        <div class="actions" style="justify-content:flex-start"><span>● Connected to YNAB</span></div>
+        <div class="row"><label>YNAB plan</label><div class="field select">My Budget</div></div>
       </div>
       <div class="step">
         <span class="pin-tag">2</span>
         <h3><span>Rules</span></h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Description</th><th>Source bank</th><th>Destination bank</th><th></th></tr></thead>
+            <thead><tr><th>Bank #1</th><th>Bank #1 description</th><th>Bank #2</th><th>Bank #2 description</th><th></th></tr></thead>
             <tbody>
-              <tr><td><div class="field">Transfer to 0917123</div></td><td><div class="field select">GCash · 0917123 → GCash1</div></td><td><div class="field select">GoTyme → GoTyme Everyday</div></td><td><button class="btn ghost">Remove</button></td></tr>
-              <tr><td><div class="field">InstaPay from GCash</div></td><td><div class="field select">GoTyme → GoTyme Everyday</div></td><td><div class="field select">GCash · 0917123 → GCash1</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field select">GCash - 1161</div></td><td><div class="field">Transfer to 0917123</div></td><td><div class="field select">GoTyme</div></td><td><div class="field">InstaPay from GCash</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field select">GoTyme</div></td><td><div class="field">Transfer to BPI</div></td><td><div class="field select">BPI Savings</div></td><td><div class="field muted">Optional</div></td><td><button class="btn ghost">Remove</button></td></tr>
             </tbody>
           </table>
         </div>
@@ -515,8 +490,8 @@
     </div>
   </div>
   <aside class="notes">
-    <div class="note"><b class="pin">1</b>A bank here is one account at a bank or e-wallet plus its YNAB account, so two GCash numbers are two banks. Hosted, they're the Auto-import mappings and saved with your Google account (Firestore). Locally, you list them here and they're saved in a file on your computer (<code>~/.config/ph-statement-import/settings.json</code>).</div>
-    <div class="note"><b class="pin">2</b><b>Description</b>: text the statement row's description contains. Capital letters and extra spaces don't matter. <b>Source bank</b>: the rule only looks at statements from this bank. <b>Destination bank</b>: where the money went. Add a rule for each side, like the second row: whichever statement you import first makes the transfer in YNAB, and the other one finds it there and doesn't add it again.</div>
+    <div class="note"><b class="pin">1</b>The banks are the plan's open YNAB accounts, so no auto-import mappings are needed. Hosted, the page reuses auto-import's saved YNAB connection, or asks you to connect; rules are saved with your Google account (Firestore). Locally, connect on the upload page; rules are saved in a file on your computer (<code>~/.config/ph-statement-import/settings.json</code>).</div>
+    <div class="note"><b class="pin">2</b>One row per pair of banks. Each description is the text that bank's statement shows for the move; capital letters and extra spaces don't matter. Import either statement first: it makes the transfer in YNAB, and the other one finds it there (same amount, within 3 days) and doesn't add it again. Bank #2's description is optional: left empty, only Bank #1's statements are matched, like the second row.</div>
     <div class="note"><b class="pin">3</b>Once you pick the YNAB account, matching rows show "→ GoTyme" in the parsed table. They're uploaded as YNAB transfers, and YNAB adds the other side to GoTyme Everyday by itself. The auto-import run log says "1 transfer" too.</div>
   </aside>
 </div>

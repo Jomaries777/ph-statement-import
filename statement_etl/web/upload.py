@@ -39,7 +39,7 @@ from statement_etl.pipeline import (
     starting_balance_check,
 )
 from statement_etl.sources import DEFAULT_SOURCE, SOURCES, get_source
-from statement_etl.transfers import transfer_accounts
+from statement_etl.transfers import find_transfers
 from statement_etl.web import token_store, transfer_rules
 from statement_etl.web.config import CATEGORIZE_AVAILABLE, HOSTED, TRANSFER_RULES
 from statement_etl.web.limits import CATEGORIZE_LIMIT, PARSE_LIMIT, limiter
@@ -224,17 +224,18 @@ def _money(amount):
 
 def _transfers(state, account_id) -> tuple[dict[int, str], dict[str, str]]:
     """The parsed rows a saved transfer rule matches, for an upload into
-    `account_id` (transfers.transfer_accounts()): ({row index: destination
-    YNAB account id}, {account id: its wallet's name}). Empty without rules,
-    and in hosted mode without auto-import's Google sign-in."""
+    `account_id` (transfers.find_transfers()): ({row index: the other YNAB
+    account id}, {account id: its name}). Empty without rules, and in hosted
+    mode without auto-import's Google sign-in."""
     if not TRANSFER_RULES:
         return {}, {}
-    wallets, rules = transfer_rules.saved_wallets_and_rules()
-    wallet_accounts = {wallet["id"]: wallet["account_id"] for wallet in wallets}
-    transfers = transfer_accounts(
-        state["rows"], get_source(state["source"]), account_id, wallet_accounts, rules
-    )
-    return transfers, {wallet["account_id"]: wallet["name"] for wallet in wallets}
+    rules = transfer_rules.saved_rules()
+    transfers = find_transfers(state["rows"], get_source(state["source"]), account_id, rules)
+    names = {}
+    for rule in rules:
+        names[rule.account_1_id] = rule.account_1_name
+        names[rule.account_2_id] = rule.account_2_name
+    return transfers, names
 
 
 @blueprint.post("/api/starting-balance")
@@ -252,7 +253,7 @@ def api_starting_balance():
     if not plan_id or not account_id:
         return error_response("Choose a plan and an account.", 400)
 
-    transfers, wallet_names = _transfers(state, account_id)
+    transfers, account_names = _transfers(state, account_id)
     check, err = ynab_call(
         lambda token: starting_balance_check(
             rows,
@@ -271,7 +272,7 @@ def api_starting_balance():
             **_check_json(check),
             # rows a transfer rule matched, so the page can mark them
             "transfers": [
-                {"row": index, "to": wallet_names[to_account]}
+                {"row": index, "to": account_names[to_account]}
                 for index, to_account in sorted(transfers.items())
             ],
         }

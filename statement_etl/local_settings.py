@@ -7,15 +7,15 @@ on your own computer, they go in one JSON file instead:
     ~/.config/ph-statement-import/settings.json   (LOCAL_SETTINGS_PATH overrides it)
 
     {
-      "plan_id": "...", "plan_name": "My Plan",
-      "wallets": [{"id": <YNAB account id>, "source": "gcash", "account_name": "GCash1"}],
-      "transfer_rules": [{"description": "Transfer to 0917123",
-                          "from_wallet": <wallet id>, "to_wallet": <wallet id>}]
+      "transfer_plan_id": "...",
+      "transfer_pairs": [{"account_1_id": <YNAB account id>, "account_1_name": "GCash - 1161",
+                          "description_1": "Transfer to 0917123",
+                          "account_2_id": <YNAB account id>, "account_2_name": "GoTyme",
+                          "description_2": "InstaPay from GCash"}]
     }
 
-A local wallet is a YNAB account you import one source's statements into, so
-its id is that account's id. Nothing secret goes in this file: the YNAB token
-stays in the OS secure store (web/token_store.py).
+(transfers.py says what a pair means.) Nothing secret goes in this file: the
+YNAB token stays in the OS secure store (web/token_store.py).
 """
 
 import json
