@@ -32,12 +32,14 @@ New here? Read [CONTRIBUTING.md](../../CONTRIBUTING.md) first (added in P0), the
 | P5b | [P5b-gmail-push.md](P5b-gmail-push.md) | Statements import seconds after the email arrives | A real GCash email imports within a minute; the 15-minute poll still runs |
 | P6 | [P6-gotyme-auto-import.md](P6-gotyme-auto-import.md) | GoTyme in the auto-import mapping table | A real GoTyme email imports only its Everyday account PDF |
 | P7 | [P7-public-release.md](P7-public-release.md) | Open to all YNAB users | YNAB review approved |
+| P8 | [P8-transactions.md](P8-transactions.md) | Less hand work after an import: categories, references, transfers, several GCash accounts, live progress | Each item in its "Done when" checked on the hosted app |
 
 ## Order
 
 ```
 P0 ──► P1 ──┬──► P2 ───────────────────────┐
             └──► P3 ──► P4 ──► P5 ──► P6 ◄─┘ ──► P7
+                                 └──► P5b ──────► P8
 ```
 
 - P1 comes first because P2, P3 and P5 build on its new modules.
@@ -46,6 +48,7 @@ P0 ──► P1 ──┬──► P2 ──────────────
   - P3: `web/*`, the `Dockerfile` and `requirements.txt`
 - P6 needs both P2 (the parser) and P5 (auto-import).
 - P5b (Gmail push) needs P5 only, and can go before or after P6.
+- P8 needs P5b and P6 (auto-import for both wallets). It doesn't wait for P7.
 
 ## Design files
 
