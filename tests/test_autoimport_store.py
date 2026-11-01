@@ -12,6 +12,7 @@ test needs Google credentials or a database. All values are made up.
 import copy
 import inspect
 import json
+import operator
 import os
 import unittest
 import urllib.request
@@ -87,7 +88,9 @@ class FakeSnapshot:
 
 
 class FakeQuery:
-    """A collection, or a query on one: where("=="), order_by(), limit()."""
+    """A collection, or a query on one: where("==" or ">"), order_by(), limit()."""
+
+    OPERATORS = {"==": operator.eq, ">": operator.gt}
 
     def __init__(self, db, path, filters=(), order=None, count=None):
         self.db = db
@@ -100,7 +103,7 @@ class FakeQuery:
         return FakeDocument(self.db, f"{self.path}/{id}")
 
     def where(self, *, filter):
-        assert filter.op_string == "==", "FakeQuery only supports =="
+        assert filter.op_string in self.OPERATORS, "FakeQuery only supports == and >"
         return FakeQuery(self.db, self.path, (*self.filters, filter), self.order, self.count)
 
     def order_by(self, field, direction):
@@ -117,7 +120,12 @@ class FakeQuery:
     def stream(self):
         snapshots = [document.get() for document in self.list_documents()]
         for match in self.filters:
-            snapshots = [s for s in snapshots if s.fields.get(match.field_path) == match.value]
+            test = self.OPERATORS[match.op_string]
+            snapshots = [
+                s
+                for s in snapshots
+                if match.field_path in s.fields and test(s.fields[match.field_path], match.value)
+            ]
         if self.order:
             field, direction = self.order
             reverse = direction == firestore.Query.DESCENDING
@@ -258,6 +266,21 @@ class RunTest(StoreTestCase):
         self.assertEqual(runs[0], {"status": "ok", "source": "gcash", "ran_at": times[2]})
         self.assertEqual(runs[1]["ran_at"], times[1])
 
+    def test_cleared_runs_are_hidden_but_still_count_as_imported(self):
+        times = [datetime(2026, 10, 1, tzinfo=UTC) + timedelta(minutes=n) for n in range(3)]
+        with mock.patch.object(store, "datetime") as clock:
+            clock.now.return_value = times[0]
+            store.write_run(SUB, "msg-old", "gcash", status="ok")
+            clock.now.return_value = times[1]
+            store.clear_runs(SUB)
+            clock.now.return_value = times[2]
+            store.write_run(SUB, "msg-new", "gcash", status="ok")
+
+        cleared_at = store.get_user(SUB)["runs_cleared_at"]
+        self.assertEqual(cleared_at, times[1])
+        self.assertEqual([r["ran_at"] for r in store.list_runs(SUB, after=cleared_at)], [times[2]])
+        self.assertTrue(store.run_exists(SUB, "msg-old", "gcash"))
+
 
 # =============================================================================
 # FAKE STORE - tests/fakes.py, for the tests of the code that uses the store
@@ -277,6 +300,7 @@ class FakeStoreTest(StoreTestCase):
         "run_exists",
         "write_run",
         "list_runs",
+        "clear_runs",
     )
 
     def test_same_functions_as_the_store(self):

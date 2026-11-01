@@ -226,6 +226,10 @@ class FakeStore:
         record = {**result, "source": source_key, "ran_at": datetime.now(UTC)}
         self.runs.setdefault(sub, {})[f"{msg_id}:{source_key}"] = record
 
-    def list_runs(self, sub, limit=20):
-        runs = sorted(self.runs.get(sub, {}).values(), key=lambda run: run["ran_at"], reverse=True)
+    def list_runs(self, sub, limit=20, after=None):
+        runs = [r for r in self.runs.get(sub, {}).values() if after is None or r["ran_at"] > after]
+        runs.sort(key=lambda run: run["ran_at"], reverse=True)
         return copy.deepcopy(runs[:limit])
+
+    def clear_runs(self, sub):
+        self.save_user(sub, runs_cleared_at=datetime.now(UTC))

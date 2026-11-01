@@ -81,6 +81,7 @@ AUTO_IMPORT_ROUTES = (
     ("POST", "/api/auto-import/test"),
     ("POST", "/api/auto-import/delete"),
     ("POST", "/api/auto-import/ynab-session"),
+    ("POST", "/api/auto-import/runs/clear"),
     ("POST", "/tasks/poll-gmail"),
 )
 
@@ -777,6 +778,33 @@ class SaveSettingsTest(AutoImportWebTest):
         self.assertNotIn("access_token", self.ynab_state())
         self.assertNotIn("refresh_token", self.ynab_state())
         self.assertFalse(self.store.get_user(SUB)["enabled"])
+
+
+# =============================================================================
+# CLEAR THE RUN LOG
+# =============================================================================
+
+
+class ClearRunsTest(AutoImportWebTest):
+    def test_clear_hides_the_runs_but_keeps_them_as_imported(self):
+        self.sign_in_google(enabled=True, plan_id=PLAN_ID, plan_name="My Budget")
+        self.store.write_run(SUB, "msg-1", "gcash", account_id=ACCOUNT_ID, status=runner.OK)
+        self.assertIn('id="clear-runs-btn"', self.client.get("/auto-import").data.decode())
+
+        response = self.client.post("/api/auto-import/runs/clear")
+
+        self.assertEqual(response.get_json(), {"cleared": True})
+        html = self.client.get("/auto-import").data.decode()
+        self.assertNotIn('id="runs-table"', html)
+        self.assertNotIn('id="clear-runs-btn"', html)
+        self.assertIn("No imports since you cleared the list.", html)
+        # Still in the run log, so the email is never imported again
+        self.assertTrue(self.store.run_exists(SUB, "msg-1", "gcash"))
+
+    def test_needs_google_sign_in_and_the_invite_list(self):
+        self.assertEqual(self.client.post("/api/auto-import/runs/clear").status_code, 401)
+        self.sign_in_google(email=UNINVITED_EMAIL)
+        self.assertEqual(self.client.post("/api/auto-import/runs/clear").status_code, 403)
 
 
 # =============================================================================
