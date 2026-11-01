@@ -347,8 +347,8 @@ def build_password(inputs: Mapping[str, str]) -> str:
 GoTyme Bank Everyday Deposit Account statements (`statement_etl/parsers/gotyme.py`) show how a source without transaction reference numbers works:
 
 - **Columns:** `("Date", "Details", "Credits", "Debits", "Running Balance")`.
-- **Wrapped Details:** a long `Details` line wraps onto two lines—the first about 4 pt above the date and amounts line, and the second about 4 pt below it—so `_anchor_rows()` anchors one row per date line and collects `Details` words in that row's vertical band.
-- **Four checks in `_check_totals()`:** `Σ Credits = Total Credit`, `Σ Debits = Total Debit`, `Opening + Σ Credits − Σ Debits = Closing`, and every row's `Running Balance = previous + Credits − Debits`.
+- **Wrapped Details:** a long `Details` line wraps onto two lines—the first about 4 pt above the date and amounts line, and the second about 4 pt below it—so `anchor_rows()` anchors one row per date line and collects `Details` words in that row's vertical band.
+- **Four checks in `check_totals()`:** `Σ Credits = Total Credit`, `Σ Debits = Total Debit`, `Opening + Σ Credits − Σ Debits = Closing`, and every row's `Running Balance = previous + Credits − Debits`.
 
 **GoTyme row → `Transaction` → YNAB `NewTransaction`**. The middle column is the neutral `Transaction` that `gotyme.to_transactions()` returns; the YNAB column is what `ynab_api.format.to_ynab()` makes of it. `ynab_api/client.import_transactions()` sends them all in one `POST /plans/{plan_id}/transactions`. Another budgeting app would start from the same `Transaction`.
 
@@ -366,7 +366,7 @@ GoTyme Bank Everyday Deposit Account statements (`statement_etl/parsers/gotyme.p
 
 Statement values that aren't sent as transactions:
 - Opening and Closing balance feed the starting- and ending-balance checks.
-- Period and the totals are used only by `_check_totals()`.
+- Period and the totals are used only by `check_totals()`.
 - Running Balance is used only in `key` (so `import_id`) and the checks.
 
 ---
