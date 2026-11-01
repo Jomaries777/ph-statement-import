@@ -182,7 +182,7 @@ class ReadSummaryTest(unittest.TestCase):
     def test_reads_summary_box_fields(self):
         page = FakePage(gotyme_summary_box())
         self.assertEqual(
-            gotyme._read_summary(page),
+            gotyme.read_summary(page),
             {
                 "period": "01 Oct 2026 - 31 Oct 2026",
                 "opening": Decimal("5000.00"),
@@ -196,7 +196,7 @@ class ReadSummaryTest(unittest.TestCase):
 class FindColumnsTest(unittest.TestCase):
     def test_header_with_two_line_running_balance(self):
         page = FakePage(words_from("Statement of Account", 15.0, 77.3) + gotyme_header(205.4))
-        cols = gotyme._find_columns(page)
+        cols = gotyme.find_columns(page)
         self.assertIsNotNone(cols)
         self.assertAlmostEqual(cols["header_top"], 209.3)
         self.assertAlmostEqual(cols["date_x0"], DATE_X)
@@ -207,12 +207,12 @@ class FindColumnsTest(unittest.TestCase):
 
     def test_no_header_returns_none(self):
         page = FakePage(words_from("Got questions about your statement?", 15.0, 132.9))
-        self.assertIsNone(gotyme._find_columns(page))
-        self.assertIsNone(gotyme._find_columns([]))
+        self.assertIsNone(gotyme.find_columns(page))
+        self.assertIsNone(gotyme.find_columns([]))
 
     def test_missing_balance_label_returns_none(self):
         words = [w for w in gotyme_header(205.4) if w["text"] != "Balance"]
-        self.assertIsNone(gotyme._find_columns(group_lines(words)))
+        self.assertIsNone(gotyme.find_columns(group_lines(words)))
 
 
 # =============================================================================

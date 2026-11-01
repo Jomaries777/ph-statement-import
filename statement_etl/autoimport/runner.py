@@ -474,8 +474,26 @@ def _import_email(
         result["message"] = "The PDF couldn't be read."
         return PARSE_ERROR
 
-    # 4. Import, unapproved, the same way as a manual upload; rows a transfer
-    #    rule matches become YNAB transfers
+    # 4. Import, then let Gemini categorize what it created
+    status, created = _import_rows(
+        user, source, mapping, rows, transactions, ynab_token, result, progress
+    )
+    if status != YNAB_ERROR:
+        _categorize(user, created, ynab_token, result, progress)
+    return status
+
+
+def _import_rows(
+    user, source, mapping, rows, transactions, ynab_token, result, progress
+) -> tuple[str, list]:
+    """Import one statement's rows into the wallet's YNAB account, unapproved,
+    the same way as a manual upload; rows a transfer rule matches become YNAB
+    transfers. Fills in `result` and returns (the run's status, the created
+    transactions).
+
+    Raises ynab.ApiException when YNAB is busy or down, so nothing is recorded
+    and the next poll tries again.
+    """
     transfers = find_transfers(
         rows, source, mapping["account_id"], rules_from_dicts(user.get("transfer_pairs"))
     )
@@ -494,19 +512,18 @@ def _import_email(
         if _try_again_later(e):
             raise  # YNAB is busy or down: nothing recorded, so the next poll tries again
         result["message"] = f"{_reason(e)}."
-        return YNAB_ERROR
+        return YNAB_ERROR, []
 
     result["created"] = len(imported.created)
     result["skipped"] = imported.skipped
     if imported.transfers:
         result["transfers"] = imported.transfers
-    _categorize(user, imported.created, ynab_token, result, progress)
     if imported.ending_check is None:  # the upload worked; only the check after it failed
         result["message"] = "Imported, but YNAB's balance couldn't be checked."
     elif not imported.ending_check["matches"]:
         result["message"] = "The YNAB balance doesn't match the statement's ending balance."
-        return BALANCE_MISMATCH
-    return OK
+        return BALANCE_MISMATCH, imported.created
+    return OK, imported.created
 
 
 def _categorize(user, created, ynab_token, result, progress) -> None:

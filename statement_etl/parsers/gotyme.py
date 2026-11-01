@@ -16,14 +16,14 @@ build_password() makes the PDF password from a date of birth, for Gmail auto-imp
 How it works:
     1. Open      - open the PDF with its password                (open_pdf)
     2. Summary   - read Period, Opening, Total Credit,
-                   Total Debit and Closing from page 1           (_read_summary)
+                   Total Debit and Closing from page 1           (read_summary)
     3. Header    - find the table header on each page to learn
-                   the column edges                              (_find_columns)
+                   the column edges                              (find_columns)
     4. Rows      - anchor one row per date line and attach
-                   wrapped Details lines above and below it      (_anchor_rows,
-                                                                  _to_output_row)
+                   wrapped Details lines above and below it      (anchor_rows,
+                                                                  to_output_row)
     5. Check     - verify total credits, total debits, closing
-                   balance, and every row's running balance      (_check_totals)
+                   balance, and every row's running balance      (check_totals)
 
 This source is registered in sources.py. To add another e-wallet or bank,
 see docs/adding-an-e-wallet.md.
@@ -60,7 +60,7 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 # =============================================================================
 
 # Every column of the transaction table, in the order the PDF prints them.
-# Each parsed row is a dict with exactly these keys (see _to_output_row).
+# Each parsed row is a dict with exactly these keys (see to_output_row).
 COLUMNS = (
     "Date",
     "Details",
@@ -120,21 +120,21 @@ GOTYME_TRANSFER_ACCOUNT_RE = re.compile(
 # =============================================================================
 
 
-def _page_lines(page_or_lines) -> list[dict]:
+def page_lines(page_or_lines) -> list[dict]:
     """Accept either a pdfplumber page (or FakePage) or pre-grouped lines."""
     if isinstance(page_or_lines, list):
         return page_or_lines
     return group_lines(page_or_lines.extract_words(keep_blank_chars=False, use_text_flow=False))
 
 
-def _read_summary(page) -> dict:
+def read_summary(page) -> dict:
     """Read the summary box from a page (Period, Opening, Total Credit, Total Debit, Closing).
 
     Returns a dict with any of {"period", "opening", "credit", "debit", "closing"}
     found on the page; money values are Decimals.
     """
     summary = {}
-    for line in _page_lines(page):
+    for line in page_lines(page):
         text = line["text"]
         period = PERIOD_RE.search(text)
         if period:
@@ -151,14 +151,14 @@ def _read_summary(page) -> dict:
     return summary
 
 
-def _find_columns(page) -> dict | None:
+def find_columns(page) -> dict | None:
     """Locate the table header on a page and return its column edges.
 
     "Running Balance" spans two lines ("Running" ~4 pt above the header line,
     "Balance" on the header line or ~4 pt below it). Returns a dict with
     header_top and column x positions, or None if this page has no table.
     """
-    lines = _page_lines(page)
+    lines = page_lines(page)
     for line in lines:
         by_text = {w["text"]: w for w in line["words"]}
         if not {DATE_LABEL, DETAILS_LABEL, CREDITS_LABEL, DEBITS_LABEL}.issubset(by_text):
@@ -218,7 +218,7 @@ def _parse_date_line(line: dict) -> dict | None:
     }
 
 
-def _anchor_rows(lines: list[dict], columns: dict) -> list[dict]:
+def anchor_rows(lines: list[dict], columns: dict) -> list[dict]:
     """Build one row per date line and attach wrapped Details words in its band.
 
     A long Details value wraps onto two lines: the first sits ~4 pt above the
@@ -271,7 +271,7 @@ def _anchor_rows(lines: list[dict], columns: dict) -> list[dict]:
     return rows
 
 
-def _to_output_row(row: dict) -> dict[str, str]:
+def to_output_row(row: dict) -> dict[str, str]:
     """Build the final output row with keys equal to COLUMNS and plain amounts."""
     details_words = sorted(row["details_words"], key=lambda w: (round(w["top"]), w["x0"]))
     return {
@@ -305,23 +305,23 @@ def parse_transactions(
         for number, page in enumerate(pdf.pages, start=1):
             if on_page:
                 on_page(number, len(pdf.pages))  # progress, for the page or the run log
-            lines = _page_lines(page)
+            lines = page_lines(page)
 
             # 1. Read the summary box (printed on page 1)
             if not statement_summary:
-                statement_summary.update(_read_summary(lines))
+                statement_summary.update(read_summary(lines))
 
             # 2. Find the table header on this page; skip pages with no table
-            columns = _find_columns(lines)
+            columns = find_columns(lines)
             if columns is None:
                 continue
 
             # 3 + 4. Anchor rows by date line, attach wrapped Details, format output
-            anchored = _anchor_rows(lines, columns)
-            rows.extend(_to_output_row(r) for r in anchored)
+            anchored = anchor_rows(lines, columns)
+            rows.extend(to_output_row(r) for r in anchored)
 
     # 5. Verify total credits, total debits, closing balance, and running balance
-    _check_totals(rows, statement_summary)
+    check_totals(rows, statement_summary)
     return rows
 
 
@@ -330,7 +330,7 @@ def parse_transactions(
 # =============================================================================
 
 
-def _check_totals(rows: list[dict[str, str]], summary: dict) -> None:
+def check_totals(rows: list[dict[str, str]], summary: dict) -> None:
     """Verify the four GoTyme statement checks; raise StatementError on mismatch.
 
     1. sum(Credits) == Total Credit
