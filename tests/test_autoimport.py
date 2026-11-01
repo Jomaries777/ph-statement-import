@@ -241,7 +241,8 @@ class PollTest(RunnerTest):
         rows, transactions, account_id, plan_id, token = self.import_statement.call_args.args
         self.assertEqual((account_id, plan_id, token), (ACCOUNT_ID, PLAN_ID, "ynab-access-1"))
         self.assertEqual(
-            self.import_statement.call_args.kwargs, {"source": "gcash", "on_step": mock.ANY}
+            self.import_statement.call_args.kwargs,
+            {"source": "gcash", "on_step": mock.ANY, "transfers": {}},
         )
         self.assertEqual(len(transactions), len(make_pdf.BALANCED_ROWS))  # the real parser ran
         run = self.runs()["msg-1:gcash"]
@@ -639,6 +640,36 @@ class CategorizeTest(RunnerTest):
                 run = self.poll_one()
                 self.assertEqual((run["status"], run["created"]), (runner.OK, 4))
                 self.assertEqual(run["categorize_error"], message)
+
+
+class TransferRulesTest(RunnerTest):
+    """Rows a saved transfer rule matches go to import_statement() as transfers."""
+
+    def test_matching_rows_are_imported_as_transfers(self):
+        self.add_user(
+            mappings={
+                "gcash": {"source": "gcash", "account_id": ACCOUNT_ID, "enabled": True},
+                "gotyme": {"source": "gotyme", "account_id": OTHER_ACCOUNT_ID, "enabled": True},
+            },
+            password_inputs={"gcash": INPUTS},
+        )
+        # make_pdf.BALANCED_ROWS[2] is "Cash-in from Test Bank"
+        rule = {"description": "cash-in FROM test", "from_wallet": "gcash", "to_wallet": "gotyme"}
+        self.store.save_user(SUB, transfer_rules=[rule])
+        self.import_statement.return_value = dataclasses.replace(imported(), transfers=1)
+        self.gmail.add("msg-1")
+
+        runner.poll_all()
+
+        self.assertEqual(self.import_statement.call_args.kwargs["transfers"], {2: OTHER_ACCOUNT_ID})
+        self.assertEqual(self.runs()["msg-1:gcash"]["transfers"], 1)
+
+    def test_no_rules_no_transfers(self):
+        self.add_user()
+        self.gmail.add("msg-1")
+        runner.poll_all()
+        self.assertEqual(self.import_statement.call_args.kwargs["transfers"], {})
+        self.assertNotIn("transfers", self.runs()["msg-1:gcash"])
 
 
 class SeveralWalletsTest(RunnerTest):

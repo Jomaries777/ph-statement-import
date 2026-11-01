@@ -12,8 +12,13 @@ modules, so this file runs when a test file imports `tests.fakes` (they all do).
                  fails instead of looking for Google credentials and a database
     googleapis - any urllib request to *.googleapis.com (Gmail, Google OAuth)
                  raises, so a test that forgets to fake it never reaches Google
+    settings   - LOCAL_SETTINGS_PATH points at a file that doesn't exist, so
+                 no test reads or writes your real local settings
+                 (local_settings.py); tests that need one set their own
 """
 
+import os
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -51,3 +56,6 @@ ynab.ApiClient.call_api = _no_ynab
 keyring.set_keyring(fail.Keyring())
 firestore.Client.__init__ = _no_firestore
 urllib.request.OpenerDirector.open = _no_googleapis
+os.environ["LOCAL_SETTINGS_PATH"] = os.path.join(
+    tempfile.gettempdir(), "ph-statement-import-tests-no-settings", "settings.json"
+)

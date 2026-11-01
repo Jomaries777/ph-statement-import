@@ -74,7 +74,7 @@ from flask import Flask, render_template
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from statement_etl.web import auto_import, token_store, transfer_rules, upload, ynab_auth
-from statement_etl.web.config import HOSTED, PORT, REDIRECT_URI
+from statement_etl.web.config import AUTO_IMPORT, HOSTED, PORT, REDIRECT_URI, TRANSFER_RULES
 from statement_etl.web.limits import limiter
 from statement_etl.web.state import drop_idle_states, error_response
 from statement_etl.web.ynab_oauth import oauth_configured
@@ -95,10 +95,6 @@ SECURITY_HEADERS = {
 # The privacy and terms pages: change the date with every change to them
 LEGAL_LAST_UPDATED = "1 November 2026"
 CONTACT_EMAIL = "froze.settle-1p@icloud.com"
-
-AUTO_IMPORT = HOSTED and bool(os.environ.get("GOOGLE_CLIENT_ID"))
-# Hosted, transfer rules are saved with the Google account, so they need auto-import's sign-in
-TRANSFER_RULES = AUTO_IMPORT or not HOSTED
 
 # The app's own log lines, INFO and up, go to stderr, which Cloud Run keeps;
 # e.g. "INFO statement_etl.autoimport.runner: Auto-import poll: {...}".

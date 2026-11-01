@@ -36,6 +36,8 @@ The app binds to `127.0.0.1` only, so nothing is reachable from your network.
 
 Money you move between your own wallets (say GCash to GoTyme) shows on both statements. On **Transfer rules** (top of the page) you list your wallets, each with its YNAB account, and add rules such as "in GCash statements, a description containing `Transfer to 0917123` is a transfer to GoTyme". Capital letters and extra spaces don't matter. Locally they're saved in `~/.config/ph-statement-import/settings.json` (set `LOCAL_SETTINGS_PATH` to use another file); hosted, they're saved with your Google account and the wallets are the ones mapped on the Auto-import page.
 
+When you upload (or auto-import) a statement, the rows a rule matches are marked "→ GoTyme" and imported as YNAB transfers, so YNAB adds the other side to the GoTyme account. Add a rule for the GoTyme side too: then importing the GoTyme statement finds that transfer already in YNAB and doesn't add the row again.
+
 ### Saving your YNAB token
 
 Tick **Remember this token on this computer** when you connect, and the app saves the token in your operating system's secure store. After that, step 2 connects by itself every time you start the app.

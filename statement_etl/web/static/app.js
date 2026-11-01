@@ -4,8 +4,9 @@ const $ = (id) => document.getElementById(id);
 // toUpload: how many transactions YNAB will really add (from the starting
 // balance check; null until checked). 0 disables the Upload button.
 // categorizeAvailable: /api/status says Gemini can categorize after the upload.
+// transfers: how many rows a transfer rule matches for the chosen account.
 const state = { parsed: null, connected: false, plans: [], uploading: false, startCheckId: 0,
-                toUpload: null, categorizeAvailable: false };
+                toUpload: null, categorizeAvailable: false, transfers: 0 };
 
 // ---- small helpers ---------------------------------------------------------
 
@@ -399,6 +400,7 @@ async function checkStartingBalance() {
   const planId = $("plan").value, accountId = $("account").value;
   const id = ++state.startCheckId;
   state.toUpload = null;
+  markTransfers([]);
   showBalanceCheck("start-check", null);
   refreshSteps();
   if (!state.parsed || !state.connected || !planId || !accountId) return;
@@ -411,6 +413,7 @@ async function checkStartingBalance() {
     });
     if (id === state.startCheckId) {
       showBalanceCheck("start-check", check);
+      markTransfers(check.transfers || []);
       state.toUpload = check.to_upload ?? null;
       refreshSteps();
     }
@@ -421,6 +424,24 @@ async function checkStartingBalance() {
   }
 }
 
+// Rows a transfer rule matches for the chosen account (/transfer-rules):
+// "→ GoTyme" next to their description in the preview. [] clears them.
+function markTransfers(transfers) {
+  state.transfers = transfers.length;
+  document.querySelectorAll("#preview-table .transfer-badge").forEach((el) => el.remove());
+  const body = $("preview-table").tBodies[0];
+  const column = state.parsed ? state.parsed.columns.indexOf(state.parsed.text_column) : -1;
+  if (!body || column < 0) return;
+  transfers.forEach(({ row, to }) => {
+    const cell = body.rows[row] && body.rows[row].cells[column];
+    if (!cell) return;
+    const badge = document.createElement("span");
+    badge.className = "badge info transfer-badge";
+    badge.textContent = `→ ${to}`;
+    cell.append(" ", badge);
+  });
+}
+
 // ④ checklist: the steps done before the click, then import_statement()'s
 // (pipeline.py: "upload", then "end_balance"), then "categorize" when ticked.
 // step: the one it's on, or null once finished.
@@ -428,6 +449,11 @@ function showUploadSteps({ step, count, startedAt, categorize, failed = false })
   const steps = [[`Statement read: ${state.parsed.statement_count} rows`,
                   `Statement read: ${state.parsed.statement_count} rows`]];
   if (state.toUpload !== null) steps.push(["Starting balance check", "Starting balance checked"]);
+  if (state.transfers) {
+    const plural = state.transfers === 1 ? "" : "s";
+    const rows = `${state.transfers} row${plural} marked as transfer${plural}`;
+    steps.push([rows, rows]);
+  }
   const at = { upload: steps.length, end_balance: steps.length + 1, categorize: steps.length + 2 };
   steps.push([`Uploading ${count} transactions to YNAB`, `Uploaded ${count} transactions to YNAB`],
              ["Checking the ending balance", "Ending balance checked"]);
@@ -515,7 +541,8 @@ $("upload-btn").addEventListener("click", async () => {
     });
     stop();
     message("upload-msg",
-      `Import successful: ${res.created.length} transactions created in YNAB (unapproved)`, "ok");
+      `Import successful: ${res.created.length} transactions created in YNAB (unapproved)` +
+      (res.transfers ? ` · ${res.transfers} transfer${res.transfers === 1 ? "" : "s"}` : ""), "ok");
     if (res.skipped) message("upload-skipped", `Skipped ${res.skipped} already imported`, "info");
     if (res.created.length) showCreated(res.created, res.ynab_url);
     $("card-upload").classList.add("complete");

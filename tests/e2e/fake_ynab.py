@@ -53,6 +53,11 @@ CURRENCY_FORMAT = {
 }
 
 
+def transfer_payee_id(account_id):
+    """The payee that means "transfer to this account", as YNAB gives every account."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"transfer-payee:{account_id}"))
+
+
 def _error_body(id_, name, detail):
     return f'{{"error": {{"id": "{id_}", "name": "{name}", "detail": "{detail}"}}}}'
 
@@ -121,6 +126,7 @@ class FakeYnab:
         memo=None,
         import_id=None,
         flag_color=None,
+        transfer_account_id=None,
     ):
         transaction = SimpleNamespace(
             id=str(uuid.uuid4()),
@@ -132,12 +138,20 @@ class FakeYnab:
             amount=amount,
             import_id=import_id,
             flag_color=flag_color,
+            transfer_account_id=transfer_account_id,
             cleared=ynab.TransactionClearedStatus.CLEARED,
             approved=import_id is None,
             deleted=False,
         )
         self.accounts[account_id]["transactions"].append(transaction)
         return transaction
+
+    def account_for_payee(self, payee_id):
+        """The account whose transfer payee is `payee_id`, or None."""
+        for account_id in self.accounts:
+            if transfer_payee_id(account_id) == str(payee_id):
+                return account_id
+        return None
 
     def transactions(self, account_id):
         """The account's transactions that aren't deleted."""
@@ -220,6 +234,7 @@ class _AccountsApi(_Api):
             type=ynab.AccountType.CASH,
             balance=balance,
             balance_formatted=f"{'-' if balance < 0 else ''}₱{abs(balance) / 1000:,.2f}",
+            transfer_payee_id=uuid.UUID(transfer_payee_id(account_id)),
             closed=False,
             deleted=False,
         )
@@ -249,7 +264,9 @@ class _TransactionsApi(_Api):
     def create_transaction(self, plan_id, data):
         """Create data.transactions (a PostTransactionsWrapper). Like YNAB, an
         import_id the account already has is skipped and reported in
-        duplicate_import_ids."""
+        duplicate_import_ids, and a payee_id that is another account's transfer
+        payee makes a transfer: the other side is added to that account, with
+        no import_id."""
         self.ynab._check(self.api_client, "create_transaction", plan_id)
         created, duplicates = [], []
         for new in data.transactions:
@@ -259,14 +276,27 @@ class _TransactionsApi(_Api):
             if new.import_id and new.import_id in seen:
                 duplicates.append(new.import_id)
                 continue
+            to_account = self.ynab.account_for_payee(new.payee_id) if new.payee_id else None
+            payee_name = new.payee_name
+            if to_account:
+                payee_name = f"Transfer : {self.ynab.accounts[to_account]['name']}"
+                self.ynab._add(
+                    to_account,
+                    new.var_date,
+                    f"Transfer : {self.ynab.accounts[account_id]['name']}",
+                    -new.amount,
+                    memo=new.memo,
+                    transfer_account_id=account_id,
+                )
             transaction = self.ynab._add(
                 account_id,
                 new.var_date,
-                new.payee_name,
+                payee_name,
                 new.amount,
                 memo=new.memo,
                 import_id=new.import_id,
                 flag_color=new.flag_color,
+                transfer_account_id=to_account,
             )
             transaction.approved = bool(new.approved)
             created.append(transaction)
