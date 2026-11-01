@@ -10,7 +10,7 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 
-from statement_etl.transaction import Transaction
+from statement_etl.transaction import Transaction, transaction_ref
 from statement_etl.ynab_api import format as ynab_format
 
 
@@ -41,6 +41,17 @@ class ImportIdTest(unittest.TestCase):
         self.assertEqual(
             ynab_format.make_import_id("gcash", "1000000000002"),
             "ETLPH:707f7b0d95f2bb43995f608f704d67",
+        )
+
+    def test_is_the_prefix_and_the_transaction_ref(self):
+        # The GoTyme memo's "Ref: ..." is this hash part
+        self.assertEqual(
+            transaction_ref("gotyme", "28 Oct 2026|0.00|500.00|3568.34|0"),
+            "9ac288af95f6925425a5154d159507",
+        )
+        self.assertEqual(
+            ynab_format.make_import_id("gotyme", "28 Oct 2026|0.00|500.00|3568.34|0"),
+            "ETLPH:9ac288af95f6925425a5154d159507",
         )
 
     def test_differs_by_source_and_id(self):

@@ -16,9 +16,7 @@ Usage:
     ynab_transactions = [to_ynab(t) for t in transactions]
 """
 
-import hashlib
-
-from statement_etl.transaction import Transaction
+from statement_etl.transaction import Transaction, transaction_ref
 
 
 def to_milliunits(amount):
@@ -38,10 +36,9 @@ def make_import_id(source, source_txn_id):
     never creates duplicates. Only the source id is hashed, not the date,
     amount or memo, so later corrections to those still match.
 
-    ("gcash", "1000000000002") -> "ETLPH:" + 30 hex chars  (36 chars, YNAB's max)
+    ("gcash", "1000000000002") -> "ETLPH:" + transaction_ref(...)  (36 chars, YNAB's max)
     """
-    digest = hashlib.sha256(f"{source}:{source_txn_id}".encode()).hexdigest()
-    return IMPORT_ID_PREFIX + digest[: 36 - len(IMPORT_ID_PREFIX)]
+    return IMPORT_ID_PREFIX + transaction_ref(source, source_txn_id)
 
 
 def ynab_transaction(date, payee_name, amount, import_id, memo=None, flag_color=None):

@@ -128,7 +128,7 @@ def to_transactions(rows):
 ```
 
 - **Sign**: money out is negative, money in is positive.
-- **`key`** becomes YNAB's `import_id` (`make_import_id("maya", key)` in `ynab_api/format.py`), which stops duplicates when the same statement is uploaded twice. It must be **unique and stable** for each transaction. Use the statement's reference number. If there isn't one, build a value that never changes for that row, e.g. the date, amount, running balance and a count of identical rows. `to_transactions` gets all the rows at once so it can count them.
+- **`key`** becomes YNAB's `import_id` (`make_import_id("maya", key)` in `ynab_api/format.py`), which stops duplicates when the same statement is uploaded twice. It must be **unique and stable** for each transaction. Use the statement's reference number. If there isn't one, build a value that never changes for that row, e.g. the date, amount, running balance and a count of identical rows. `to_transactions` gets all the rows at once so it can count them. Then also end the memo with `transaction_ref("maya", key)` (`statement_etl/transaction.py`), the hash part of the `import_id`, as GoTyme does, so the row can be found by searching YNAB.
 - **Correction rows** (if your parser adds them) get `flagged=True`, so they show with a red flag for review in YNAB.
 
 ## 5. Register the source
@@ -356,7 +356,7 @@ GoTyme Bank Everyday Deposit Account statements (`statement_etl/parsers/gotyme.p
 | `Date` | `date` | `date` | `strptime(Date, "%d %b %Y")`; YNAB gets `YYYY-MM-DD` | `2026-10-05` → `"2026-10-05"` |
 | `Credits`, `Debits` | `amount` (pesos) | `amount` (milliunits) | `Credits − Debits`; YNAB gets × 1000; inflow +, outflow − | `Decimal("-249.00")` → `-249000` |
 | `Details` | `payee` | `payee_name` | `gotyme_payee()`; cut to 200 characters by the YNAB client | `"SHOPEE PH"` |
-| `Details` | `memo` | `memo` | `"GoTyme: " + Details` | `"GoTyme: Card payment at SHOPEE PH, Card •••• 1234"` |
+| `Details` | `memo` | `memo` | `"GoTyme: " + Details + " \| Ref: " + transaction_ref("gotyme", key)` | `"GoTyme: Card payment at SHOPEE PH, Card •••• 1234 \| Ref: 447d649bcac761c22c6a2807652d43"` |
 | `Date`, `Credits`, `Debits`, `Running Balance` | `source`, `key` | `import_id` | `key = "…\|n"`; YNAB gets `make_import_id(source, key)` | `"05 Oct 2026\|0.00\|249.00\|4751.00\|0"` → `"ETLPH:9c1e…"` |
 | — | `flagged` = `False` | `flag_color` = `null` | no correction rows | |
 | — | — | `cleared` / `approved` | fixed by the YNAB client: `"cleared"` / `False` (you review them in YNAB) | |

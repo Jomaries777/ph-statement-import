@@ -755,6 +755,23 @@ class ToTransactionsTest(unittest.TestCase):
         self.assertEqual(t.memo, "GCash Ref: R1000000000002")
         self.assertEqual(t.key, "R1000000000002")
 
+    def test_every_correction_kind_keeps_its_reference_in_the_memo(self):
+        # Each kind letter stays in the memo, so the row can be found in YNAB
+        cases = [
+            (gcash.START_DESCRIPTION, "S1000000000001", "50.00", ""),
+            ("Refund from Test Shop", "R1000000000002", "50.00", ""),
+            ("Payment to Test Shop", "P1000000000002", "", "50.00"),
+            (gcash.MISSING_DESCRIPTION, "M0000123456789", "", "50.00"),
+        ]
+        for description, reference, credit, debit in cases:
+            with self.subTest(reference):
+                row = gcash_row(
+                    "2026-10-02 10:00 AM", description, reference, credit=credit, debit=debit
+                )
+                [t] = gcash.to_transactions([row])
+                self.assertEqual(t.memo, f"GCash Ref: {reference}")
+                self.assertTrue(t.flagged)
+
     def test_key_is_only_the_reference(self):
         # The key becomes YNAB's import_id, so later fixes to the amount,
         # payee or date must not change it

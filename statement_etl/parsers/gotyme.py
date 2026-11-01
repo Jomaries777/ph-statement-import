@@ -50,7 +50,7 @@ from decimal import Decimal
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
 from statement_etl.parsers.common import StatementError, group_lines, open_pdf, to_decimal
-from statement_etl.transaction import Transaction
+from statement_etl.transaction import Transaction, transaction_ref
 
 load_dotenv()  # load .env file if present, so env vars can be set there instead of the shell
 
@@ -427,6 +427,11 @@ def summary(rows: list[dict[str, str]]) -> str:
 # "{Date}|{Credits}|{Debits}|{Running Balance}|{n}" where n counts earlier rows
 # in the same statement with the same four values (almost always 0).
 # YNAB's import_id is make_import_id("gotyme", key) (ynab_api/format.py).
+#
+# The memo ends with the GoTyme Ref: transaction_ref("gotyme", key), the hash
+# part of that import_id, so searching it in YNAB finds the row:
+#   key    "28 Oct 2026|0.00|500.00|3568.34|0"
+#   memo   "GoTyme: Card payment at SHOPEE PH, Card •••• 1234 | Ref: 9ac288af95f6925425a5154d159507"
 # =============================================================================
 
 
@@ -467,15 +472,16 @@ def to_transactions(rows: list[dict[str, str]]) -> list[Transaction]:
         occurrence = counts.get(base_key, 0)
         counts[base_key] = occurrence + 1
 
+        key = f"{base_key}|{occurrence}"
         amount = to_decimal(row["Credits"]) - to_decimal(row["Debits"])
         transactions.append(
             Transaction(
                 source="gotyme",
-                key=f"{base_key}|{occurrence}",
+                key=key,
                 date=datetime.strptime(row["Date"], DATE_FORMAT).date(),
                 payee=gotyme_payee(row["Details"]),
                 amount=amount,
-                memo="GoTyme: " + row["Details"],
+                memo=f"GoTyme: {row['Details']} | Ref: {transaction_ref('gotyme', key)}",
                 flagged=False,
             )
         )

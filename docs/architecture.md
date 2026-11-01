@@ -18,7 +18,7 @@ statement_etl/sources.py                                        (format, upload,
 `statement_etl/convert.py` joins the first two: `rows_to_transactions(rows, source)` picks the `Source` and calls its `to_transactions`.
 
 1. **Source (`statement_etl/parsers/` and `statement_etl/sources.py`):** Opens the encrypted PDF and extracts rows using the statement's own column names, verifies statement totals and running balances, and converts rows into neutral transactions.
-2. **Transaction (`statement_etl/transaction.py`):** Represents each transaction in a tracker-neutral format (`Decimal` pesos, positive for inflow, negative for outflow, with source key and stable transaction reference, and a `flagged` marker for balance-correction rows). It holds only the data shape, no logic.
+2. **Transaction (`statement_etl/transaction.py`):** Represents each transaction in a tracker-neutral format (`Decimal` pesos, positive for inflow, negative for outflow, with source key and stable transaction reference, and a `flagged` marker for balance-correction rows). It holds the data shape and `transaction_ref()`, the stable hash of a row's source and key that YNAB's `import_id` is built from (GoTyme memos show it as `Ref:`).
 3. **YNAB (`statement_etl/ynab_api/`):** Formats transactions for YNAB's API (`format.to_ynab()`: milliunits and deterministic `ETLPH:` `import_id`s), lists plans and accounts, checks starting and ending balances against YNAB, and uploads transactions in one batch.
 
 Entry points sit on top of the pipeline:
