@@ -112,6 +112,19 @@ INPUT_FIELDS = {
         "pattern": re.compile(r"^09\d{5}$"),
         "pattern_error": "First 7 digits of mobile must look like 0917123.",
     },
+    # Tells the GoalSave accounts in one savings PDF apart (Source.account_input
+    # and account_column): each section says "GoalSave No.: *******22222".
+    # Stored encrypted with the date of birth.
+    "goalsave_last5": {
+        "label": "GoalSave No. (last 5 digits)",
+        "type": "text",
+        "placeholder": "22222",
+        "inputmode": "numeric",
+        "maxlength": "5",
+        "autocomplete": "off",
+        "pattern": re.compile(r"^\d{5}$"),
+        "pattern_error": "GoalSave No. must be its last 5 digits, like 22222.",
+    },
     # A date field: the browser sends YYYY-MM-DD whatever format it shows
     "birth_date": {
         "label": "Date of birth",
@@ -239,6 +252,9 @@ def _input_spec(input_name: str, user: dict | None) -> dict:
         "autocomplete": base.get("autocomplete", "off"),
         "inputmode": base.get("inputmode", ""),
         "maxlength": base.get("maxlength", ""),
+        # Checked in the browser too, before saving (static/auto_import.js)
+        "pattern": base["pattern"].pattern if base.get("pattern") else "",
+        "pattern_error": base.get("pattern_error", ""),
         "value": prefill_value,
         "note": base.get("prefill_note", "") if prefill_value else "",
     }
@@ -248,7 +264,11 @@ def _password_hint(source) -> str:
     """One-line password rule from `source.build_password`'s docstring, if any."""
     doc = getattr(source.build_password, "__doc__", None) or ""
     first_line = doc.strip().splitlines()[0].strip() if doc.strip() else ""
-    return f"Asked once. {first_line}" if first_line else ""
+    if not first_line:
+        return ""
+    if source.shared_password:
+        return f"Asked once for every {source.name} account. {first_line}"
+    return f"Asked once. {first_line}"
 
 
 def _wallet_rows(user: dict | None) -> list[dict]:
@@ -277,12 +297,19 @@ def _wallet_rows(user: dict | None) -> list[dict]:
                     "account_id": mapping.get("account_id", "") if enabled else "",
                     "account_name": mapping.get("account_name", "") if enabled else "",
                     "account_input": (
-                        {**_input_spec(source.account_input, user), "value": account}
+                        {
+                            **_input_spec(source.account_input, user),
+                            "value": account,
+                            # Needed on every mapped row (Source.account_column)
+                            "required": bool(source.account_column),
+                        }
                         if source.account_input
                         else None
                     ),
                     "inputs": [_input_spec(name, user) for name in source.password_inputs],
                     "password_hint": _password_hint(source),
+                    # Asked on the first row only; the others say so instead
+                    "shared_password": source.shared_password,
                     "extra": wallet_id != source.key,  # an added account: it can be removed
                     "last": False,
                 }
@@ -372,6 +399,37 @@ def format_run(run: dict, mappings: dict) -> dict:
     }
 
 
+def format_runs(run: dict, mappings: dict) -> list[dict]:
+    """The Recent imports rows for one stored run: one, or for a statement that
+    holds several accounts (run["accounts"], runner._import_accounts()) one per
+    account, the later ones marked "same email".
+
+    format_runs({"source": "gotyme_goalsave", "status": "ok", "accounts": [
+                    {"wallet_name": "GoTyme GoalSave · 22222", "status": "ok", ...},
+                    {"wallet_name": "GoTyme GoalSave · 11111", "status": "ok", ...}]}, {})
+    -> [{"received": "Nov 02, 09:02 AM", "wallet": "GoTyme GoalSave · 22222", ...},
+        {"received": "same email", "wallet": "GoTyme GoalSave · 11111", ...}]
+    """
+    entries = run.get("accounts")
+    if not entries:
+        return [format_run(run, mappings)]
+    rows = []
+    for n, entry in enumerate(entries):
+        # Each row is the run with that account's own counts, status and message.
+        # Categorizing and the time taken are the email's, so only on its first row.
+        row_run = {**run, "categorize_error": None, "duration_seconds": None, **entry}
+        if n == 0:
+            row_run.update(
+                categorize_error=run.get("categorize_error"),
+                duration_seconds=run.get("duration_seconds"),
+            )
+        row = format_run(row_run, mappings)
+        if n > 0:
+            row["received"] = "same email"
+        rows.append(row)
+    return rows
+
+
 def _step_name(step: str | None) -> str:
     """A step's name while it runs: "upload" -> "Uploading to YNAB"; "" if unknown."""
     return next((running for name, running, _done in RUN_STEPS if name == step), "")
@@ -452,7 +510,7 @@ def _recent_imports(user: dict | None) -> dict:
     runs_cleared_at = user.get("runs_cleared_at")
     runs = store.list_runs(user["sub"], limit=20, after=runs_cleared_at)
     return {
-        "runs": [format_run(r, mappings) for r in runs],
+        "runs": [row for r in runs for row in format_runs(r, mappings)],
         "runs_cleared": bool(runs_cleared_at),
         "progress": format_progress(user.get("progress")),
     }
@@ -632,13 +690,16 @@ def _clean_source_inputs(source, raw_inputs: object) -> tuple[dict | None, str |
 
 
 def _clean_wallet_accounts(
-    source, wallet_ids: list[str], raw_inputs: dict
+    source, wallet_ids: list[str], raw_inputs: dict, enabled_ids: set[str]
 ) -> tuple[dict[str, str], str | None]:
     """Each wallet's account_input value (e.g. the first 7 digits of the mobile),
     "" where there's none; returns `(accounts, error_message)`.
 
     One wallet may leave it blank (every email goes to it, as before). With
     several, each needs its own, so each email can be sent to the right one.
+    A statement that holds several accounts (source.account_column) needs it
+    on every wallet in `enabled_ids`: it's how each account in the PDF finds
+    its wallet.
     """
     accounts = {wallet_id: "" for wallet_id in wallet_ids}
     if not source.account_input:
@@ -650,6 +711,8 @@ def _clean_wallet_accounts(
         text = value.strip() if isinstance(value, str) else ""
         if text and not spec["pattern"].fullmatch(text):
             return accounts, spec["pattern_error"]
+        if not text and source.account_column and wallet_id in enabled_ids:
+            return accounts, f"Enter the {spec['label']} for each {source.name} account."
         if not text and len(wallet_ids) > 1:
             return accounts, (
                 f"With more than one {source.name} account, enter the "
@@ -706,9 +769,21 @@ def _validate_settings(body: object) -> tuple[dict | None, str | None]:
         wallet_ids = sorted(wallets[source_key] or [source_key], key=_wallet_number)
         if len(wallet_ids) > MAX_WALLETS_PER_SOURCE:
             return None, f"At most {MAX_WALLETS_PER_SOURCE} {source.name} accounts."
-        accounts, err = _clean_wallet_accounts(source, wallet_ids, raw_inputs)
+        enabled_ids = {
+            w
+            for w in wallet_ids
+            if isinstance(raw_mappings.get(w), dict) and raw_mappings[w].get("enabled")
+        }
+        accounts, err = _clean_wallet_accounts(source, wallet_ids, raw_inputs, enabled_ids)
         if err:
             return None, err
+        # One PDF for every account (Source.shared_password): its inputs come
+        # once, with the first wallet, and are saved with each enabled one
+        shared_inputs = None
+        if source.shared_password and enabled_ids:
+            shared_inputs, err = _clean_source_inputs(source, raw_inputs.get(wallet_ids[0]))
+            if err:
+                return None, err
         for wallet_id in wallet_ids:
             entry = raw_mappings.get(wallet_id) or {}
             if not isinstance(entry, dict):
@@ -728,9 +803,12 @@ def _validate_settings(body: object) -> tuple[dict | None, str | None]:
                         "because their balance checks would conflict."
                     )
                 seen_accounts[account_id] = name
-                inputs, err = _clean_source_inputs(source, raw_inputs.get(wallet_id))
-                if err:
-                    return None, err
+                if shared_inputs is not None:
+                    inputs = dict(shared_inputs)
+                else:
+                    inputs, err = _clean_source_inputs(source, raw_inputs.get(wallet_id))
+                    if err:
+                        return None, err
             if accounts[wallet_id]:
                 inputs[source.account_input] = accounts[wallet_id]
             if inputs:

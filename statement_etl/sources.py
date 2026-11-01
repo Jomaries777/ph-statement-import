@@ -92,7 +92,12 @@ class Source:
         email_account      - (email body text, PDF filename) -> the account_input
                              value the email is for, or None if it doesn't say.
                              Auto-import sends each email to the wallet with
-                             that value.
+                             that value. Not needed with account_column: the
+                             accounts are read from the PDF itself, and each
+                             goes to the wallet with its account_input value.
+        shared_password    - True when one PDF holds every account (GoTyme
+                             GoalSave): the password inputs are asked once, on
+                             the source's first row, and saved for every row.
     """
 
     key: str
@@ -117,6 +122,7 @@ class Source:
     build_password: Callable | None = None
     account_input: str | None = None
     email_account: Callable | None = None
+    shared_password: bool = False
 
     def wallet_name(self, account: str | None = None) -> str:
         """How one of this source's wallets is shown: "GCash", or "GCash · 0917123"
@@ -194,6 +200,18 @@ SOURCES = {
             statement_balances=gotyme_goalsave.statement_balances,
             summary=gotyme_goalsave.summary,
             to_transactions=gotyme_goalsave.to_transactions,
+            # The same email as GoTyme Everyday, its other PDF
+            email_query=(
+                'from:no-reply@gotyme.com.ph subject:"GoTyme Bank Statement of Account" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"^GoTyme_BankStatement_SavingsAccounts_\d{8}_\d{6}\.pdf$",
+            password_inputs=("birth_date",),
+            build_password=gotyme.build_password,
+            # Up to five GoalSave accounts in one PDF, told apart by their
+            # GoalSave No.; one date of birth opens it
+            account_input="goalsave_last5",
+            shared_password=True,
         ),
     ]
 }

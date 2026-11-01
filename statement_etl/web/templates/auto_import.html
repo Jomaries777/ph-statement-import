@@ -136,9 +136,12 @@
           </thead>
           <tbody>
             {#- One row per wallet: an account at a source. A source with an
-                account_input (GCash) can have several, told apart by it. #}
+                account_input (GCash, GoTyme GoalSave) can have several, told
+                apart by it. With shared_password (GoalSave: one PDF opens every
+                account) only the first row asks for the password inputs. #}
             {%- for s in sources %}
-            <tr data-wallet="{{ s.wallet_id }}" data-source="{{ s.key }}" data-source-name="{{ s.name }}">
+            <tr data-wallet="{{ s.wallet_id }}" data-source="{{ s.key }}" data-source-name="{{ s.name }}"
+                {%- if s.shared_password %} data-shared-password="true"{% endif %}>
               <td class="wallet-cell"><strong>{{ s.name }}</strong>
                 {%- if s.account_input %}
                 <div class="input-field">
@@ -150,7 +153,10 @@
                     value="{{ s.account_input.value }}"
                     autocomplete="off"
                     inputmode="{{ s.account_input.inputmode }}"
-                    maxlength="{{ s.account_input.maxlength }}">
+                    maxlength="{{ s.account_input.maxlength }}"
+                    data-pattern="{{ s.account_input.pattern }}"
+                    data-pattern-error="{{ s.account_input.pattern_error }}"
+                    {%- if s.account_input.required %} data-required="true"{% endif %}>
                   <span class="field-note muted">{{ s.account_input.label }}</span>
                 </div>
                 {%- endif %}
@@ -166,6 +172,9 @@
                 </select>
               </td>
               <td class="inputs-cell">
+                {%- if s.shared_password and s.extra %}
+                <span class="muted shared-note">Uses the {{ s.inputs | map(attribute="label") | join(", ") | lower }} above</span>
+                {%- else %}
                 <div class="input-group">
                   {%- for field in s.inputs %}
                   <div class="input-field">
@@ -187,10 +196,11 @@
                 {%- if s.password_hint %}
                 <div class="small-note muted">{{ s.password_hint }}</div>
                 {%- endif %}
+                {%- endif %}
                 <div class="msg hidden test-msg" id="test-msg-{{ s.wallet_id }}"></div>
               </td>
               <td class="test-cell">
-                <button type="button" class="secondary small-btn test-btn"
+                <button type="button" class="secondary small-btn test-btn{% if s.shared_password and s.extra %} hidden{% endif %}"
                         data-source="{{ s.key }}"{% if not gmail_connected %} disabled{% endif %}>Test</button>
                 <button type="button" class="secondary small-btn remove-wallet-btn{% if not s.extra %} hidden{% endif %}"
                         aria-label="Remove this {{ s.name }} account">Remove</button>
@@ -210,7 +220,9 @@
       </div>
       <p class="small-note muted">One row per e-wallet or bank account. Each needs its own YNAB account.
         With more than one GCash account, add each one and enter the first 7 digits of its mobile
-        number: the statement email names it, so each statement goes to the right account.</p>
+        number: the statement email names it, so each statement goes to the right account.
+        GoTyme's savings statement holds every GoalSave account: add a row for each, up to 5,
+        with the last 5 digits of its GoalSave No.</p>
       {%- if categorize_available %}
       <!-- Hosted with a Gemini key only (config.CATEGORIZE_AVAILABLE) -->
       <div class="opt-in">

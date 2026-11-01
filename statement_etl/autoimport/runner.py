@@ -30,6 +30,11 @@ everything comes from the user's stored settings (store.py):
                                    then, if the user turned it on, let Gemini pick
                                    categories for what it created (categorize.py)
                                 5. record the run, with its status
+                                A statement that holds several accounts (GoTyme
+                                GoalSave, Source.account_column) is parsed once,
+                                and each account imported into its own wallet's
+                                YNAB account (_import_accounts()): one run for
+                                the email, with an entry per account.
     start_watch(user)         - start Gmail push now, when auto-import is turned on
     run_lock_held()           - hold the run lock outside a run, e.g. to refresh the
                                 user's stored YNAB token for the auto-import page
@@ -248,6 +253,10 @@ def process_user(user: dict) -> int:
             continue
         source, msg_ids = find_new_emails(user, source_key, gmail_token)
         for msg_id in msg_ids:
+            if source.account_column:
+                # One PDF, several accounts: they're matched to wallets once it's read
+                new_emails.append((source, None, None, msg_id))
+                continue
             wallet_id, account = _wallet_for(user, source, wallets, gmail_token, msg_id)
             if wallet_id is None:
                 _record_no_wallet(user, msg_id, source, account, gmail_token)
@@ -264,11 +273,7 @@ def process_user(user: dict) -> int:
         progress = Progress(
             user["sub"],
             [
-                {
-                    "source": source.key,
-                    "wallet_name": source.wallet_name(wallet_account(user, source, wallet_id)),
-                    "account_name": mapping.get("account_name", ""),
-                }
+                _progress_email(user, source, wallet_id, mapping)
                 for source, wallet_id, mapping, _msg_id in new_emails
             ],
             categorize=bool(user.get("categorize") and os.environ.get("GEMINI_API_KEY")),
@@ -292,6 +297,26 @@ def process_user(user: dict) -> int:
     #    the emails since the last check are searched again.
     store.set_last_checked(user["sub"], checked_at)
     return len(new_emails) + unmatched
+
+
+def _progress_email(user: dict, source, wallet_id: str | None, mapping: dict | None) -> dict:
+    """How one queued email shows on the page while it waits or runs:
+    {"source": "gcash", "wallet_name": "GCash · 0917123", "account_name": "GCash"}.
+    A statement that holds several accounts names the source and how many
+    accounts it imports into: "GoTyme GoalSave", "2 accounts"."""
+    if wallet_id is None:
+        wallets = _wallets_by_source(user).get(source.key, {})
+        mapped = sum(1 for m in wallets.values() if m.get("enabled"))
+        return {
+            "source": source.key,
+            "wallet_name": source.name,
+            "account_name": f"{mapped} account{'' if mapped == 1 else 's'}",
+        }
+    return {
+        "source": source.key,
+        "wallet_name": source.wallet_name(wallet_account(user, source, wallet_id)),
+        "account_name": mapping.get("account_name", ""),
+    }
 
 
 def wallet_source(wallet_id: str, mapping: dict) -> str:
@@ -421,20 +446,27 @@ def process_message(
     received_at = _received_at(gmail_token, msg_id)
     progress.next_email(received_at)
     result = {"created": 0, "skipped": 0, "message": ""}
-    status = _import_email(
-        user, msg_id, source, wallet_id, mapping, gmail_token, ynab_token, result, progress
-    )
+    if source.account_column:  # several accounts: each entry in result["accounts"] says where
+        status = _import_accounts(user, msg_id, source, gmail_token, ynab_token, result, progress)
+        target = {"account_id": "", "account_name": "", "wallet": "", "wallet_name": source.name}
+    else:
+        status = _import_email(
+            user, msg_id, source, wallet_id, mapping, gmail_token, ynab_token, result, progress
+        )
+        target = {
+            "account_id": mapping["account_id"],
+            # Kept with the run, so editing the mapping later doesn't change the run log
+            "account_name": mapping.get("account_name", ""),
+            "wallet": wallet_id,
+            "wallet_name": source.wallet_name(wallet_account(user, source, wallet_id)),
+        }
 
     # 5. Record the run, so this email isn't imported again
     store.write_run(
         user["sub"],
         msg_id,
         source.key,
-        account_id=mapping["account_id"],
-        # Kept with the run, so editing the mapping later doesn't change the run log
-        account_name=mapping.get("account_name", ""),
-        wallet=wallet_id,
-        wallet_name=source.wallet_name(wallet_account(user, source, wallet_id)),
+        **target,
         status=status,
         received_at=received_at,
         step=progress.step,  # where it stopped, for a failed run
@@ -449,11 +481,110 @@ def _import_email(
     user, msg_id, source, wallet_id, mapping, gmail_token, ynab_token, result, progress
 ) -> str:
     """Steps 1-4 of process_message(). Fills in `result` and returns the run's status."""
+    # 1-3. The PDF, its password and its rows
+    status, rows, transactions = _read_email(
+        user, msg_id, source, wallet_id, gmail_token, result, progress
+    )
+    if status:
+        return status
+
+    # 4. Import, then let Gemini categorize what it created
+    status, created = _import_rows(
+        user, source, mapping, rows, transactions, ynab_token, result, progress
+    )
+    if status != YNAB_ERROR:
+        _categorize(user, created, ynab_token, result, progress)
+    return status
+
+
+def _import_accounts(user, msg_id, source, gmail_token, ynab_token, result, progress) -> str:
+    """Steps 1-4 of process_message() for a statement that holds several
+    accounts (Source.account_column, e.g. GoTyme GoalSave): read it once,
+    then import each account into the YNAB account of the wallet saved with
+    its number (its account_input, e.g. the GoalSave No. "22222").
+
+    Fills in `result`: the totals, and result["accounts"], one entry per
+    account in the PDF, in its order:
+        {"wallet": "gotyme_goalsave-2", "wallet_name": "GoTyme GoalSave · 22222",
+         "account_id": "...", "account_name": "GoalSave Emergency",
+         "status": "ok", "created": 5, "skipped": 0, "message": ""}
+    An account with no wallet on the page is a NO_WALLET entry; one set to
+    "Don't import" is left out. Returns the email's status: the first entry's
+    that isn't OK, or OK.
+    """
+    wallets = _wallets_by_source(user)[source.key]
+
+    # 1-3. The PDF, its password (Source.shared_password: every wallet of the
+    #      source has the same) and its rows
+    password_wallet = next(w for w, mapping in wallets.items() if mapping.get("enabled"))
+    status, rows, transactions = _read_email(
+        user, msg_id, source, password_wallet, gmail_token, result, progress
+    )
+    if status:
+        return status
+
+    # 4. Each account into its own wallet's YNAB account
+    by_account = {wallet_account(user, source, wallet_id): wallet_id for wallet_id in wallets}
+    entries, created = [], []
+    for account, (account_rows, account_transactions) in pipeline.split_accounts(
+        rows, transactions, source.key
+    ).items():
+        wallet_id = by_account.get(account)
+        entry = {
+            "wallet": wallet_id or "",
+            "wallet_name": source.wallet_name(account),
+            "account_id": "",
+            "account_name": "",
+            "created": 0,
+            "skipped": 0,
+            "message": "",
+        }
+        if wallet_id is None:
+            entry["status"] = NO_WALLET
+            entry["message"] = (
+                f"This statement has {source.account_column} {account}. Add it on this page."
+            )
+        elif not wallets[wallet_id].get("enabled"):
+            continue  # that account is set to "Don't import"
+        else:
+            mapping = wallets[wallet_id]
+            entry["account_id"] = mapping["account_id"]
+            entry["account_name"] = mapping.get("account_name", "")
+            entry["status"], account_created = _import_rows(
+                user,
+                source,
+                mapping,
+                account_rows,
+                account_transactions,
+                ynab_token,
+                entry,
+                progress,
+            )
+            created.extend(account_created)
+        entries.append(entry)
+
+    result["accounts"] = entries
+    result["created"] = sum(entry["created"] for entry in entries)
+    result["skipped"] = sum(entry["skipped"] for entry in entries)
+    transfers = sum(entry.get("transfers", 0) for entry in entries)
+    if transfers:
+        result["transfers"] = transfers
+    # One Gemini call for the whole email, within one deadline
+    _categorize(user, created, ynab_token, result, progress)
+    return next((entry["status"] for entry in entries if entry["status"] != OK), OK)
+
+
+def _read_email(
+    user, msg_id, source, wallet_id, gmail_token, result, progress
+) -> tuple[str | None, list, list]:
+    """Steps 1-3 of process_message(): (None, rows, transactions), or
+    (the run's status, [], []) when the PDF can't be read; fills in
+    result["message"] then."""
     # 1. The PDF attachment, in memory only
     progress.report(STEP_DOWNLOAD, {})
     attachment = gmail.get_pdf_attachment(gmail_token, msg_id, source.attachment_pattern)
     if attachment is None:
-        return NO_ATTACHMENT
+        return NO_ATTACHMENT, [], []
     _filename, pdf_bytes = attachment
 
     # 2. The PDF password, built from the inputs the user entered once for this wallet
@@ -466,21 +597,14 @@ def _import_email(
         )
     except PasswordError:
         result["message"] = "Check the password inputs on the auto-import page."
-        return PDF_LOCKED
+        return PDF_LOCKED, [], []
     except StatementError as e:  # its message is written to be shown
         result["message"] = str(e)
-        return PARSE_ERROR
+        return PARSE_ERROR, [], []
     except Exception:  # a PDF library's message can carry internal details
         result["message"] = "The PDF couldn't be read."
-        return PARSE_ERROR
-
-    # 4. Import, then let Gemini categorize what it created
-    status, created = _import_rows(
-        user, source, mapping, rows, transactions, ynab_token, result, progress
-    )
-    if status != YNAB_ERROR:
-        _categorize(user, created, ynab_token, result, progress)
-    return status
+        return PARSE_ERROR, [], []
+    return None, rows, transactions
 
 
 def _import_rows(
@@ -752,11 +876,15 @@ def test_password(
 
     # 2. and 3. Build the password and parse
     try:
-        pipeline.parse_statement(
+        rows, transactions = pipeline.parse_statement(
             io.BytesIO(attachment[1]), pdf_password(user, source, inputs), source.key
         )
     except PasswordError:
         return False, "Wrong password. Check the inputs."
     except StatementError as e:
         return False, f"The password works, but the statement couldn't be read: {e}"
-    return True, f"The password opens your newest {source.name} statement."
+    message = f"The password opens your newest {source.name} statement."
+    if source.account_column:  # so you know which numbers to enter
+        found = ", ".join(pipeline.split_accounts(rows, transactions, source.key))
+        message += f" It has {source.account_column} {found}."
+    return True, message

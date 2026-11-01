@@ -666,7 +666,9 @@ class SaveSettingsTest(AutoImportWebTest):
         self.assertEqual(response.status_code, 200)
         saved = self.store.get_user(SUB)
         accounts = {key: m["account_id"] for key, m in saved["mappings"].items()}
-        self.assertEqual(accounts, {"gcash": ACCOUNT_ID, "gotyme": OTHER_ACCOUNT_ID})
+        self.assertEqual(
+            accounts, {"gcash": ACCOUNT_ID, "gotyme": OTHER_ACCOUNT_ID, "gotyme_goalsave": ""}
+        )
         self.assertEqual(
             json.loads(self.store.decrypt(saved["password_inputs"]["gotyme"])),
             {"birth_date": "1990-05-15"},
@@ -849,6 +851,7 @@ class SeveralWalletsTest(AutoImportWebTest):
                 "gcash": ("gcash", ACCOUNT_ID),
                 "gcash-2": ("gcash", OTHER_ACCOUNT_ID),
                 "gotyme": ("gotyme", ""),
+                "gotyme_goalsave": ("gotyme_goalsave", ""),
             },
         )
         inputs = json.loads(self.store.decrypt(saved["password_inputs"]["gcash-2"]))
@@ -905,6 +908,149 @@ class SeveralWalletsTest(AutoImportWebTest):
             (shown["wallet"], shown["account"], shown["badge_text"], shown["result"]),
             ("GCash · 0999000", "—", "⚠ No account", "This statement is for 0999000****."),
         )
+
+
+GOALSAVE_ACCOUNT_ID = "44444444-4444-4444-4444-444444444444"
+
+
+def goalsave_payload(first5="22222", second5="11111", second_enabled=True):
+    """Settings with two GoalSave accounts: the date of birth on the first row only."""
+    payload = valid_settings_payload()
+    payload["mappings"]["gotyme_goalsave"] = {
+        "source": "gotyme_goalsave",
+        "account_id": OTHER_ACCOUNT_ID,
+        "account_name": "GoalSave Emergency",
+        "enabled": True,
+    }
+    payload["mappings"]["gotyme_goalsave-2"] = {
+        "source": "gotyme_goalsave",
+        "account_id": GOALSAVE_ACCOUNT_ID if second_enabled else "",
+        "account_name": "GoalSave Travel" if second_enabled else "",
+        "enabled": second_enabled,
+    }
+    payload["password_inputs"]["gotyme_goalsave"] = {
+        "birth_date": "1990-05-15",
+        "goalsave_last5": first5,
+    }
+    payload["password_inputs"]["gotyme_goalsave-2"] = {"goalsave_last5": second5}
+    return payload
+
+
+class GoalSaveWalletsTest(AutoImportWebTest):
+    """GoTyme GoalSave: one PDF for every account (Source.shared_password and
+    account_column), so the date of birth is asked once and the digits always."""
+
+    save = SeveralWalletsTest.save  # sign in, connect YNAB, save the settings
+
+    def saved_inputs(self, wallet_id):
+        stored = self.store.get_user(SUB)["password_inputs"][wallet_id]
+        return json.loads(self.store.decrypt(stored))
+
+    def test_the_date_of_birth_is_saved_with_every_account(self):
+        self.assertEqual(self.save(goalsave_payload()).status_code, 200)
+        self.assertEqual(
+            self.saved_inputs("gotyme_goalsave"),
+            {"birth_date": "1990-05-15", "goalsave_last5": "22222"},
+        )
+        self.assertEqual(
+            self.saved_inputs("gotyme_goalsave-2"),
+            {"birth_date": "1990-05-15", "goalsave_last5": "11111"},
+        )
+
+    def test_a_dont_import_account_keeps_only_its_digits(self):
+        self.assertEqual(self.save(goalsave_payload(second_enabled=False)).status_code, 200)
+        self.assertEqual(self.saved_inputs("gotyme_goalsave-2"), {"goalsave_last5": "11111"})
+
+    def test_rejects_unclear_goalsave_accounts(self):
+        no_birth_date = goalsave_payload()
+        del no_birth_date["password_inputs"]["gotyme_goalsave"]["birth_date"]
+        cases = [
+            (goalsave_payload(second5=""), "Enter the GoalSave No. (last 5 digits) for each"),
+            (goalsave_payload(second5="22222"), "same goalsave no. (last 5 digits)"),
+            (goalsave_payload(second5="5320"), "GoalSave No. must be its last 5 digits"),
+            (no_birth_date, "Enter Date of birth for GoTyme GoalSave."),
+        ]
+        for payload, error in cases:
+            with self.subTest(error):
+                response = self.save(payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(error, response.get_json()["error"])
+
+    def test_one_mapped_account_needs_its_digits(self):
+        payload = goalsave_payload()
+        del payload["mappings"]["gotyme_goalsave-2"]
+        del payload["password_inputs"]["gotyme_goalsave-2"]
+        payload["password_inputs"]["gotyme_goalsave"]["goalsave_last5"] = ""
+        response = self.save(payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Enter the GoalSave No. (last 5 digits) for each GoTyme GoalSave account.",
+        )
+
+    def test_the_page_asks_for_the_date_of_birth_once(self):
+        self.assertEqual(self.save(goalsave_payload()).status_code, 200)
+        html = self.client.get("/auto-import").get_data(as_text=True)
+        self.assertIn(
+            '<tr data-wallet="gotyme_goalsave-2" data-source="gotyme_goalsave" '
+            'data-source-name="GoTyme GoalSave" data-shared-password="true">',
+            html,
+        )
+        self.assertEqual(html.count("Uses the date of birth above"), 1)  # the added row
+        self.assertIn("Asked once for every GoTyme GoalSave account.", html)
+        self.assertIn('data-pattern="^\\d{5}$"', html)
+        self.assertIn("+ Add another GoTyme GoalSave account", html)
+
+    def test_a_run_shows_a_row_per_account(self):
+        run = {
+            "source": "gotyme_goalsave",
+            "status": runner.NO_WALLET,
+            "wallet_name": "GoTyme GoalSave",
+            "received_at": datetime(2026, 11, 2, 1, 2, tzinfo=UTC),
+            "created": 5,
+            "skipped": 0,
+            "duration_seconds": 9,
+            "categorize_error": "Gemini is busy.",
+            "accounts": [
+                {
+                    "wallet_name": "GoTyme GoalSave · 22222",
+                    "account_name": "GoalSave Emergency",
+                    "status": runner.OK,
+                    "created": 5,
+                    "skipped": 0,
+                    "message": "",
+                },
+                {
+                    "wallet_name": "GoTyme GoalSave · 61022",
+                    "account_name": "",
+                    "status": runner.NO_WALLET,
+                    "created": 0,
+                    "skipped": 0,
+                    "message": "This statement has GoalSave No. 61022. Add it on this page.",
+                },
+            ],
+        }
+        first, second = auto_import.format_runs(run, {})
+        self.assertEqual(
+            (first["received"], first["wallet"], first["account"], first["badge_text"]),
+            ("Nov 02, 09:02 AM", "GoTyme GoalSave · 22222", "GoalSave Emergency", "✓ Imported"),
+        )
+        self.assertEqual(
+            first["result"], "5 created · 0 skipped · Not categorized: Gemini is busy."
+        )
+        self.assertEqual(first["duration"], "Took 9s")
+        self.assertEqual(
+            (second["received"], second["wallet"], second["account"], second["badge_text"]),
+            ("same email", "GoTyme GoalSave · 61022", "—", "⚠ No account"),
+        )
+        self.assertEqual(
+            second["result"], "This statement has GoalSave No. 61022. Add it on this page."
+        )
+        self.assertEqual(second["duration"], "")
+
+    def test_a_run_with_one_account_is_one_row(self):
+        run = {"source": "gcash", "status": runner.OK, "created": 1, "skipped": 0}
+        self.assertEqual(auto_import.format_runs(run, {}), [auto_import.format_run(run, {})])
 
 
 class CategorizeSettingTest(AutoImportWebTest):
@@ -1672,15 +1818,9 @@ class AutoImportBrowserTest(unittest.TestCase):
     def tearDown(self):
         self.context.close()
 
-    def test_setup_test_turn_on_and_delete_in_browser(self):
+    def sign_in(self):
+        """Google and YNAB sign-in, as the buttons do, back on /auto-import."""
         page = self.page
-
-        # Main page shows the Auto-import header link
-        page.goto(self.server.url, wait_until="networkidle")
-        expect(page.locator("#auto-import-link")).to_be_visible()
-        page.click("#auto-import-link")
-        expect(page.locator("h1")).to_have_text("Auto-import from Gmail")
-
         # 1. Simulate Google OAuth sign-in via /google/login -> /google/callback
         tokens = {
             "access_token": "ga",
@@ -1710,10 +1850,6 @@ class AutoImportBrowserTest(unittest.TestCase):
                 wait_until="networkidle",
             )
 
-        expect(page.locator("#gmail-on-label")).to_contain_text(ALLOWED_EMAIL)
-        last_name_input = page.locator('tr[data-source="gcash"] input[data-input="last_name"]')
-        expect(last_name_input).to_have_value(FAMILY_NAME)
-
         # 2. Simulate YNAB OAuth sign-in returning to /auto-import
         ynab_tokens = {
             "access_token": fake_ynab.TOKEN,
@@ -1731,6 +1867,20 @@ class AutoImportBrowserTest(unittest.TestCase):
                 f"{self.server.url}/oauth/callback?code=yc1&state={ynab_state}",
                 wait_until="networkidle",
             )
+
+    def test_setup_test_turn_on_and_delete_in_browser(self):
+        page = self.page
+
+        # Main page shows the Auto-import header link
+        page.goto(self.server.url, wait_until="networkidle")
+        expect(page.locator("#auto-import-link")).to_be_visible()
+        page.click("#auto-import-link")
+        expect(page.locator("h1")).to_have_text("Auto-import from Gmail")
+
+        self.sign_in()
+        expect(page.locator("#gmail-on-label")).to_contain_text(ALLOWED_EMAIL)
+        last_name_input = page.locator('tr[data-source="gcash"] input[data-input="last_name"]')
+        expect(last_name_input).to_have_value(FAMILY_NAME)
 
         # 3. Single plan auto-selects; pick YNAB account and fill mobile_last4
         expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)
@@ -1788,6 +1938,7 @@ class AutoImportBrowserTest(unittest.TestCase):
                 f"GCash · 0917123 {fake_ynab.EXISTING_ACCOUNT_NAME}",
                 f"GCash · 0918765 {fake_ynab.NEW_ACCOUNT_NAME}",
                 "GoTyme Not imported",
+                "GoTyme GoalSave Not imported",
             ]
         )
         saved = self.store.get_user(SUB)["mappings"]
@@ -1843,6 +1994,66 @@ class AutoImportBrowserTest(unittest.TestCase):
             expect(page.locator("#card-gmail")).not_to_have_class(re.compile(r"\bcomplete\b"))
 
         # Strict CSP allowed every script and stylesheet on the page
+        self.assertEqual(self.console_errors, [])
+
+    def test_goalsave_asks_for_the_date_of_birth_once_in_browser(self):
+        page = self.page
+        page.goto(f"{self.server.url}/auto-import", wait_until="networkidle")
+        self.sign_in()
+        expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)
+
+        # The first GoalSave row: its digits, its YNAB account, the date of birth
+        first = page.locator('tr[data-wallet="gotyme_goalsave"]')
+        expect(first.locator(".small-note")).to_contain_text(
+            "Asked once for every GoTyme GoalSave account."
+        )
+        first.locator(".account-select").select_option(fake_ynab.EXISTING_ACCOUNT_ID)
+        first.locator('input[data-input="birth_date"]').fill("1990-05-15")
+        expect(page.locator("#save-msg")).to_contain_text(
+            "Enter the GoalSave No. (last 5 digits) for each GoTyme GoalSave account."
+        )
+        first.locator("input[data-account-input]").fill("22222")
+        expect(page.locator("#save-msg")).to_be_hidden()
+
+        # An added row: digits and YNAB account only
+        page.click('.add-wallet-btn[data-source="gotyme_goalsave"]')
+        second = page.locator('tr[data-wallet="gotyme_goalsave-2"]')
+        expect(second.locator(".shared-note")).to_have_text("Uses the date of birth above")
+        expect(second.locator("input[data-input]")).to_have_count(0)
+        expect(second.locator(".test-btn")).to_be_hidden()
+        second.locator(".account-select").select_option(fake_ynab.NEW_ACCOUNT_ID)
+        expect(page.locator("#save-btn")).to_be_disabled()
+        second.locator("input[data-account-input]").fill("5791")
+        expect(page.locator("#save-msg")).to_contain_text("GoalSave No. must be its last 5 digits")
+        second.locator("input[data-account-input]").fill("22222")
+        expect(page.locator("#save-msg")).to_contain_text("same goalsave no. (last 5 digits)")
+        second.locator("input[data-account-input]").fill("11111")
+        expect(page.locator("#save-msg")).to_be_hidden()
+
+        rotated = {
+            "access_token": fake_ynab.TOKEN,
+            "refresh_token": NEW_YNAB_REFRESH,
+            "expires_in": 7200,
+        }
+        with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+            expect(page.locator("#save-btn")).to_be_enabled()
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/auto-import") and r.request.method == "POST"
+            ) as save:
+                page.click("#save-btn")
+            self.assertEqual(save.value.status, 200)
+
+        expect(page.locator("#wallets-table tbody tr")).to_contain_text(
+            [
+                f"GoTyme GoalSave · 22222 {fake_ynab.EXISTING_ACCOUNT_NAME}",
+                f"GoTyme GoalSave · 11111 {fake_ynab.NEW_ACCOUNT_NAME}",
+            ]
+        )
+        stored = self.store.get_user(SUB)["password_inputs"]
+        self.assertEqual(
+            json.loads(self.store.decrypt(stored["gotyme_goalsave-2"])),
+            {"birth_date": "1990-05-15", "goalsave_last5": "11111"},
+        )
         self.assertEqual(self.console_errors, [])
 
 
