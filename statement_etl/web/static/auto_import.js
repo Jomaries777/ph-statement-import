@@ -57,31 +57,51 @@ function walletName(row) {
   return account ? `${name} · ${account}` : name;
 }
 
-// The first 7 digits of a mobile number (INPUT_FIELDS["mobile_first7"] in auto_import.py)
-const ACCOUNT_PATTERN = /^09\d{5}$/;
-
-// Problems with the accounts' digits: several at one source need distinct ones
-function walletsMessage() {
+// A source's rows: {"gcash": [row, row], "gotyme_goalsave": [row], ...}, in page order
+function rowsBySource() {
   const bySource = new Map();
   walletRows().forEach((row) => {
-    if (!row.querySelector("input[data-account-input]")) return;
     if (!bySource.has(row.dataset.source)) bySource.set(row.dataset.source, []);
     bySource.get(row.dataset.source).push(row);
   });
-  for (const rows of bySource.values()) {
+  return bySource;
+}
+
+function isMapped(row) {
+  return !!row.querySelector(".account-select").value;
+}
+
+// Problems with the accounts' digits, the same checks as the server's
+// (_clean_wallet_accounts in auto_import.py): each matches its pattern; with
+// several rows, or on a mapped row that needs them (GoalSave), they're entered;
+// and they're all different
+function walletsMessage() {
+  for (const rows of rowsBySource().values()) {
+    const field = rows[0].querySelector("input[data-account-input]");
+    if (!field) continue;
     const name = rows[0].dataset.sourceName;
+    const label = field.getAttribute("aria-label");
+    const pattern = new RegExp(field.dataset.pattern);
     const accounts = rows.map(rowAccount);
-    if (accounts.some((a) => a && !ACCOUNT_PATTERN.test(a))) {
-      return "First 7 digits of mobile must look like 0917123.";
+    if (accounts.some((a) => a && !pattern.test(a))) return field.dataset.patternError;
+    if (field.dataset.required && rows.some((row) => isMapped(row) && !rowAccount(row))) {
+      return `Enter the ${label} for each ${name} account.`;
     }
     if (rows.length > 1 && accounts.some((a) => !a)) {
-      return `With more than one ${name} account, enter the first 7 digits of mobile for each.`;
+      return `With more than one ${name} account, enter the ${label.toLowerCase()} for each.`;
     }
     if (new Set(accounts).size < accounts.length) {
-      return `Two ${name} accounts have the same first 7 digits of mobile.`;
+      return `Two ${name} accounts have the same ${label.toLowerCase()}.`;
     }
   }
   return "";
+}
+
+// The row that holds a wallet's password inputs: its own, or with
+// data-shared-password (one PDF for every account) its source's first row
+function passwordRow(row) {
+  if (!row.dataset.sharedPassword) return row;
+  return walletRows().find((r) => r.dataset.source === row.dataset.source);
 }
 
 function readRowInputs(row) {
@@ -142,7 +162,7 @@ function refreshState() {
     }
     seenAccounts.set(accountId, sourceName);
 
-    const { complete } = readRowInputs(row);
+    const { complete } = readRowInputs(passwordRow(row));
     if (!complete) allInputsFilled = false;
   });
 
@@ -309,7 +329,12 @@ async function saveSettings() {
       account_name: enabled ? accountName : "",
       enabled,
     };
-    const inputs = enabled ? readRowInputs(row).inputs : {};
+    // A shared password goes with the source's first row, mapped or not
+    const sharedFirst =
+      row.dataset.sharedPassword &&
+      passwordRow(row) === row &&
+      rowsBySource().get(row.dataset.source).some(isMapped);
+    const inputs = enabled || sharedFirst ? readRowInputs(row).inputs : {};
     const accountInput = row.querySelector("input[data-account-input]");
     if (accountInput && rowAccount(row)) inputs[accountInput.dataset.accountInput] = rowAccount(row);
     if (Object.keys(inputs).length) passwordInputs[walletId] = inputs;
@@ -373,6 +398,17 @@ function addWallet(sourceKey) {
   select.value = "";
   row.querySelectorAll("input[data-input]").forEach((input) => { input.value = input.defaultValue; });
   row.querySelector("input[data-account-input]").value = "";
+  if (row.dataset.sharedPassword) {
+    // The first row's password inputs open every account's PDF (GoalSave)
+    const labels = Array.from(rows[0].querySelectorAll("input[data-input]"), (i) => i.getAttribute("aria-label"));
+    const note = document.createElement("span");
+    note.className = "muted shared-note";
+    note.textContent = `Uses the ${labels.join(", ").toLowerCase()} above`;
+    const cell = row.querySelector(".inputs-cell");
+    cell.querySelectorAll(".input-group, .small-note").forEach((el) => el.remove());
+    cell.prepend(note);
+    show(row.querySelector(".test-btn"), false);
+  }
   const testMsg = row.querySelector('[id^="test-msg-"]');  // message() replaces its classes
   testMsg.id = `test-msg-${walletId}`;
   testMsg.textContent = "";

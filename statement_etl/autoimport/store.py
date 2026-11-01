@@ -18,7 +18,8 @@ document per account, in the project's (default) database:
                   several: no "source", and the id is the source key
                   (runner.wallet_source()).
         password_inputs: {wallet id: <encrypted JSON {last_name, mobile_last4,
-                          mobile_first7}>}  (mobile_first7 tells GCash accounts apart)
+                          mobile_first7}>}  (mobile_first7 tells GCash accounts apart;
+                          goalsave_last5, saved with the date of birth, GoalSave ones)
         transfer_pairs: [{account_1_id, account_1_name, description_1,
                           account_2_id, account_2_name, description_2}]
                         (transfers.py; saved on /transfer-rules, also without
@@ -29,6 +30,11 @@ document per account, in the project's (default) database:
             received_at, ran_at, step, duration_seconds, wallet, wallet_name,
             categorized, categorize_error   (only when categorize is on)
             transfers                       (rows imported as transfers, if any)
+            accounts                        (a statement that holds several accounts,
+                                             GoTyme GoalSave: one entry per account,
+                                             {wallet, wallet_name, account_id, account_name,
+                                              status, created, skipped, message, transfers};
+                                             account_id is "" on the run itself)
 
 Nothing is stored for users who don't turn it on, and "Turn off and delete"
 removes the document and its runs (delete_user()).

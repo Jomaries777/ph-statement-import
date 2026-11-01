@@ -71,11 +71,12 @@ class RegistryTest(unittest.TestCase):
                 with self.subTest(source=source.key):
                     self.assertTrue(callable(source.build_password))
 
-    def test_every_source_with_an_account_input_can_read_it_from_the_email(self):
+    def test_every_source_with_an_account_input_can_tell_its_accounts_apart(self):
+        # From the email (GCash), or from the PDF's account column (GoTyme GoalSave)
         for source in SOURCES.values():
             if source.account_input:
                 with self.subTest(source=source.key):
-                    self.assertTrue(callable(source.email_account))
+                    self.assertTrue(callable(source.email_account) or source.account_column)
                     self.assertIn("pattern", INPUT_FIELDS[source.account_input])
 
     def test_wallet_name(self):

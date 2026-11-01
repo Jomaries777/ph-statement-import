@@ -259,7 +259,7 @@ Checklist:
 
 In hosted mode, `/auto-import` polls Gmail for new statement emails and imports each matching PDF attachment to the mapped YNAB account using the same `parse_statement()` and `import_statement()` pipeline as manual upload.
 
-A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py` (six, if one person can have several accounts there):
+A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py` (more, if one person can have several accounts there):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -269,6 +269,8 @@ A source opts in by setting four optional fields on its `Source` entry in `state
 | `build_password` | `Callable \| None` | Function in the parser module taking the `dict` of `password_inputs` values (or positional inputs in unit tests) and returning the PDF password string. Required whenever `password_inputs` is non-empty. |
 | `account_input` | `str \| None` | Only if one person can have several accounts at this source: the input that tells them apart, e.g. `"mobile_first7"` for GCash. `/auto-import` then shows it in the Wallet cell and offers "+ Add another … account". Give it an `INPUT_FIELDS` entry with a format check. |
 | `email_account` | `Callable \| None` | With `account_input`: `(email body text, PDF filename) -> value or None`, the account the email is for. GCash's `email_account()` reads `Mobile number: 0917123****` from the body, then `enc-0917123_….pdf` from the filename. The runner sends each email to the wallet saved with that value; an email for an account that isn't on the page is recorded as "⚠ No account". |
+| `account_column` | `str \| None` | Instead of `email_account`, for a statement that holds **several accounts in one PDF**: the column of each row that says whose it is, e.g. `"GoalSave No."`. The manual upload page shows a picker and uploads one account at a time; auto-import reads the PDF once and imports each account into the wallet saved with that value (`account_input`), all in one run with an entry per account. An account with no wallet on the page is a "⚠ No account" entry; the others still import. |
+| `shared_password` | `bool` | With `account_column`: one password opens every account, so `/auto-import` asks for the `password_inputs` on the source's first row only, and saves them with every row. |
 
 **Example: GCash (`gcash`)**
 
@@ -306,9 +308,9 @@ def build_password(inputs: Mapping[str, str] | str, mobile_last4: str | None = N
 One GoTyme statement email (from `no-reply@gotyme.com.ph`, subject "GoTyme Bank Statement of Account as of DD Mon YYYY") carries **two** PDFs:
 
 - `GoTymeStatementForEverydayDepositAccount_YYYYMMDD_HHMMSS.pdf`: the Everyday account, which `gotyme` parses
-- `GoTyme_BankStatement_SavingsAccounts_YYYYMMDD_HHMMSS.pdf`: savings (GoalSave), a different layout that isn't supported yet
+- `GoTyme_BankStatement_SavingsAccounts_YYYYMMDD_HHMMSS.pdf`: savings, every GoalSave account in one PDF, which `gotyme_goalsave` parses
 
-So `attachment_pattern` matches the Everyday file name exactly, rather than any `.pdf`. The savings PDF is never downloaded. The password is the date of birth as `MMDDYYYY`, which the email doesn't contain, so the user enters the date once:
+So `attachment_pattern` matches the Everyday file name exactly, rather than any `.pdf`, and each source downloads only its own PDF from the same email. The password is the date of birth as `MMDDYYYY`, which the email doesn't contain, so the user enters the date once:
 
 ```python
 # statement_etl/parsers/gotyme.py
@@ -333,6 +335,25 @@ def build_password(inputs: Mapping[str, str]) -> str:
             attachment_pattern=r"^GoTymeStatementForEverydayDepositAccount_\d{8}_\d{6}\.pdf$",
             password_inputs=("birth_date",),
             build_password=gotyme.build_password,
+        ),
+```
+
+**Example: GoTyme GoalSave (`gotyme_goalsave`), several accounts in one PDF**
+
+The savings PDF has a section per GoalSave account, each starting with `GoalSave No.: *******22222`. The parser adds those digits to every row, as the `GoalSave No.` column, and the user adds one row per account on `/auto-import` with its last 5 digits. The same date of birth opens the PDF, so it's asked once:
+
+```python
+# statement_etl/sources.py
+        Source(
+            key="gotyme_goalsave",
+            ...,
+            account_column=gotyme_goalsave.ACCOUNT_COLUMN,  # "GoalSave No."
+            email_query=...,  # the same email as GoTyme Everyday
+            attachment_pattern=r"^GoTyme_BankStatement_SavingsAccounts_\d{8}_\d{6}\.pdf$",
+            password_inputs=("birth_date",),
+            build_password=gotyme.build_password,
+            account_input="goalsave_last5",  # INPUT_FIELDS: 5 digits
+            shared_password=True,
         ),
 ```
 

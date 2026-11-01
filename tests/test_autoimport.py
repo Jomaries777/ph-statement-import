@@ -31,6 +31,7 @@ from statement_etl.autoimport import gmail, runner
 from statement_etl.parsers.common import PasswordError
 from tests.e2e import make_pdf
 from tests.fakes import ACCOUNT_ID, ENCRYPTION_KEY, PLAN_ID, FakeStore, ynab_txn
+from tests.test_parsers_gotyme_goalsave import TWO_ACCOUNT_ROWS
 
 SUB = "100000000000000000001"  # a Google account ID ("sub")
 OTHER_SUB = "100000000000000000002"
@@ -398,6 +399,191 @@ class GoTymeTest(RunnerTest):
         )
         self.assertEqual(sorted(self.runs()), ["msg-c:gcash", "msg-g:gotyme"])
         self.assertEqual(self.parsed, [(EVERYDAY_PDF[1], GOTYME_PASSWORD)])  # only GoTyme's
+
+
+class GoalSaveTest(RunnerTest):
+    """GoTyme GoalSave's real Source settings: one savings PDF in the GoTyme
+    email holds every GoalSave account, each imported into its own wallet's
+    YNAB account. A stand-in parser returns two accounts, 11111 and 22222."""
+
+    def setUp(self):
+        super().setUp()
+        self.parsed = []  # (pdf bytes, password) for every PDF the parser was given
+        replaced = {
+            key: dataclasses.replace(sources.SOURCES[key], parse=self.parse)
+            for key in ("gotyme", "gotyme_goalsave")
+        }
+        self.enterContext(mock.patch.dict(sources.SOURCES, replaced))
+
+    def parse(self, pdf, password, on_page=None):
+        self.parsed.append((pdf.read(), password))
+        if pdf.getvalue() == SAVINGS_PDF[1]:
+            return [dict(row) for row in TWO_ACCOUNT_ROWS]
+        return [dict(row) for row in GoTymeTest.ROWS]
+
+    def add_goalsave_user(self, second=True, second_enabled=True):
+        """GoTyme Everyday to OTHER_ACCOUNT_ID, GoalSave 22222 to "goalsave-22222"
+        and, with `second`, 11111 to "goalsave-11111". Every GoalSave wallet has
+        the date of birth, as saving the page leaves it (Source.shared_password)."""
+        mappings = {
+            "gotyme": {"account_id": OTHER_ACCOUNT_ID, "account_name": "GoTyme", "enabled": True},
+            "gotyme_goalsave": {
+                "source": "gotyme_goalsave",
+                "account_id": "goalsave-22222",
+                "account_name": "GoalSave Emergency",
+                "enabled": True,
+            },
+        }
+        password_inputs = {
+            "gotyme": GOTYME_INPUTS,
+            "gotyme_goalsave": {**GOTYME_INPUTS, "goalsave_last5": "22222"},
+        }
+        if second:
+            mappings["gotyme_goalsave-2"] = {
+                "source": "gotyme_goalsave",
+                "account_id": "goalsave-11111" if second_enabled else "",
+                "account_name": "GoalSave Travel" if second_enabled else "",
+                "enabled": second_enabled,
+            }
+            password_inputs["gotyme_goalsave-2"] = (
+                {**GOTYME_INPUTS, "goalsave_last5": "11111"}
+                if second_enabled
+                else {"goalsave_last5": "11111"}
+            )
+        self.add_user(mappings=mappings, password_inputs=password_inputs)
+
+    def imported_into(self):
+        """{YNAB account: the GoalSave No. of every row imported into it}."""
+        return {
+            c.args[2]: [row.get("GoalSave No.") for row in c.args[0]]
+            for c in self.import_statement.call_args_list
+        }
+
+    def test_both_pdfs_of_one_email_are_imported(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(sorted(self.gmail.downloads), sorted([EVERYDAY_PDF[0], SAVINGS_PDF[0]]))
+        self.assertEqual(
+            sorted(self.parsed),
+            sorted([(EVERYDAY_PDF[1], GOTYME_PASSWORD), (SAVINGS_PDF[1], GOTYME_PASSWORD)]),
+        )
+        self.assertEqual(
+            self.imported_into(),
+            {
+                OTHER_ACCOUNT_ID: [None],
+                "goalsave-11111": ["11111"],
+                "goalsave-22222": ["22222", "22222"],
+            },
+        )
+        self.assertEqual(sorted(self.runs()), ["msg-g:gotyme", "msg-g:gotyme_goalsave"])
+
+    def test_one_run_with_an_entry_per_account(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        runner.poll_all()
+
+        run = self.runs()["msg-g:gotyme_goalsave"]
+        self.assertEqual(
+            (run["status"], run["created"], run["wallet_name"], run["account_id"]),
+            (runner.OK, 8, "GoTyme GoalSave", ""),
+        )
+        self.assertEqual(
+            [
+                (e["wallet"], e["wallet_name"], e["account_id"], e["status"], e["created"])
+                for e in run["accounts"]
+            ],
+            [  # in the PDF's order
+                ("gotyme_goalsave-2", "GoTyme GoalSave · 11111", "goalsave-11111", runner.OK, 4),
+                ("gotyme_goalsave", "GoTyme GoalSave · 22222", "goalsave-22222", runner.OK, 4),
+            ],
+        )
+        self.assertEqual(self.runs()["msg-g:gotyme"]["status"], runner.NO_ATTACHMENT)
+
+    def test_an_account_not_on_the_page(self):
+        self.add_goalsave_user(second=False)
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(self.imported_into(), {"goalsave-22222": ["22222", "22222"]})
+        run = self.runs()["msg-g:gotyme_goalsave"]
+        self.assertEqual(run["status"], runner.NO_WALLET)
+        missing = run["accounts"][0]
+        self.assertEqual(
+            (missing["wallet"], missing["status"], missing["message"]),
+            ("", runner.NO_WALLET, "This statement has GoalSave No. 11111. Add it on this page."),
+        )
+        self.assertEqual(run["accounts"][1]["status"], runner.OK)
+
+    def test_a_dont_import_account_is_left_out(self):
+        self.add_goalsave_user(second_enabled=False)
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        runner.poll_all()
+
+        self.assertEqual(self.imported_into(), {"goalsave-22222": ["22222", "22222"]})
+        run = self.runs()["msg-g:gotyme_goalsave"]
+        self.assertEqual(run["status"], runner.OK)
+        self.assertEqual([e["wallet"] for e in run["accounts"]], ["gotyme_goalsave"])
+
+    def test_ynab_busy_on_the_second_account_records_nothing(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+        busy = ynab.ApiException(status=503, reason="Unavailable")
+        self.import_statement.side_effect = [imported(), busy]
+
+        with self.assertLogs(runner.log, "WARNING"):
+            self.assertEqual(runner.poll_all()["failed"], 1)
+        self.assertNotIn("msg-g:gotyme_goalsave", self.runs())
+
+        # The next poll imports both again; YNAB's import_ids skip what's already there
+        self.import_statement.side_effect = None
+        runner.poll_all()
+        self.assertEqual(self.runs()["msg-g:gotyme_goalsave"]["status"], runner.OK)
+
+    def test_gemini_categorizes_once_per_email(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        with mock.patch.object(runner, "_categorize") as categorize:
+            runner.poll_all()
+
+        categorize.assert_called_once()
+        self.assertEqual(len(categorize.call_args.args[1]), 8)  # both accounts' created rows
+
+    def test_the_page_shows_how_many_accounts_it_imports_into(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF])
+
+        runner.poll_all()
+
+        emails = self.store.progress_history[0]["emails"]
+        goalsave = next(e for e in emails if e["source"] == "gotyme_goalsave")
+        self.assertEqual(
+            (goalsave["wallet_name"], goalsave["account_name"]), ("GoTyme GoalSave", "2 accounts")
+        )
+
+    def test_the_test_button_names_the_accounts_found(self):
+        self.add_goalsave_user()
+        self.gmail.add("msg-g", query=GOTYME_QUERY, attachments=[SAVINGS_PDF, EVERYDAY_PDF])
+
+        ok, message = runner.test_password(
+            self.store.get_user(SUB), "gotyme_goalsave", GOTYME_INPUTS
+        )
+
+        self.assertEqual(
+            (ok, message),
+            (
+                True,
+                "The password opens your newest GoTyme GoalSave statement. "
+                "It has GoalSave No. 11111, 22222.",
+            ),
+        )
+        self.assertEqual(self.parsed, [(SAVINGS_PDF[1], GOTYME_PASSWORD)])
 
 
 # =============================================================================
