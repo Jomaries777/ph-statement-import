@@ -24,6 +24,7 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 import tests  # noqa: F401 - the safety net: nothing reaches YNAB or the keyring
 from tests.e2e import fake_ynab, make_pdf
@@ -441,6 +442,45 @@ class WebFlowTest(BrowserTest):
         # Plans are loaded again, so the upload can carry on
         self.choose_account(fake_ynab.EXISTING_ACCOUNT_ID)
         expect(page.locator("#upload-btn")).to_have_text("Upload 4 transactions to YNAB")
+
+    def test_transfer_rules_are_saved_on_this_computer(self):
+        page = self.page
+        settings = Path(self.tmp.name) / "settings.json"
+        self.enterContext(mock.patch.dict(os.environ, {"LOCAL_SETTINGS_PATH": str(settings)}))
+        self.connect()
+        page.click("#transfer-rules-link")
+        expect(page.locator("#plan")).to_have_value(fake_ynab.PLAN_ID)  # the only plan
+        expect(page.locator("#add-rule-btn")).to_be_disabled()  # needs two wallets first
+
+        # Two wallets: GCash into one YNAB account, GoTyme into the other
+        wallets = page.locator("#local-wallets-table tbody tr")
+        for source, account in (
+            ("gcash", fake_ynab.EXISTING_ACCOUNT_ID),
+            ("gotyme", fake_ynab.NEW_ACCOUNT_ID),
+        ):
+            page.click("#add-wallet-btn")
+            wallets.last.locator("select").first.select_option(source)
+            wallets.last.locator("select").last.select_option(account)
+
+        page.click("#add-rule-btn")
+        expect(page.locator("#rules-table th")).to_have_text(
+            ["Description", "Source bank", "Destination bank", ""]
+        )
+        rule = page.locator("#rules-table tbody tr")
+        rule.locator("input").fill("Transfer to 0917123")
+        expect(rule.locator("select").first).to_have_value(fake_ynab.EXISTING_ACCOUNT_ID)
+        expect(rule.locator("select").last).to_have_value(fake_ynab.NEW_ACCOUNT_ID)
+        expect(rule.locator("select").last.locator("option:checked")).to_have_text(
+            f"GoTyme → {fake_ynab.NEW_ACCOUNT_NAME}"
+        )
+        page.click("#save-btn")
+        expect(page.locator("#save-msg")).to_have_text("Saved 1 rule.")
+
+        page.reload(wait_until="networkidle")
+        expect(page.locator("#rules-table tbody input")).to_have_value("Transfer to 0917123")
+        expect(wallets).to_have_count(2)
+        self.assertTrue(settings.exists())
+        self.assertEqual(self.console_errors, [])
 
 
 class HostedWebFlowTest(BrowserTest):

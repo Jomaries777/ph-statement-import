@@ -23,6 +23,7 @@ from statement_etl.web import (
     config,
     limits,
     state,
+    transfer_rules,
     upload,
     ynab_auth,
     ynab_oauth,
@@ -39,7 +40,17 @@ HOSTED_ENV = {
 # In import order: each one reads the ones before it. Reloading state.py
 # starts an empty STORE; limits.py, a new limiter with no counts.
 # token_store.py doesn't depend on the mode.
-WEB_MODULES = (config, state, limits, ynab_oauth, ynab_auth, upload, auto_import, app)
+WEB_MODULES = (
+    config,
+    state,
+    limits,
+    ynab_oauth,
+    ynab_auth,
+    upload,
+    auto_import,
+    transfer_rules,
+    app,
+)
 
 
 def reload_web():

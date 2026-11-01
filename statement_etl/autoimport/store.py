@@ -19,6 +19,8 @@ document per account, in the project's (default) database:
                   (runner.wallet_source()).
         password_inputs: {wallet id: <encrypted JSON {last_name, mobile_last4,
                           mobile_first7}>}  (mobile_first7 tells GCash accounts apart)
+        transfer_rules: [{description, from_wallet, to_wallet}]  (transfers.py;
+                         saved on /transfer-rules, also without auto-import on)
         runs/{gmail_msg_id}:{source}
             source, account_id, account_name, status, created, skipped, message,
             received_at, ran_at, step, duration_seconds, wallet, wallet_name,

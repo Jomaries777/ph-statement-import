@@ -11,6 +11,9 @@
   <header>
     <h1>Statement → YNAB Import</h1>
     <div class="header-right">
+      {%- if transfer_rules_enabled %}
+      <a id="transfer-rules-link" class="btn-link secondary" href="/transfer-rules">Transfer rules</a>
+      {%- endif %}
       {%- if auto_import_enabled %}
       <a id="auto-import-link" class="btn-link secondary" href="/auto-import">Auto-import ▸</a>
       {%- endif %}

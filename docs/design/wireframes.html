@@ -156,6 +156,7 @@
     <button role="tab" aria-selected="false" aria-controls="v-auto-off" id="t-auto-off">W2 · Auto-import: set up</button>
     <button role="tab" aria-selected="false" aria-controls="v-auto-on" id="t-auto-on">W3 · Auto-import: on</button>
     <button role="tab" aria-selected="false" aria-controls="v-mobile" id="t-mobile">W4 · Mobile</button>
+    <button role="tab" aria-selected="false" aria-controls="v-transfers" id="t-transfers">W5 · Transfer rules</button>
   </div>
 </div>
 
@@ -431,6 +432,92 @@
   <aside class="notes">
     <div class="note">375 px wide. Fields stack under their labels, buttons go full width, and the steps after the current one collapse. The page reuses the same template as desktop, with only CSS changes.</div>
     <div class="note">Many GCash users have the statement email on their phone. Uploading the PDF straight from the Mail or Files app has to work.</div>
+  </aside>
+</div>
+
+<!-- ================= W5 TRANSFER RULES ================= -->
+<div class="stage view" id="v-transfers" role="tabpanel" aria-labelledby="t-transfers" hidden>
+  <div class="canvas">
+    <div class="window">
+      <div class="chrome"><i></i><i></i><i></i><span class="url">https://statements.example.com/transfer-rules</span></div>
+      <div class="appbar">
+        <button class="btn ghost" data-go="v-main">◂ Manual upload</button>
+        <h2>Transfer rules</h2>
+        <button class="btn ghost" data-go="v-auto-on">Auto-import ▸</button>
+      </div>
+      <div class="step">
+        <p class="muted" style="margin:0">Money you move between your own banks shows on both statements.
+          A rule tells the importer which rows are such a move, so YNAB shows one transfer instead of a
+          payment and an unrelated deposit.</p>
+      </div>
+      <div class="step">
+        <span class="pin-tag">1</span>
+        <h3><span>Your banks</span>
+          <span class="toggle" role="group" aria-label="Mode">
+            <button data-state="hosted" aria-pressed="true">Hosted</button>
+            <button data-state="local" aria-pressed="false">Local</button>
+          </span>
+        </h3>
+        <div data-show="hosted">
+          <table>
+            <thead><tr><th>Bank</th><th>YNAB account</th></tr></thead>
+            <tbody>
+              <tr><td>GCash · 0917123</td><td><b>GCash1</b></td></tr>
+              <tr><td>GCash · 0918765</td><td><b>GCash2</b></td></tr>
+              <tr><td>GoTyme</td><td><b>GoTyme Everyday</b></td></tr>
+            </tbody>
+          </table>
+          <p class="small muted">The ones mapped on the Auto-import page. <a href="#" data-go="v-auto-off">Change them there.</a></p>
+        </div>
+        <div data-show="local" hidden>
+          <div class="row"><label>YNAB plan</label><div class="field select">My Budget</div></div>
+          <table>
+            <thead><tr><th>Bank</th><th>YNAB account</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><div class="field select">GCash</div></td><td><div class="field select">GCash1</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field select">GoTyme</div></td><td><div class="field select">GoTyme Everyday</div></td><td><button class="btn ghost">Remove</button></td></tr>
+            </tbody>
+          </table>
+          <div class="actions" style="justify-content:flex-start"><button class="btn ghost">+ Add a bank</button></div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="pin-tag">2</span>
+        <h3><span>Rules</span></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Description</th><th>Source bank</th><th>Destination bank</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><div class="field">Transfer to 0917123</div></td><td><div class="field select">GCash · 0917123 → GCash1</div></td><td><div class="field select">GoTyme → GoTyme Everyday</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field">InstaPay from GCash</div></td><td><div class="field select">GoTyme → GoTyme Everyday</div></td><td><div class="field select">GCash · 0917123 → GCash1</div></td><td><button class="btn ghost">Remove</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="actions" style="justify-content:flex-start"><button class="btn ghost">+ Add a rule</button></div>
+        <div class="actions"><button class="btn">Save</button></div>
+        <div class="msg ok">Saved 2 rules.</div>
+      </div>
+      <div class="step" style="border-bottom:0">
+        <span class="pin-tag">3</span>
+        <h3><span>Then, on the upload page (and in auto-import)</span></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Description</th><th class="num-c">Debit</th><th class="num-c">Credit</th></tr></thead>
+            <tbody>
+              <tr><td>10-05</td><td>TRANSFER TO 0917123 Juan D. <span class="badge">→ GoTyme</span></td><td class="num-c out">500.00</td><td></td></tr>
+              <tr><td>10-06</td><td>Payment to Sample Coffee Shop</td><td class="num-c out">150.25</td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="msg ok">Import successful: 2 transactions created in YNAB (unapproved) · 1 transfer</div>
+      </div>
+      <div class="footer"><span>Imported transactions are unapproved. Review them in YNAB.</span><span><a href="#">Privacy</a> · <a href="#">Terms</a></span></div>
+    </div>
+  </div>
+  <aside class="notes">
+    <div class="note"><b class="pin">1</b>A bank here is one account at a bank or e-wallet plus its YNAB account, so two GCash numbers are two banks. Hosted, they're the Auto-import mappings and saved with your Google account (Firestore). Locally, you list them here and they're saved in a file on your computer (<code>~/.config/ph-statement-import/settings.json</code>).</div>
+    <div class="note"><b class="pin">2</b><b>Description</b>: text the statement row's description contains. Capital letters and extra spaces don't matter. <b>Source bank</b>: the rule only looks at statements from this bank. <b>Destination bank</b>: where the money went. Add a rule for each side, like the second row: whichever statement you import first makes the transfer in YNAB, and the other one finds it there and doesn't add it again.</div>
+    <div class="note"><b class="pin">3</b>Once you pick the YNAB account, matching rows show "→ GoTyme" in the parsed table. They're uploaded as YNAB transfers, and YNAB adds the other side to GoTyme Everyday by itself. The auto-import run log says "1 transfer" too.</div>
   </aside>
 </div>
 

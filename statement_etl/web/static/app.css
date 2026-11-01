@@ -82,6 +82,8 @@ main.legal code { font-size: 13px; }
 main.narrow { max-width: 920px; }
 .intro-note { margin: 0 0 14px; }
 .small-note { font-size: 13px; margin: 6px 0 0; }
+.break-anywhere { overflow-wrap: anywhere; }  /* long file paths on a phone */
+#transfer-rules-main td select { min-width: 8em; }
 .no-margin { margin: 0; }
 .no-top-margin { margin-top: 0; }
 .spaced-between { justify-content: space-between; }

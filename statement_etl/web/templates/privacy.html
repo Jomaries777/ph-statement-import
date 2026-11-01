@@ -62,10 +62,12 @@
     <li><strong>What is stored, and for how long:</strong> Because background checks run every
       15 minutes without your browser open, turning on auto-import stores one record for your
       Google account in Google Cloud Firestore (<code>us-west1</code>): your Google account ID and
-      email address, your chosen YNAB plan and e-wallet-to-account mappings, and — encrypted in
+      email address, your chosen YNAB plan and e-wallet-to-account mappings, any transfer rules
+      you save (the text to look for and the two wallets), and — encrypted in
       the app before being written to Firestore — your Gmail refresh token, your YNAB refresh
       token, and the PDF password inputs you enter once: for GCash, your last name and the last
-      4 digits of your mobile number; for GoTyme, your date of birth. They are kept
+      4 digits of your mobile number (with more than one GCash account, also the first 7 digits
+      of each number); for GoTyme, your date of birth. They are kept
       until you turn auto-import off.</li>
     <li><strong>Turn off and delete:</strong> Clicking <strong>Turn off and delete my data</strong>
       on <code>/auto-import</code> deletes your Firestore record and all of its run-log entries at
