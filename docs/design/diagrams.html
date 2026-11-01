@@ -279,10 +279,12 @@ flowchart LR
     S2["POST /api/auto-import<br/>save plan + wallet → account"]
     S3["POST /api/auto-import/test"]
     S4["POST /api/auto-import/delete"]
+    S5["POST /api/auto-import/ynab-session<br/>Edit mappings"]
   end
   S2 --> ENC["store.encrypt(), store.save_user()"]
   S3 --> TP["runner.test_password()"]
   S4 --> DEL["store.delete_user(), gmail.revoke()"]
+  S5 --> RYS["runner.run_lock_held(), ynab_oauth.refresh(),<br/>store.save_ynab_tokens()"]
 
   classDef new stroke-dasharray: 6 4,stroke-width:2px
   class T,PA,LU,PU,GRT,YRT,SVY,PSRC,LC,LM,RE,PM,GPA,PW,WR,S1,S2,S3,S4,ENC,TP,DEL new

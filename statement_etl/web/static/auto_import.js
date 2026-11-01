@@ -6,6 +6,7 @@ const mainEl = $("auto-import-main");
 const state = {
   gmailConnected: mainEl ? mainEl.dataset.gmailConnected === "true" : false,
   enabled: mainEl ? mainEl.dataset.enabled === "true" : false,
+  hasSavedYnab: mainEl ? mainEl.dataset.hasSavedYnab === "true" : false,
   ynabConnected: false,
   plans: [],
   saving: false,
@@ -140,6 +141,25 @@ function setYnabConnected(on, reason) {
   }
   if (reason) message("ynab-msg", reason);
   refreshState();
+}
+
+// This browser's own YNAB session, or else auto-import's saved YNAB
+// connection (the browser's session ends after 30 minutes idle), so the page
+// doesn't ask to log in to YNAB again while auto-import is still connected.
+async function connectYnab() {
+  try {
+    const status = await api("/api/status");
+    let connected = status.connected;
+    let reason = status.connect_error;
+    if (!connected && state.hasSavedYnab) {
+      connected = (await api("/api/auto-import/ynab-session", { method: "POST" })).connected;
+      reason = connected ? null : "Your saved YNAB connection has ended. Reconnect to YNAB.";
+    }
+    setYnabConnected(connected, reason);
+    if (connected) await loadPlans();
+  } catch (err) {
+    message("ynab-msg", err.message);
+  }
 }
 
 async function loadPlans() {
@@ -321,7 +341,14 @@ if ($("auto-setup-view")) {
   $("save-btn").addEventListener("click", saveSettings);
 
   if ($("edit-btn")) {
-    $("edit-btn").addEventListener("click", () => {
+    $("edit-btn").addEventListener("click", async () => {
+      // Check YNAB first, so the setup view opens already connected
+      const editBtn = $("edit-btn");
+      editBtn.disabled = true;
+      editBtn.textContent = "Checking YNAB…";
+      await connectYnab();
+      editBtn.disabled = false;
+      editBtn.textContent = "Edit mappings";
       show($("auto-on-view"), false);
       show($("auto-setup-view"), true);
       refreshState();
@@ -354,13 +381,9 @@ if ($("auto-setup-view")) {
     if (oauthError || params.get("google_error")) {
       history.replaceState(null, "", "/auto-import");
     }
-    try {
-      const status = await api("/api/status");
-      setYnabConnected(status.connected, status.connect_error);
-      if (status.connected) await loadPlans();
-    } catch (err) {
-      message("ynab-msg", err.message);
-    }
+    // With auto-import on, the setup view waits for "Edit mappings", so a
+    // visit that only reads the run log doesn't refresh the saved YNAB token
+    if (!state.enabled) await connectYnab();
     refreshState();
   })();
 }

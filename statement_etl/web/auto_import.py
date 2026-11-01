@@ -12,6 +12,8 @@ these routes:
                                     save token
     POST /api/auto-import         - validate and save plan, mappings, password inputs
     POST /api/auto-import/test    - try password inputs on the newest statement email
+    POST /api/auto-import/ynab-session - connect this browser to YNAB with the saved
+                                    refresh token, for "Edit mappings"
     POST /api/auto-import/delete  - delete stored data, revoke Gmail, sign out
     POST /tasks/poll-gmail        - Cloud Scheduler hook, every 15 minutes (OIDC token
                                     verified first)
@@ -63,6 +65,7 @@ from statement_etl.sources import SOURCES
 from statement_etl.web import config, ynab_oauth
 from statement_etl.web.limits import AUTO_IMPORT_LIMIT, limiter
 from statement_etl.web.state import error_response, session_state
+from statement_etl.web.ynab_auth import get_token
 
 blueprint = Blueprint("auto_import", __name__)
 
@@ -504,6 +507,18 @@ def _validate_settings(body: object) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _keep_access_token_only(state: dict, tokens: dict) -> None:
+    """Keep only YNAB's short-lived access token in the browser session.
+
+    The refresh token lives in Firestore alone, so the session and the
+    background runner never race on the same single-use refresh token.
+    """
+    state["token_kind"] = "oauth"
+    state["access_token"] = tokens["access_token"]
+    state["expires_at"] = time.time() + int(tokens.get("expires_in", 7200))
+    state.pop("refresh_token", None)
+
+
 def _rotate_ynab_refresh_token(sub: str, user: dict):
     """Rotate the session's single-use YNAB refresh token into Firestore once.
 
@@ -515,8 +530,7 @@ def _rotate_ynab_refresh_token(sub: str, user: dict):
         try:
             tokens = ynab_oauth.refresh(refresh_token)
             new_refresh = (tokens.get("refresh_token") or "").strip()
-            new_access = (tokens.get("access_token") or "").strip()
-            if not new_refresh or not new_access:
+            if not new_refresh or not (tokens.get("access_token") or "").strip():
                 raise ValueError("missing token")
         except (
             urllib.error.URLError,
@@ -531,12 +545,7 @@ def _rotate_ynab_refresh_token(sub: str, user: dict):
                 "Your YNAB session expired. Reconnect to YNAB.", 401, reconnect=True
             )
         store.save_ynab_tokens(sub, {"refresh_token": new_refresh})
-        # Keep only the short-lived access token in the browser session so the
-        # session and the background runner never race on the same refresh token.
-        state["token_kind"] = "oauth"
-        state["access_token"] = new_access
-        state["expires_at"] = time.time() + int(tokens.get("expires_in", 7200))
-        state.pop("refresh_token", None)
+        _keep_access_token_only(state, tokens)
         return None
 
     if not user.get("ynab_refresh_token"):
@@ -576,6 +585,56 @@ def save_settings():
     # Never raises: without push, the 15-minute poll still imports.
     runner.start_watch(user)
     return jsonify({"enabled": True})
+
+
+@blueprint.post("/api/auto-import/ynab-session")
+@limiter.limit(AUTO_IMPORT_LIMIT)
+def connect_saved_ynab():
+    """Connect this browser to YNAB with auto-import's saved YNAB connection.
+
+    The browser's own YNAB session ends after 30 minutes idle (state.py), and
+    saving the settings moves its refresh token to Firestore. Without this,
+    "Edit mappings" would ask to log in to YNAB although auto-import is
+    still connected.
+
+    POST /api/auto-import/ynab-session -> {"connected": True}
+    -> {"connected": False} if there's no saved connection or YNAB rejects it
+    """
+    user = _current_user()
+    if not user or not user.get("gmail_refresh_token"):
+        return error_response("Connect Gmail first.", 401)
+    if not is_email_allowed(user.get("email", "")):
+        return error_response("This Google account is not on the invite list.", 403)
+
+    state = session_state()
+    if get_token(state):
+        return jsonify({"connected": True})
+
+    with runner.run_lock_held() as held:
+        if not held:
+            return error_response("Auto-import is importing right now. Try again in a minute.", 503)
+        # Read it again: a run may have just replaced the refresh token
+        user = store.get_user(user["sub"]) or {}
+        if not user.get("ynab_refresh_token"):
+            return jsonify({"connected": False})
+        try:
+            tokens = ynab_oauth.refresh(store.decrypt(user["ynab_refresh_token"]))
+            if not tokens.get("access_token") or not tokens.get("refresh_token"):
+                raise ValueError("missing token")
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            http.client.HTTPException,
+            ValueError,
+            KeyError,
+            store.DecryptError,
+        ):
+            return jsonify({"connected": False})
+        # YNAB has already replaced the old refresh token: save the new one first
+        store.save_ynab_tokens(user["sub"], tokens)
+
+    _keep_access_token_only(state, tokens)
+    return jsonify({"connected": True})
 
 
 @blueprint.post("/api/auto-import/test")
