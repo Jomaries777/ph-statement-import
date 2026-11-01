@@ -526,13 +526,23 @@ def _import_email(
 def _categorize(user, created, ynab_token, result, progress) -> None:
     """Step 4, after the import: Gemini picks categories for what it created,
     if the user turned it on. Fills in result["categorized"], or
-    result["categorize_error"]; never fails the import, which is done."""
+    result["categorize_error"]; never fails the import, which is done.
+
+    Each outcome is logged, because none of it shows in the run log's Result."""
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not (user.get("categorize") and api_key):
+    if not user.get("categorize"):
+        log.info("Auto-import categorize: user %s, skipped (turned off).", user_id(user))
+        return
+    if not api_key:
+        log.warning(
+            "Auto-import categorize: user %s, skipped (GEMINI_API_KEY isn't set).",
+            user_id(user),
+        )
         return
     transactions = uncategorized_created(created)
     if not transactions:
         result["categorized"] = 0
+        log.info("Auto-import categorize: user %s, nothing to categorize.", user_id(user))
         return
     progress.report(pipeline.STEP_CATEGORIZE, {})
     try:
@@ -547,6 +557,19 @@ def _categorize(user, created, ynab_token, result, progress) -> None:
         result["categorize_error"] = str(e)
     except ynab.ApiException as e:
         result["categorize_error"] = f"{_reason(e)}."
+    if "categorize_error" in result:
+        log.warning(
+            "Auto-import categorize: user %s, failed: %s",
+            user_id(user),
+            result["categorize_error"],
+        )
+    else:
+        log.info(
+            "Auto-import categorize: user %s, categorized %s of %s.",
+            user_id(user),
+            result["categorized"],
+            len(transactions),
+        )
 
 
 class Progress:

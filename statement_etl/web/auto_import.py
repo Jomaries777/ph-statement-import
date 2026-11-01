@@ -348,9 +348,7 @@ def format_run(run: dict, mappings: dict) -> dict:
         transfers = int(run.get("transfers") or 0)
         if transfers:
             counts += f" · {transfers} transfer{'' if transfers == 1 else 's'}"
-        if run.get("categorized") is not None:
-            counts += f" · {int(run['categorized'])} categorized"
-        # The import worked either way; categorizing is only noted
+        # The import worked either way; categorizing only shows when it failed
         if run.get("categorize_error"):
             note = " ".join(filter(None, [note, f"Not categorized: {run['categorize_error']}"]))
         result = f"{counts} · {note}" if note else counts

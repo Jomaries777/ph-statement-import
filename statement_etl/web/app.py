@@ -74,7 +74,14 @@ from flask import Flask, render_template
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from statement_etl.web import auto_import, token_store, transfer_rules, upload, ynab_auth
-from statement_etl.web.config import AUTO_IMPORT, HOSTED, PORT, REDIRECT_URI, TRANSFER_RULES
+from statement_etl.web.config import (
+    AUTO_IMPORT,
+    CATEGORIZE_AVAILABLE,
+    HOSTED,
+    PORT,
+    REDIRECT_URI,
+    TRANSFER_RULES,
+)
 from statement_etl.web.limits import limiter
 from statement_etl.web.state import drop_idle_states, error_response
 from statement_etl.web.ynab_oauth import oauth_configured
@@ -127,6 +134,16 @@ if HOSTED:
     # Trust exactly that one: more would let a client spoof its IP past the rate limits.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     app.before_request(drop_idle_states)
+
+
+def warn_if_categorize_off(hosted: bool, available: bool) -> None:
+    """Say in the log when hosted mode has no Gemini: its opt-in boxes are then
+    hidden, and nothing on the pages says why."""
+    if hosted and not available:
+        _log.warning("Gemini categorizing is off: GEMINI_API_KEY isn't set (in APP_CONFIG).")
+
+
+warn_if_categorize_off(HOSTED, CATEGORIZE_AVAILABLE)  # once per instance, at startup
 
 
 @app.get("/privacy")

@@ -153,6 +153,20 @@ class RoutesTest(unittest.TestCase):
         )
 
 
+class StartupWarningTest(unittest.TestCase):
+    """Hosted without a Gemini key, the log says why the opt-in boxes are missing."""
+
+    def test_hosted_without_gemini(self):
+        with self.assertLogs("statement_etl", "WARNING") as logs:
+            web.warn_if_categorize_off(hosted=True, available=False)
+        self.assertIn("GEMINI_API_KEY isn't set", logs.output[0])
+
+    def test_quiet_otherwise(self):
+        for hosted, available in ((True, True), (False, False)):
+            with self.subTest(hosted=hosted), self.assertNoLogs("statement_etl", "WARNING"):
+                web.warn_if_categorize_off(hosted=hosted, available=available)
+
+
 # =============================================================================
 # PAGE AND STATUS
 # =============================================================================

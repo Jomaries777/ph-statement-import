@@ -411,11 +411,9 @@ class PageViewTest(AutoImportWebTest):
             auto_import.format_run(run, {})["result"], "20 created · 1 skipped · 3 transfers"
         )
 
-    def test_a_run_shows_what_gemini_categorized(self):
+    def test_a_run_shows_only_when_gemini_failed(self):
         run = {"source": "gcash", "status": "ok", "created": 286, "skipped": 0, "categorized": 240}
-        self.assertEqual(
-            auto_import.format_run(run, {})["result"], "286 created · 0 skipped · 240 categorized"
-        )
+        self.assertEqual(auto_import.format_run(run, {})["result"], "286 created · 0 skipped")
         failed = {**run, "categorized": None, "categorize_error": "Gemini ran out of time."}
         self.assertEqual(
             auto_import.format_run(failed, {})["result"],
@@ -934,6 +932,11 @@ class CategorizeSettingTest(AutoImportWebTest):
         self.assertIn('<input id="categorize" type="checkbox" checked>', html)
         self.assertIn("With Gemini, after each import", html)
         self.assertIn("at least 80% sure", html)
+
+    def test_off_says_where_to_turn_it_on(self):
+        self.save(categorize=False)
+        html = self.client.get("/auto-import").get_data(as_text=True)
+        self.assertIn("Off · turn it on in Edit mappings", html)
 
     def test_off_unless_ticked(self):
         for value in (False, "yes", None):

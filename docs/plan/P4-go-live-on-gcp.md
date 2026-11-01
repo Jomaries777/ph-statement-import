@@ -175,6 +175,7 @@ Google's Free Tier figures as of Oct 2026. Re-check them on https://docs.cloud.g
   gcloud secrets versions destroy <OLD_VERSION> --secret=app-config
   ```
 - [x] Set the `YNAB_CLIENT_ID` environment variable in GitHub, then redeploy by re-running the last deploy workflow, so a new revision reads the new secret and client id.
+- Adding a key to `app-config` later (e.g. `GEMINI_API_KEY` for categorizing) follows the same steps: a new version with the key added, then re-run the last deploy workflow, then destroy the old version. Until the new revision runs, `GET /api/status` still says `"categorize_available": false`.
 - [x] Update the privacy page's contact email to `<CONTACT_EMAIL>` in a small `docs:`/`feat:` PR, if it's still a placeholder.
 
 ### E. PR 2: `feat/budget-guard`, "feat: disable billing when the budget is exceeded"
