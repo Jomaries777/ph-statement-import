@@ -390,7 +390,7 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn('id="auto-setup-view" class="hidden">', html)
         self.assertIn("Oct 31, 09:15 AM PHT", html)
         self.assertIn("My Budget ✓", html)
-        self.assertIn("GCash → GCash Wallet", html)
+        self.assertIn("<td>GCash</td>\n              <td>GCash Wallet</td>", html)
         self.assertIn("⚠ Balance", html)
         self.assertIn("21 created · 1 skipped · Balance note", html)
         self.assertIn("✓ Imported", html)
@@ -398,6 +398,18 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn(">2 created · 1 skipped<", html)
         self.assertNotIn(">1 created · 1 skipped<", html)  # oldest two dropped at limit=20
         self.assertNotIn(">0 created · 1 skipped<", html)
+
+    def test_a_run_keeps_the_account_it_imported_into(self):
+        mappings = {"gcash": {"account_id": ACCOUNT_ID, "account_name": "GCash1", "enabled": True}}
+        # Imported into Sample6; the mapping has pointed at GCash1 since
+        run = {"source": "gcash", "account_id": "old-id", "account_name": "Sample6", "status": "ok"}
+        shown = auto_import.format_run(run, mappings)
+        self.assertEqual((shown["wallet"], shown["account"]), ("GCash", "Sample6"))
+
+        # A run saved before runs kept their account name shows today's mapping
+        older = {"source": "gcash", "account_id": "old-id", "status": "ok"}
+        self.assertEqual(auto_import.format_run(older, mappings)["account"], "GCash1")
+        self.assertEqual(auto_import.format_run(older, {})["account"], "old-id")
 
     def test_ynab_oauth_next_returns_to_auto_import_and_blocks_open_redirects(self):
         login = self.client.get("/oauth/login?next=/auto-import")
