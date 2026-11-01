@@ -11,7 +11,7 @@ GoTyme shows up as a row in the `/auto-import` mapping table, so a GoTyme statem
 - **From:** `no-reply@gotyme.com.ph`. **Subject:** "GoTyme Bank Statement of Account as of DD Mon YYYY".
 - **Two PDF attachments in one email:**
   - `GoTymeStatementForEverydayDepositAccount_YYYYMMDD_HHMMSS.pdf`: the Everyday account, which is **this source (`gotyme`)**.
-  - `GoTyme_BankStatement_SavingsAccounts_YYYYMMDD_HHMMSS.pdf`: savings (GoalSave). **Not in scope.** It needs its own source (`gotyme_savings`) once a sample shows its layout, and then gets its own row in the mapping table.
+  - `GoTyme_BankStatement_SavingsAccounts_YYYYMMDD_HHMMSS.pdf`: savings (GoalSave). **Not in scope.** It gets its own source (`gotyme_goalsave`) and rows in the mapping table in [P9](P9-gotyme-goalsave.md).
 - **Password:** your **date of birth as `MMDDYYYY`**, e.g. 31 Jan 1990 → `01311990`. The email doesn't contain it, so the user enters the date once.
   - Google could prefill it, but only with the sensitive `user.birthday.read` scope, and only if the user saved a birthday in Google. Not worth an extra consent screen.
 - The statement shows a "Request Date", so like GCash it probably arrives only when requested in the GoTyme app. Confirm with a second email and update this file.
@@ -46,7 +46,7 @@ GoTyme shows up as a row in the `/auto-import` mapping table, so a GoTyme statem
   ```
 - [ ] `static/auto_import.js` and the template: an input named `birth_date` shows as a **date field** labelled "Date of birth", with the hint "GoTyme password = date of birth as MMDDYYYY".
   - If P5 renders inputs generically by name, add `birth_date` to the input-type map; don't add a GoTyme special case.
-  - The GoTyme Savings row from the wireframe ("Coming soon", greyed out) is **not** added until `gotyme_savings` exists.
+  - The GoTyme Savings row from the wireframe ("Coming soon", greyed out) is **not** added until `gotyme_goalsave` exists ([P9](P9-gotyme-goalsave.md)).
 - [ ] `docs/adding-an-e-wallet.md`: GoTyme's email settings as the second auto-import example, including the two-PDF email and `attachment_pattern`.
 - [ ] Privacy page: list the date of birth among the stored, encrypted password inputs.
 
@@ -91,5 +91,5 @@ Rollback: revert the PR. GoTyme disappears from the mapping table, and existing 
 
 ## Later (separate work, not this phase)
 
-- `gotyme_savings`: a parser and source for the GoalSave statement, once a sample is available.
+- `gotyme_goalsave`: a parser and source for the GoalSave statement. Planned in [P9](P9-gotyme-goalsave.md).
 - With both GoTyme accounts mapped, "Transfer to/from GoalSave" could become a linked YNAB transfer between the two accounts, instead of an outflow plus an inflow.
