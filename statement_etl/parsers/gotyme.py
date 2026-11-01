@@ -43,7 +43,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -288,18 +288,23 @@ def _to_output_row(row: dict) -> dict[str, str]:
 # =============================================================================
 
 
-def parse_transactions(pdf_path, password: str = "") -> list[dict[str, str]]:
+def parse_transactions(
+    pdf_path, password: str = "", on_page: Callable[[int, int], None] | None = None
+) -> list[dict[str, str]]:
     """Parse a GoTyme Everyday Deposit statement PDF into a list of row dicts.
 
     Each dict has keys equal to COLUMNS, with amounts as plain text without
-    commas ("249.00"). Raises StatementError if the password is wrong or any of
+    commas ("249.00"). on_page(page, pages), if given, is called as each page
+    is read: (1, 5), (2, 5), ... Raises StatementError if the password is wrong or any of
     the four statement checks fails.
     """
     rows = []
     statement_summary = {}
 
     with open_pdf(pdf_path, password) as pdf:
-        for page in pdf.pages:
+        for number, page in enumerate(pdf.pages, start=1):
+            if on_page:
+                on_page(number, len(pdf.pages))  # progress, for the page or the run log
             lines = _page_lines(page)
 
             # 1. Read the summary box (printed on page 1)

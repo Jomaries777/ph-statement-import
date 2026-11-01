@@ -54,8 +54,10 @@ class Source:
         text_column       - long free text that may wrap, e.g. "Description"
 
     Parser functions:
-        parse              - (pdf, password) -> list of rows, each a dict with
-                             one key per column. pdf is a path or a file object.
+        parse              - (pdf, password, on_page=None) -> list of rows, each a
+                             dict with one key per column. pdf is a path or a file
+                             object; on_page(page, pages) is called as each page is
+                             read, for progress.
         statement_balances - rows -> {"starting": Decimal, "ending": Decimal},
                              for the YNAB balance checks before / after upload
         to_transactions    - rows -> list of Transactions (transaction.py), one

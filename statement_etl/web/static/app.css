@@ -95,6 +95,16 @@ main.narrow { max-width: 920px; }
 .badge.ok { color: var(--ok); background: var(--ok-bg); }
 .badge.warn { color: var(--warn); background: var(--warn-bg); }
 .badge.err { color: var(--err); background: var(--err-bg); }
+.badge.info { color: var(--accent); background: var(--info-bg); }
+.badge.muted-badge { color: var(--muted); }
+/* A running import's steps in Recent imports (templates/auto_import_runs.html) */
+ol.run-steps { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+ol.run-steps li.done { color: var(--ok); }
+ol.run-steps li.done::before { content: "✓ "; }
+ol.run-steps li.now { color: var(--accent); font-weight: 600; }
+ol.run-steps li.now::before { content: "→ "; }
+ol.run-steps li.todo { color: var(--muted); }
+tr.running-row progress { width: 100%; height: 6px; margin-top: 6px; }
 td.inputs-cell { white-space: normal; min-width: 280px; vertical-align: top; }
 td.account-cell { min-width: 220px; }
 td.wallet-cell, td.account-cell, td.test-cell { vertical-align: top; padding-top: 10px; }

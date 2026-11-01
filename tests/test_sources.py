@@ -87,7 +87,7 @@ class SourceDefaultsTest(unittest.TestCase):
             name="Plain",
             password_env="PLAIN_PDF_PASSWORD",
             columns=("Date",),
-            parse=lambda pdf, password: [],
+            parse=lambda pdf, password, on_page=None: [],
             statement_balances=lambda rows: {},
             to_transactions=lambda rows: [],
         )
@@ -376,7 +376,7 @@ FAKE = Source(
     columns=("Date", "Details", "Amount", "Running Balance"),
     amount_columns=("Amount", "Running Balance"),
     text_column="Details",
-    parse=lambda pdf, password: [dict(r) for r in FAKE_ROWS],
+    parse=lambda pdf, password, on_page=None: [dict(r) for r in FAKE_ROWS],
     statement_balances=lambda rows: {"starting": Decimal("100.00"), "ending": Decimal("250.00")},
     to_transactions=fake_to_transactions,
 )

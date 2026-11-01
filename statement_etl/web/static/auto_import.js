@@ -347,6 +347,33 @@ async function clearRuns() {
   }
 }
 
+// ---- Recent imports: refreshed while an import runs -------------------------
+
+// Every 3 s while an import runs (the card's data-running), every 30 s
+// otherwise, and only while the page is on screen.
+const RUNS_REFRESH_MS = { running: 3000, idle: 30000 };
+
+function scheduleRunsRefresh() {
+  const card = $("card-runs");
+  if (!card) return;
+  const wait = card.dataset.running === "true" ? RUNS_REFRESH_MS.running : RUNS_REFRESH_MS.idle;
+  window.setTimeout(refreshRuns, wait);
+}
+
+async function refreshRuns() {
+  const onScreen =
+    document.visibilityState === "visible" && !$("auto-on-view").classList.contains("hidden");
+  if (onScreen) {
+    try {
+      const resp = await fetch("/auto-import/runs");
+      if (resp.ok) $("card-runs").outerHTML = await resp.text();
+    } catch (_) {
+      /* offline for a moment: the next refresh tries again */
+    }
+  }
+  scheduleRunsRefresh();
+}
+
 // ---- wire up events & initialize -------------------------------------------
 
 if ($("auto-setup-view")) {
@@ -378,9 +405,12 @@ if ($("auto-setup-view")) {
   if ($("delete-btn")) {
     $("delete-btn").addEventListener("click", deleteAllData);
   }
-  if ($("clear-runs-btn")) {
-    $("clear-runs-btn").addEventListener("click", clearRuns);
-  }
+  // The Recent imports card is replaced on each refresh, so its button's
+  // clicks are caught here rather than on the button itself
+  document.addEventListener("click", (e) => {
+    if (e.target.id === "clear-runs-btn") clearRuns();
+  });
+  if ($("card-runs")) scheduleRunsRefresh();
 
   sourceRows().forEach((row) => {
     row.querySelector(".account-select").addEventListener("change", refreshState);

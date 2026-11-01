@@ -102,6 +102,23 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 
 
 # =============================================================================
+# PROGRESS - the steps a caller can show while a statement is imported
+#
+# parse_statement() and import_statement() take on_step(step, detail) and call
+# it as each step starts. The web page (web/upload.py) and the auto-import run
+# log (autoimport/runner.py) show them; the command line prints its own steps.
+# =============================================================================
+
+STEP_READ = "read"  # read the PDF's rows; detail {"page": 3, "pages": 5}
+STEP_UPLOAD = "upload"  # send the transactions to YNAB; detail {"count": 286}
+STEP_END_BALANCE = "end_balance"  # YNAB's balance after the upload vs. the statement's
+
+
+def _no_progress(step, detail):
+    """on_step for callers that don't show progress."""
+
+
+# =============================================================================
 # STEPS - parse and upload (REUSABLE)
 #
 # Plain functions that raise errors instead of exiting. Used by both the
@@ -109,7 +126,7 @@ load_dotenv()  # load .env file if present, so env vars can be set there instead
 # =============================================================================
 
 
-def parse_statement(pdf, password, source=DEFAULT_SOURCE):
+def parse_statement(pdf, password, source=DEFAULT_SOURCE, on_step=None):
     """ph-statement-import step: parse a statement PDF from `source` and
     convert the rows into YNAB transactions.
 
@@ -120,6 +137,8 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
         pdf:      a file path, or a file-like object (the web upload)
         password: password used to unlock the PDF
         source:   key in sources.SOURCES, e.g. "gcash"
+        on_step:  optional progress callback (see PROGRESS above): STEP_READ,
+                  once per page
 
     Returns:
         (rows, transactions): rows with the statement's own columns
@@ -137,7 +156,10 @@ def parse_statement(pdf, password, source=DEFAULT_SOURCE):
 
     # Parse: read the PDF table (rows use the PDF's own column names),
     # including any balance-correction rows the parser added
-    rows = src.parse(pdf, password)
+    report = on_step or _no_progress
+    rows = src.parse(
+        pdf, password, on_page=lambda page, pages: report(STEP_READ, {"page": page, "pages": pages})
+    )
 
     # Must have at least one real statement row, not only corrections
     if not any(not src.is_correction_row(r) for r in rows):
@@ -230,13 +252,14 @@ class ImportResult:
 
 
 def import_statement(
-    rows, transactions, account_id, plan_id, access_token=None, source=DEFAULT_SOURCE
+    rows, transactions, account_id, plan_id, access_token=None, source=DEFAULT_SOURCE, on_step=None
 ):
     """ph-statement-import step: import a parsed statement into one YNAB account.
 
     The one place that uploads, used by the command line and the web app.
     rows and transactions are from parse_statement(); access_token works as in
-    upload_transactions().
+    upload_transactions(). on_step, if given, is told STEP_UPLOAD before step 1
+    and STEP_END_BALANCE before step 4 (see PROGRESS above).
 
         result = import_statement(rows, transactions, account_id, plan_id)
         len(result.created), result.skipped  ->  (23, 2)
@@ -249,6 +272,9 @@ def import_statement(
     after refreshing an expired token): YNAB skips import_ids it already has,
     and step 1 changes nothing once the Starting Balance matches.
     """
+    report = on_step or _no_progress
+    report(STEP_UPLOAD, {"count": len(transactions)})
+
     # 1. A newly created YNAB account gets its Starting Balance set to the statement's
     new_account = new_account_starting_balance(
         rows, account_id, plan_id, access_token, source=source
@@ -261,6 +287,7 @@ def import_statement(
     uploaded = upload_transactions(transactions, account_id, plan_id, access_token)
 
     # 4. YNAB balance after the upload vs. the statement's ending balance
+    report(STEP_END_BALANCE, {})
     ending_check, ending_error = None, None
     try:
         ending_check = ending_balance_check(

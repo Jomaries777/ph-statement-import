@@ -1,0 +1,72 @@
+{#- The Recent imports card: included by auto_import.html, and returned alone by
+    GET /auto-import/runs, which the page re-fetches while an import runs. -#}
+<section id="card-runs" class="card" data-running="{{ 'true' if progress and progress.running else 'false' }}">
+  <h2>
+    <span>Recent imports</span>
+    <span class="actions no-margin">
+      <span class="muted">last 20</span>
+      {%- if runs %}
+      <button id="clear-runs-btn" class="secondary small-btn" type="button">Clear</button>
+      {%- endif %}
+    </span>
+  </h2>
+  <div id="runs-msg" class="msg hidden"></div>
+  {%- if progress and progress.summary %}
+  <p class="small-note muted">⟳ {{ progress.summary }} · updates on its own</p>
+  {%- endif %}
+  {%- if runs or progress %}
+  <div class="table-wrap">
+    <table id="runs-table">
+      <thead>
+        <tr>
+          <th>Received</th>
+          <th>Wallet</th>
+          <th>YNAB account</th>
+          <th>Status</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {%- for row in (progress.rows if progress else []) %}
+        <tr class="running-row">
+          <td>{{ row.received }}</td>
+          <td>{{ row.wallet }}</td>
+          <td>{{ row.account }}</td>
+          <td>
+            {%- if row.state == "running" %}<span class="badge info">⟳ Importing</span>
+            {%- elif row.state == "stopped" %}<span class="badge warn">⚠ Stopped</span>
+            {%- else %}<span class="badge muted-badge">Waiting</span>{% endif %}
+            {%- if row.state == "running" %}<div class="small-note muted">{{ row.note }}</div>{% endif %}
+          </td>
+          <td class="wrap-cell">
+            {%- if row.steps %}
+            <ol class="run-steps">
+              {%- for step in row.steps %}
+              <li class="{{ step.state }}">{{ step.label }}</li>
+              {%- endfor %}
+            </ol>
+            <progress max="{{ progress.total_steps }}" value="{{ progress.done_steps }}"></progress>
+            {%- elif row.state != "running" %}{{ row.note }}{% endif %}
+          </td>
+        </tr>
+        {%- endfor %}
+        {%- for run in runs %}
+        <tr>
+          <td>{{ run.received }}</td>
+          <td>{{ run.wallet }}</td>
+          <td>{{ run.account }}</td>
+          <td><span class="badge {{ run.badge_kind }}">{{ run.badge_text }}</span></td>
+          <td class="wrap-cell">{{ run.result }}
+            {%- if run.duration %}<div class="small-note muted">{{ run.duration }}</div>{% endif %}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- elif runs_cleared %}
+  <p class="muted no-margin">No imports since you cleared the list.</p>
+  {%- else %}
+  <p class="muted no-margin">No statement emails imported yet. Request a statement in your
+    e-wallet or bank app and it will appear here within 15 minutes.</p>
+  {%- endif %}
+</section>

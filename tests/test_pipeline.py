@@ -76,9 +76,29 @@ class ParseStatementTest(unittest.TestCase):
     def test_returns_rows_and_transactions(self):
         with gcash_parsing(ROWS):
             rows, transactions = pipeline.parse_statement("statement.pdf", "secret")
-            SOURCES["gcash"].parse.assert_called_once_with("statement.pdf", "secret")
+            SOURCES["gcash"].parse.assert_called_once_with(
+                "statement.pdf", "secret", on_page=mock.ANY
+            )
         self.assertEqual(rows, ROWS)
         self.assertEqual(transactions, TRANSACTIONS)
+
+    def test_reports_each_page_read(self):
+        def parse(pdf, password, on_page=None):
+            on_page(1, 2)
+            on_page(2, 2)
+            return ROWS
+
+        on_step = mock.Mock()
+        source = dataclasses.replace(SOURCES["gcash"], parse=parse)
+        with mock.patch.dict(SOURCES, {"gcash": source}):
+            pipeline.parse_statement("statement.pdf", "secret", on_step=on_step)
+        self.assertEqual(
+            on_step.call_args_list,
+            [
+                mock.call(pipeline.STEP_READ, {"page": 1, "pages": 2}),
+                mock.call(pipeline.STEP_READ, {"page": 2, "pages": 2}),
+            ],
+        )
 
     def test_correction_rows_are_converted_too(self):
         with gcash_parsing(ROWS + [CORRECTION]):
@@ -229,6 +249,31 @@ class ImportStatementTest(unittest.TestCase):
         self.assertEqual(result.ending_check, ending_check())
         self.assertIsNone(result.new_account)
         self.assertIsNone(result.ending_error)
+
+    def test_reports_the_upload_and_the_ending_check_as_they_start(self):
+        self.steps.attach_mock(mock.Mock(), "on_step")
+        pipeline.import_statement(
+            ROWS, TRANSACTIONS, ACCOUNT_ID, PLAN_ID, "token", on_step=self.steps.on_step
+        )
+        called = [c[0] for c in self.steps.mock_calls]
+        self.assertEqual(
+            called,
+            [
+                "on_step",
+                "new_account_starting_balance",
+                "get_account_balance",
+                "upload_transactions",
+                "on_step",
+                "ending_balance_check",
+            ],
+        )
+        self.assertEqual(
+            self.steps.on_step.call_args_list,
+            [
+                mock.call(pipeline.STEP_UPLOAD, {"count": len(TRANSACTIONS)}),
+                mock.call(pipeline.STEP_END_BALANCE, {}),
+            ],
+        )
 
     def test_new_account_is_set_before_the_balance_is_read(self):
         # The balance read in step 2 already includes the new Starting Balance
