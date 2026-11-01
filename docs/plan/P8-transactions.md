@@ -134,6 +134,26 @@ A rule is a **description** (text the statement row contains, ignoring case), a 
 - [x] The parsed table marks matching rows "→ GoTyme"; the results and the run log show "12 transfers".
 - [x] Tests: transfer payees, the balance math, the runner.
 
+## Follow-up, after going live
+
+Found on the hosted app on 2026-11-01:
+
+- Gemini didn't categorize: `GEMINI_API_KEY` wasn't in `app-config`, so the opt-in was hidden and the runner skipped Gemini without a log line.
+- "+ Add a rule" was disabled: hosted banks were the auto-import mappings, and only one bank was mapped.
+
+### PR 8: `fix/categorize-diagnostics`, "fix: say when Gemini categorizing is off, and why"
+
+- [x] A startup warning when hosted without `GEMINI_API_KEY`; the runner logs each categorize outcome.
+- [x] The run log's Result drops "N categorized"; a failure is still noted. The "on" card says where to turn it on.
+- [ ] Add `GEMINI_API_KEY` to `app-config` and redeploy (P4's secret steps); `/api/status` then says `"categorize_available": true`.
+
+### PR 9: `feat/transfer-pairs`, "feat: transfer rules as bank pairs, so either statement can go first"
+
+- [x] A rule pairs two YNAB accounts, each with its own description (Bank #2's optional); `find_transfers()` uses the description for the side being imported.
+- [x] The page lists the plan's open YNAB accounts, so it no longer depends on auto-import mappings. Hosted, it reuses auto-import's saved YNAB connection, or logs in with `next=/transfer-rules`.
+- [x] Saved as `transfer_pairs` and `transfer_plan_id`; a save is checked against the plan's accounts. Rules saved in the old shape aren't read (re-enter them).
+- [x] W5 wireframe redrawn.
+
 ## Tests
 
 ```bash

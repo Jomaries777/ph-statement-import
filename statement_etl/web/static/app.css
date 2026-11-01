@@ -84,6 +84,7 @@ main.narrow { max-width: 920px; }
 .small-note { font-size: 13px; margin: 6px 0 0; }
 .break-anywhere { overflow-wrap: anywhere; }  /* long file paths on a phone */
 #transfer-rules-main td select { min-width: 8em; }
+#transfer-rules-main td input { min-width: 10em; }
 .no-margin { margin: 0; }
 .no-top-margin { margin-top: 0; }
 .spaced-between { justify-content: space-between; }

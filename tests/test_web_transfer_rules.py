@@ -1,11 +1,12 @@
 """
 Tests for web/transfer_rules.py and its page (/transfer-rules), in both modes:
-locally the rules and wallets go in the settings file (local_settings.py);
-hosted, the rules go on the signed-in Google user's record and the wallets are
-their auto-import mappings.
+locally the rules go in the settings file (local_settings.py); hosted, on the
+signed-in Google user's record. Either way a save is checked against the
+plan's open YNAB accounts.
 
 Run from the project folder:  python -m unittest discover tests
-Firestore is replaced with FakeStore (tests/fakes.py). All data here is made up.
+Firestore is replaced with FakeStore (tests/fakes.py), and YNAB's account list
+with a mock. All data here is made up.
 """
 
 import json
@@ -20,7 +21,7 @@ from unittest import mock
 
 from statement_etl import local_settings
 from statement_etl.web import app as web
-from statement_etl.web import transfer_rules, upload
+from statement_etl.web import transfer_rules, upload, ynab_auth
 from tests.fakes import ACCOUNT_ID, PLAN_ID
 from tests.hosted import HOSTED_ENV, hosted_mode
 from tests.test_web_app import ROWS, TARGET, TRANSACTIONS, WebTest, starting_check
@@ -31,15 +32,33 @@ from tests.test_web_auto_import import (
     AutoImportWebTest,
 )
 
-LOCAL_WALLETS = [
-    {"id": ACCOUNT_ID, "source": "gcash", "account_name": "GCash1"},
-    {"id": OTHER_ACCOUNT_ID, "source": "gotyme", "account_name": "GoTyme2"},
+# The plan's open accounts, as ynab_api.accounts.get_accounts() returns them
+PLAN_ACCOUNTS = [
+    {"id": ACCOUNT_ID, "name": "GCash - 1161", "type": "cash", "balance": 0},
+    {"id": OTHER_ACCOUNT_ID, "name": "GoTyme", "type": "checking", "balance": 0},
 ]
-RULE = {"description": "Transfer to 0917123", "from_wallet": "gcash", "to_wallet": "gotyme"}
+# A rule as the page sends it ...
+SENT = {
+    "account_1_id": ACCOUNT_ID,
+    "description_1": " Transfer  to 0917123",
+    "account_2_id": OTHER_ACCOUNT_ID,
+    "description_2": "InstaPay from GCash",
+}
+# ... and as it's saved: tidied, with the plan's account names
+SAVED = {
+    "account_1_id": ACCOUNT_ID,
+    "account_1_name": "GCash - 1161",
+    "description_1": "Transfer to 0917123",
+    "account_2_id": OTHER_ACCOUNT_ID,
+    "account_2_name": "GoTyme",
+    "description_2": "InstaPay from GCash",
+}
+# ROWS[2] in tests/test_web_app.py is "Payment to Test Shop"
+PAYMENT_RULE = {**SAVED, "description_1": "payment to TEST"}
 
 
 def page_data(html: bytes, name: str):
-    """A data-* value the page's script reads, e.g. page_data(html, "wallets")."""
+    """A data-* JSON value the page's script reads, e.g. page_data(html, "rules")."""
     match = re.search(rf"data-{name}='([^']*)'", html.decode())
     return json.loads(match.group(1))
 
@@ -60,6 +79,10 @@ class LocalSettingsWebTest(WebTest):
 
 
 class LocalTransferRulesTest(LocalSettingsWebTest):
+    def setUp(self):
+        super().setUp()
+        self.get_accounts = self.patch(transfer_rules, "get_accounts", return_value=PLAN_ACCOUNTS)
+
     def save(self, **body):
         return self.client.post("/api/transfer-rules", json=body)
 
@@ -71,67 +94,45 @@ class LocalTransferRulesTest(LocalSettingsWebTest):
         self.assertNotIn(b"<script>", page.data)
         self.assertNotIn(b"style=", page.data)
         self.assertIn(str(self.path).encode(), page.data)
+        for column in (b"Bank #1", b"Bank #1 description", b"Bank #2", b"Bank #2 description"):
+            self.assertIn(b"<th>" + column + b"</th>", page.data)
         with self.client.get("/static/transfer_rules.js") as script:
             self.assertEqual(script.status_code, 200)
 
     def test_save_writes_the_file_and_the_page_shows_it(self):
-        rule = {
-            "description": "Transfer to 0917123",
-            "from_wallet": ACCOUNT_ID,
-            "to_wallet": OTHER_ACCOUNT_ID,
-        }
-        response = self.save(
-            plan_id=PLAN_ID, plan_name="Test Plan", wallets=LOCAL_WALLETS, rules=[rule]
-        )
+        self.connected()
+        response = self.save(plan_id=PLAN_ID, rules=[SENT])
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(response.get_json(), {"saved": True, "rules": 1})
+        self.get_accounts.assert_called_once_with(PLAN_ID, "test-token")
         self.assertEqual(
             json.loads(self.path.read_text()),
-            {
-                "plan_id": PLAN_ID,
-                "plan_name": "Test Plan",
-                "wallets": LOCAL_WALLETS,
-                "transfer_rules": [rule],
-            },
+            {"transfer_plan_id": PLAN_ID, "transfer_pairs": [SAVED]},
         )
 
         page = self.client.get("/transfer-rules").data
-        self.assertEqual(page_data(page, "rules"), [rule])
-        self.assertEqual(
-            [(w["name"], w["account_name"]) for w in page_data(page, "wallets")],
-            [("GCash", "GCash1"), ("GoTyme", "GoTyme2")],
-        )
+        self.assertEqual(page_data(page, "rules"), [SAVED])
         self.assertIn(f'data-plan-id="{PLAN_ID}"'.encode(), page)
 
-    def test_rules_must_use_saved_wallets(self):
-        response = self.save(
-            wallets=LOCAL_WALLETS[:1],
-            rules=[{"description": "x", "from_wallet": ACCOUNT_ID, "to_wallet": OTHER_ACCOUNT_ID}],
-        )
+    def test_banks_must_be_in_the_plan(self):
+        self.connected()
+        response = self.save(plan_id=PLAN_ID, rules=[{**SENT, "account_2_id": "not-in-plan"}])
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(
-            response.get_json()["error"], "Rule 1: choose the source and destination banks."
-        )
+        self.assertEqual(response.get_json()["error"], "Rule 1: choose both banks.")
         self.assertFalse(self.path.exists())
 
-    def test_wallets_are_checked(self):
-        cases = {
-            "not a list": ({}, "Send the banks as a list."),
-            "unknown source": (
-                [{"id": ACCOUNT_ID, "source": "bpi"}],
-                "Bank 1: choose which bank.",
-            ),
-            "no account": ([{"id": "", "source": "gcash"}], "Bank 1: choose a YNAB account."),
-            "same account twice": (
-                [{"id": ACCOUNT_ID, "source": "gcash"}, {"id": ACCOUNT_ID, "source": "gotyme"}],
-                "Each YNAB account can be only one bank.",
-            ),
-        }
-        for name, (wallets, expected) in cases.items():
-            with self.subTest(name):
-                response = self.save(wallets=wallets, rules=[])
-                self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.get_json()["error"], expected)
+    def test_rules_need_a_plan_and_ynab(self):
+        response = self.save(rules=[SENT])
+        self.assertEqual(response.get_json()["error"], "Choose a YNAB plan.")
+        response = self.save(plan_id=PLAN_ID, rules=[SENT])  # not connected
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(self.path.exists())
+
+    def test_no_rules_saves_without_ynab(self):
+        response = self.save(rules=[])
+        self.assertEqual(response.status_code, 200)
+        self.get_accounts.assert_not_called()
+        self.assertEqual(json.loads(self.path.read_text())["transfer_pairs"], [])
 
     def test_not_json(self):
         response = self.client.post("/api/transfer-rules", data="rules")
@@ -155,37 +156,17 @@ class HostedRulesWebTest(AutoImportWebTest):
     def setUp(self):
         super().setUp()
         self.patch(transfer_rules, "store", new=self.store)
+        self.patch(transfer_rules, "get_accounts", return_value=PLAN_ACCOUNTS)
         no_file = AssertionError("hosted mode used the local settings file")
         self.patch(local_settings, "load_settings", side_effect=no_file)
         self.patch(local_settings, "save_settings", side_effect=no_file)
 
-    def sign_in_with_wallets(self, **fields):
-        self.sign_in_google(
-            enabled=True,
-            plan_id=PLAN_ID,
-            mappings={
-                "gcash": {
-                    "source": "gcash",
-                    "account_id": ACCOUNT_ID,
-                    "account_name": "GCash1",
-                    "enabled": True,
-                },
-                "gotyme": {
-                    "source": "gotyme",
-                    "account_id": OTHER_ACCOUNT_ID,
-                    "account_name": "GoTyme2",
-                    "enabled": True,
-                },
-                "gcash-2": {"source": "gcash", "enabled": False},  # Don't import: no account
-            },
-            password_inputs={
-                "gcash": {
-                    "last_name": "Dela Cruz",
-                    "mobile_last4": "1234",
-                    "mobile_first7": "0917123",
-                },
-            },
-            **fields,
+    def connect_ynab(self, **state):
+        self.set_ynab_state(
+            access_token="test-token",
+            token_kind="oauth",
+            expires_at=time.time() + 3600,
+            **state,
         )
 
 
@@ -195,56 +176,56 @@ class HostedTransferRulesTest(HostedRulesWebTest):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'id="card-sign-in"', page.data)
         self.assertNotIn(b'id="rules-table"', page.data)
-        response = self.client.post("/api/transfer-rules", json={"rules": [RULE]})
+        response = self.client.post("/api/transfer-rules", json={"rules": [SENT]})
         self.assertEqual(response.status_code, 401)
 
     def test_uninvited_account_is_refused(self):
         self.sign_in_google(email=UNINVITED_EMAIL)
-        response = self.client.post("/api/transfer-rules", json={"rules": [RULE]})
+        response = self.client.post("/api/transfer-rules", json={"rules": [SENT]})
         self.assertEqual(response.status_code, 403)
 
-    def test_page_lists_the_mapped_wallets(self):
-        self.sign_in_with_wallets(transfer_rules=[RULE])
+    def test_page_needs_no_auto_import_mappings(self):
+        # Signed in with Google only: no Gmail, no mappings (what disabled "+ Add a rule")
+        self.sign_in_google()
         page = self.client.get("/transfer-rules").data
-        # gcash-2 is set to "Don't import": no YNAB account, so not a wallet here
-        self.assertEqual(
-            page_data(page, "wallets"),
-            [
-                {
-                    "id": "gcash",
-                    "name": "GCash · 0917123",
-                    "source": "gcash",
-                    "account_id": ACCOUNT_ID,
-                    "account_name": "GCash1",
-                },
-                {
-                    "id": "gotyme",
-                    "name": "GoTyme",
-                    "source": "gotyme",
-                    "account_id": OTHER_ACCOUNT_ID,
-                    "account_name": "GoTyme2",
-                },
-            ],
-        )
-        self.assertEqual(page_data(page, "rules"), [RULE])
+        self.assertIn(b'id="rules-table"', page)
+        self.assertIn(b'id="add-rule-btn"', page)
+        self.assertIn(b'data-has-saved-ynab="false"', page)
+        self.assertEqual(page_data(page, "rules"), [])
         self.assertIn(b'id="transfer-rules-link"', self.client.get("/auto-import").data)
 
+    def test_page_shows_the_saved_rules_and_plan(self):
+        self.sign_in_google(
+            enabled=True,
+            plan_id="auto-import-plan",
+            transfer_pairs=[SAVED],
+            ynab_refresh_token="ynab-refresh",
+        )
+        page = self.client.get("/transfer-rules").data
+        self.assertEqual(page_data(page, "rules"), [SAVED])
+        self.assertIn(b'data-plan-id="auto-import-plan"', page)  # no transfer plan saved yet
+        self.assertIn(b'data-has-saved-ynab="true"', page)
+
     def test_save_puts_the_rules_on_the_user(self):
-        self.sign_in_with_wallets()
+        self.sign_in_google(enabled=True)
+        self.connect_ynab()
         response = self.client.post(
-            "/api/transfer-rules",
-            json={"rules": [{**RULE, "description": " Transfer  to 0917123"}]},
+            "/api/transfer-rules", json={"plan_id": PLAN_ID, "rules": [SENT]}
         )
         self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(self.store.get_user(SUB)["transfer_rules"], [RULE])
+        user = self.store.get_user(SUB)
+        self.assertEqual((user["transfer_pairs"], user["transfer_plan_id"]), ([SAVED], PLAN_ID))
+        self.assertIn(f'data-plan-id="{PLAN_ID}"'.encode(), self.client.get("/transfer-rules").data)
 
-    def test_only_mapped_wallets(self):
-        self.sign_in_with_wallets()
+    def test_a_refused_rule_saves_nothing(self):
+        self.sign_in_google()
+        self.connect_ynab()
         response = self.client.post(
-            "/api/transfer-rules", json={"rules": [{**RULE, "to_wallet": "gcash-2"}]}
+            "/api/transfer-rules",
+            json={"plan_id": PLAN_ID, "rules": [{**SENT, "account_2_id": ACCOUNT_ID}]},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertNotIn("transfer_rules", self.store.get_user(SUB))
+        self.assertEqual(response.get_json()["error"], "Rule 1: Bank #1 and Bank #2 must differ.")
+        self.assertNotIn("transfer_pairs", self.store.get_user(SUB))
 
 
 class HostedWithoutGoogleTest(unittest.TestCase):
@@ -254,6 +235,11 @@ class HostedWithoutGoogleTest(unittest.TestCase):
             self.assertNotIn(b"/transfer-rules", client.get("/").data)
             self.assertEqual(client.get("/transfer-rules").status_code, 404)
             self.assertEqual(client.post("/api/transfer-rules", json={}).status_code, 404)
+
+
+class YnabLoginReturnsHereTest(unittest.TestCase):
+    def test_the_rules_page_is_a_page_to_return_to(self):
+        self.assertEqual(ynab_auth.NEXT_PAGES["/transfer-rules"], "/transfer-rules")
 
 
 # =============================================================================
@@ -266,17 +252,7 @@ class LocalUploadTransfersTest(LocalSettingsWebTest):
 
     def setUp(self):
         super().setUp()
-        local_settings.save_settings(
-            wallets=LOCAL_WALLETS,
-            # ROWS[2] in tests/test_web_app.py is "Payment to Test Shop"
-            transfer_rules=[
-                {
-                    "description": "payment to TEST",
-                    "from_wallet": ACCOUNT_ID,
-                    "to_wallet": OTHER_ACCOUNT_ID,
-                }
-            ],
-        )
+        local_settings.save_settings(transfer_pairs=[PAYMENT_RULE])
         self.parsed()
 
     def test_the_starting_check_marks_the_matching_rows(self):
@@ -304,7 +280,7 @@ class LocalUploadTransfersTest(LocalSettingsWebTest):
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check):
             response = self.client.post(
-                "/api/starting-balance", json={**TARGET, "account_id": "not-a-wallet"}
+                "/api/starting-balance", json={**TARGET, "account_id": "not-in-a-rule"}
             )
         self.assertEqual(response.get_json()["transfers"], [])
 
@@ -321,33 +297,15 @@ class HostedUploadTransfersTest(HostedRulesWebTest):
     """Hosted, the upload reads the signed-in Google user's rules."""
 
     def test_signed_in_user_rules_apply(self):
-        self.sign_in_with_wallets(
-            transfer_rules=[
-                {"description": "Payment to", "from_wallet": "gcash", "to_wallet": "gotyme"}
-            ]
-        )
-        self.set_ynab_state(
-            access_token="test-token",
-            token_kind="oauth",
-            expires_at=time.time() + 3600,
-            source="gcash",
-            rows=ROWS,
-            transactions=TRANSACTIONS,
-        )
+        self.sign_in_google(transfer_pairs=[PAYMENT_RULE])
+        self.connect_ynab(source="gcash", rows=ROWS, transactions=TRANSACTIONS)
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check):
             response = self.client.post("/api/starting-balance", json=TARGET)
         self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
 
     def test_not_signed_in_no_transfers(self):
-        self.set_ynab_state(
-            access_token="test-token",
-            token_kind="oauth",
-            expires_at=time.time() + 3600,
-            source="gcash",
-            rows=ROWS,
-            transactions=TRANSACTIONS,
-        )
+        self.connect_ynab(source="gcash", rows=ROWS, transactions=TRANSACTIONS)
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
             self.client.post("/api/starting-balance", json=TARGET)

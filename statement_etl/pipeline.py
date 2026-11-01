@@ -291,7 +291,7 @@ def import_statement(
     and STEP_END_BALANCE before step 4 (see PROGRESS above).
 
     transfers, if given, is {row index: destination YNAB account id}, the rows
-    a transfer rule matched (transfers.transfer_accounts()). They're sent as
+    a transfer rule matched (transfers.find_transfers()). They're sent as
     YNAB transfers, except those whose other side YNAB already has
     (ynab_api/transfers.py), which are skipped like already-imported ones.
 

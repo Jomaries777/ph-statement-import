@@ -7,14 +7,12 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<!-- static/transfer_rules.js draws the tables from these data-* values -->
+<!-- static/transfer_rules.js draws the rules table from these data-* values -->
 <main class="narrow" id="transfer-rules-main"
       data-hosted="{{ 'true' if hosted else 'false' }}"
+      data-has-saved-ynab="{{ 'true' if has_saved_ynab else 'false' }}"
       data-plan-id="{{ plan_id or '' }}"
-      data-wallets='{{ wallets|tojson }}'
-      data-rules='{{ rules|tojson }}'
-      data-sources='{{ sources|map(attribute="key")|list|tojson }}'
-      data-source-names='{{ sources|map(attribute="name")|list|tojson }}'>
+      data-rules='{{ rules|tojson }}'>
   <header>
     <a class="btn-link secondary" href="/">◂ Manual upload</a>
     <h1>Transfer rules</h1>
@@ -24,7 +22,7 @@
   </header>
 
   <p class="muted intro-note">Money you move between your own banks shows on both
-    statements. A rule tells the importer which rows are such a move, so YNAB can show
+    statements. A rule tells the importer which rows are such a move, so YNAB shows
     them as one transfer instead of a payment and an unrelated deposit.</p>
 
   {%- if hosted and not signed_in %}
@@ -35,51 +33,34 @@
   </section>
   {%- else %}
 
-  {%- if hosted %}
-  <section id="card-wallets" class="card">
-    <h2>Your banks</h2>
-    {%- if wallets %}
-    <p class="muted">The banks and e-wallets you mapped on the Auto-import page.
-      <a href="/auto-import">Change them there.</a></p>
-    {%- else %}
-    <p id="no-wallets">Map your banks to YNAB accounts on the
-      <a href="/auto-import">Auto-import page</a> first.</p>
-    {%- endif %}
-  </section>
-  {%- else %}
-  <section id="card-wallets" class="card">
-    <h2>Your banks</h2>
-    <p class="muted">Each bank or e-wallet, and the YNAB account you import its statements into.</p>
-    <div class="row"><label for="plan">YNAB plan</label>
-      <select id="plan"><option value="">{{ plan_name or "Loading…" }}</option></select>
-    </div>
-    <div class="table-wrap">
-      <table id="local-wallets-table">
-        <thead><tr><th>Bank</th><th>YNAB account</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="actions">
-      <button id="add-wallet-btn" class="secondary small-btn" type="button">+ Add a bank</button>
-    </div>
-    <div id="wallets-msg" class="msg hidden"></div>
-    {%- if settings_error %}
-    <div id="settings-error" class="msg err">{{ settings_error }}</div>
-    {%- endif %}
-  </section>
-  {%- endif %}
-
   <section id="card-rules" class="card">
     <h2>Rules</h2>
-    <p class="muted">In statements from the source bank, a row whose description contains the
-      text is a transfer to the destination bank. Capital letters and extra spaces don't matter.</p>
-    <p class="muted">Add a rule for each side, e.g. in GCash statements "Transfer to 0917123"
-      goes to GoTyme, and in GoTyme statements "InstaPay from GCash" goes to GCash. Whichever
-      statement you import first makes the transfer in YNAB; the second one finds it there and
-      doesn't add it again.</p>
+    <div id="ynab-off" class="actions hidden">
+      <span class="muted">○ Not connected to YNAB</span>
+      {%- if hosted %}
+      <button id="connect-btn" type="button">Connect with YNAB login</button>
+      {%- else %}
+      <a class="btn-link" href="/">Connect on the manual upload page</a>
+      {%- endif %}
+    </div>
+    <div id="ynab-on" class="actions hidden"><span>● Connected to YNAB</span></div>
+    <div class="row"><label for="plan">YNAB plan</label>
+      <select id="plan"><option value="">Checking YNAB…</option></select>
+    </div>
+    <div id="ynab-msg" class="msg hidden"></div>
+
+    <p class="muted">Pair two of your YNAB accounts, with the text each bank's statement shows
+      for money moved between them, e.g. GCash's "Transfer to 0917123" and GoTyme's "InstaPay
+      from GCash". Capital letters and extra spaces don't matter.</p>
+    <p class="muted">Import either statement first: it makes the transfer in YNAB, and the other
+      one finds it there and doesn't add it again. Leave Bank #2's description empty if you
+      only import Bank #1's statements.</p>
     <div class="table-wrap">
       <table id="rules-table">
-        <thead><tr><th>Description</th><th>Source bank</th><th>Destination bank</th><th></th></tr></thead>
+        <thead><tr>
+          <th>Bank #1</th><th>Bank #1 description</th>
+          <th>Bank #2</th><th>Bank #2 description</th><th></th>
+        </tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -87,6 +68,7 @@
     <div class="actions">
       <button id="add-rule-btn" class="secondary small-btn" type="button">+ Add a rule</button>
     </div>
+    <div id="rules-msg" class="msg hidden"></div>
   </section>
 
   <div class="actions">
@@ -95,6 +77,9 @@
   <div id="save-msg" class="msg hidden"></div>
   {%- if not hosted %}
   <p class="small-note muted break-anywhere">Saved on this computer in {{ settings_path }}.</p>
+  {%- if settings_error %}
+  <div id="settings-error" class="msg err">{{ settings_error }}</div>
+  {%- endif %}
   {%- endif %}
   {%- endif %}
 </main>

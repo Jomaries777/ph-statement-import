@@ -1,18 +1,15 @@
-// The /transfer-rules page's script (templates/transfer_rules.html): draws the
-// wallets and rules tables from the page's data-* values, keeps them in `state`
-// as they're edited, and saves them with POST /api/transfer-rules.
+// The /transfer-rules page's script (templates/transfer_rules.html): connects
+// to YNAB, lists the chosen plan's accounts, draws the rules table from the
+// page's data-* values, keeps it in `state` as it's edited, and saves it with
+// POST /api/transfer-rules.
 const $ = (id) => document.getElementById(id);
 
 const mainEl = $("transfer-rules-main");
 const hosted = mainEl ? mainEl.dataset.hosted === "true" : false;
 const state = {
-  // [{id, name, source, account_id, account_name}]; local wallets' id is the YNAB account id
-  wallets: mainEl ? JSON.parse(mainEl.dataset.wallets) : [],
-  // [{description, from_wallet, to_wallet}]
+  // [{account_1_id, account_1_name, description_1, account_2_id, account_2_name, description_2}]
   rules: mainEl ? JSON.parse(mainEl.dataset.rules) : [],
-  sources: mainEl ? JSON.parse(mainEl.dataset.sources) : [],
-  sourceNames: mainEl ? JSON.parse(mainEl.dataset.sourceNames) : [],
-  accounts: [], // local mode: the chosen plan's YNAB accounts [{id, name, type}]
+  accounts: [], // the chosen plan's open YNAB accounts [{id, name, type}]
   saving: false,
 };
 
@@ -38,120 +35,89 @@ async function api(path, options = {}) {
   return body;
 }
 
-function sourceName(key) {
-  return state.sourceNames[state.sources.indexOf(key)] || key;
-}
-
-// "GCash · 0917123 → GCash1": the bank (wallet) and the YNAB account it imports into
-function walletLabel(wallet) {
-  const name = hosted ? wallet.name : sourceName(wallet.source);
-  return wallet.account_name ? `${name} → ${wallet.account_name}` : name;
-}
-
-function select(options, value, onChange) {
-  const el = document.createElement("select");
-  options.forEach(([optionValue, label]) => el.add(new Option(label, optionValue)));
-  el.value = value;
-  el.addEventListener("change", () => onChange(el.value, el));
-  return el;
-}
-
-function removeButton(label, onClick) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "secondary small-btn";
-  button.textContent = "Remove";
-  button.setAttribute("aria-label", label);
-  button.addEventListener("click", onClick);
-  return button;
-}
-
 function cell(...children) {
   const td = document.createElement("td");
   td.append(...children);
   return td;
 }
 
-// ---- local wallets ---------------------------------------------------------
+// A bank dropdown: the plan's accounts, plus the saved one if it isn't among
+// them (another plan, or not loaded yet), so a saved rule shows what it has
+function accountSelect(rule, side, label) {
+  const el = document.createElement("select");
+  el.setAttribute("aria-label", label);
+  el.add(new Option("Choose a bank…", ""));
+  const savedId = rule[`account_${side}_id`];
+  if (savedId && !state.accounts.some((a) => a.id === savedId)) {
+    el.add(new Option(rule[`account_${side}_name`] || "Saved account", savedId));
+  }
+  state.accounts.forEach((a) => el.add(new Option(a.name, a.id)));
+  el.value = savedId;
+  el.addEventListener("change", () => {
+    rule[`account_${side}_id`] = el.value;
+    rule[`account_${side}_name`] = el.value ? el.selectedOptions[0].textContent : "";
+  });
+  return el;
+}
 
-// Each local wallet row: which source, and which YNAB account it imports into
-function renderWallets() {
-  const tbody = document.querySelector("#local-wallets-table tbody");
-  if (!tbody) return;
-  tbody.replaceChildren();
-  state.wallets.forEach((wallet, index) => {
-    const sourceSelect = select(
-      state.sources.map((key) => [key, sourceName(key)]),
-      wallet.source,
-      (value) => { wallet.source = value; renderRules(); },
-    );
-    const accounts = state.accounts.map((a) => [a.id, a.name]);
-    if (wallet.id && !state.accounts.some((a) => a.id === wallet.id)) {
-      accounts.unshift([wallet.id, wallet.account_name || "Saved account"]);
+function descriptionInput(rule, side, label, placeholder) {
+  const el = document.createElement("input");
+  el.type = "text";
+  el.maxLength = 100;
+  el.placeholder = placeholder;
+  el.value = rule[`description_${side}`];
+  el.setAttribute("aria-label", label);
+  el.addEventListener("input", () => { rule[`description_${side}`] = el.value; });
+  return el;
+}
+
+// ---- YNAB and the plan's accounts ------------------------------------------
+
+function setYnabConnected(on) {
+  show($("ynab-on"), on);
+  show($("ynab-off"), !on);
+  if (!on) $("plan").replaceChildren(new Option("— connect to YNAB first —", ""));
+}
+
+// This browser's own YNAB session, or else (hosted) auto-import's saved YNAB
+// connection, so the page doesn't ask to log in to YNAB again
+async function connectYnab() {
+  try {
+    let connected = (await api("/api/status")).connected;
+    if (!connected && mainEl.dataset.hasSavedYnab === "true") {
+      connected = (await api("/api/auto-import/ynab-session", { method: "POST" })).connected;
     }
-    const accountSelect = select(
-      [["", "Choose an account…"], ...accounts],
-      wallet.id,
-      (value, el) => {
-        replaceWalletId(wallet, value);
-        wallet.account_id = value;
-        wallet.account_name = value ? el.selectedOptions[0].textContent : "";
-        renderRules();
-      },
-    );
-    const remove = removeButton("Remove this bank", () => {
-      state.wallets.splice(index, 1);
-      renderWallets();
-      renderRules();
-    });
-    const tr = document.createElement("tr");
-    tr.append(cell(sourceSelect), cell(accountSelect), cell(remove));
-    tbody.append(tr);
-  });
-}
-
-// A local wallet's id is its YNAB account's id: when the account changes, the
-// rules that use the wallet follow it
-function replaceWalletId(wallet, newId) {
-  if (wallet.id) state.rules.forEach((rule) => {
-    if (rule.from_wallet === wallet.id) rule.from_wallet = newId;
-    if (rule.to_wallet === wallet.id) rule.to_wallet = newId;
-  });
-  wallet.id = newId;
-}
-
-function addWallet() {
-  state.wallets.push({ id: "", name: "", source: state.sources[0], account_id: "", account_name: "" });
-  renderWallets();
+    setYnabConnected(connected);
+    if (connected) await loadPlans();
+  } catch (err) {
+    setYnabConnected(false);
+    message("ynab-msg", err.message);
+  }
 }
 
 async function loadPlans() {
   const planSelect = $("plan");
-  try {
-    const plans = await api("/api/plans");
-    const savedPlanId = mainEl.dataset.planId || "";
-    planSelect.replaceChildren(new Option("Choose a plan…", ""));
-    plans.forEach((p) => planSelect.add(new Option(p.name, p.id)));
-    if (plans.some((p) => p.id === savedPlanId)) planSelect.value = savedPlanId;
-    else if (plans.length === 1) planSelect.value = plans[0].id;
-    await loadAccounts();
-  } catch (err) {
-    message("wallets-msg", `${err.message} Connect on the manual upload page, then come back.`);
-  }
+  const plans = await api("/api/plans");
+  const savedPlanId = mainEl.dataset.planId || "";
+  planSelect.replaceChildren(new Option("Choose a plan…", ""));
+  plans.forEach((p) => planSelect.add(new Option(p.name, p.id)));
+  if (plans.some((p) => p.id === savedPlanId)) planSelect.value = savedPlanId;
+  else if (plans.length === 1) planSelect.value = plans[0].id;
+  await loadAccounts();
 }
 
 async function loadAccounts() {
   const planId = $("plan").value;
   state.accounts = [];
+  message("ynab-msg", "");
   if (planId) {
     try {
       state.accounts = await api(`/api/plans/${encodeURIComponent(planId)}/accounts`);
-      message("wallets-msg", "");
     } catch (err) {
-      message("wallets-msg", err.message);
+      message("ynab-msg", err.message);
     }
   }
-  renderWallets();
+  renderRules();
 }
 
 // ---- rules -----------------------------------------------------------------
@@ -159,40 +125,48 @@ async function loadAccounts() {
 function renderRules() {
   const tbody = document.querySelector("#rules-table tbody");
   if (!tbody) return;
-  const wallets = state.wallets.filter((w) => w.id).map((w) => [w.id, walletLabel(w)]);
-  const options = [["", "Choose a bank…"], ...wallets];
   tbody.replaceChildren();
   state.rules.forEach((rule, index) => {
-    const text = document.createElement("input");
-    text.type = "text";
-    text.maxLength = 100;
-    text.placeholder = "e.g. Transfer to 0917123";
-    text.value = rule.description;
-    text.setAttribute("aria-label", "Description");
-    text.addEventListener("input", () => { rule.description = text.value; });
-    const from = select(options, rule.from_wallet, (value) => { rule.from_wallet = value; });
-    const to = select(options, rule.to_wallet, (value) => { rule.to_wallet = value; });
-    from.setAttribute("aria-label", "Source bank");
-    to.setAttribute("aria-label", "Destination bank");
-    const remove = removeButton("Remove this rule", () => {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary small-btn";
+    remove.textContent = "Remove";
+    remove.setAttribute("aria-label", "Remove this rule");
+    remove.addEventListener("click", () => {
       state.rules.splice(index, 1);
       renderRules();
     });
     const tr = document.createElement("tr");
-    tr.append(cell(text), cell(from), cell(to), cell(remove));
+    tr.append(
+      cell(accountSelect(rule, 1, "Bank #1")),
+      cell(descriptionInput(rule, 1, "Bank #1 description", "Transfer to 0917123")),
+      cell(accountSelect(rule, 2, "Bank #2")),
+      cell(descriptionInput(rule, 2, "Bank #2 description", "Optional")),
+      cell(remove),
+    );
     tbody.append(tr);
   });
   show($("no-rules"), state.rules.length === 0);
-  const addRule = $("add-rule-btn");
-  if (addRule) addRule.disabled = wallets.length < 2;
 }
 
+// Kept enabled: with too few accounts, clicking it says why
 function addRule() {
-  const ids = state.wallets.filter((w) => w.id).map((w) => w.id);
-  state.rules.push({ description: "", from_wallet: ids[0] || "", to_wallet: ids[1] || "" });
+  if (state.accounts.length < 2) {
+    const why = $("plan").value
+      ? "Your plan needs at least two open accounts."
+      : "Connect to YNAB and choose a plan first.";
+    message("rules-msg", why);
+    return;
+  }
+  message("rules-msg", "");
+  const [first, second] = state.accounts;
+  state.rules.push({
+    account_1_id: first.id, account_1_name: first.name, description_1: "",
+    account_2_id: second.id, account_2_name: second.name, description_2: "",
+  });
   renderRules();
   const inputs = document.querySelectorAll("#rules-table tbody input");
-  if (inputs.length) inputs[inputs.length - 1].focus();
+  if (inputs.length) inputs[inputs.length - 2].focus(); // the new row's Bank #1 description
 }
 
 // ---- save ------------------------------------------------------------------
@@ -202,18 +176,11 @@ async function save() {
   state.saving = true;
   $("save-btn").disabled = true;
   message("save-msg", "Saving…", "info");
-  const body = { rules: state.rules };
-  if (!hosted) {
-    const plan = $("plan");
-    body.plan_id = plan.value;
-    body.plan_name = plan.value ? plan.selectedOptions[0].textContent : "";
-    body.wallets = state.wallets.map((w) => ({ id: w.id, source: w.source, account_name: w.account_name }));
-  }
   try {
     const result = await api("/api/transfer-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ plan_id: $("plan").value, rules: state.rules }),
     });
     const count = result.rules === 1 ? "1 rule" : `${result.rules} rules`;
     message("save-msg", `Saved ${count}.`, "ok");
@@ -230,11 +197,12 @@ async function save() {
 if (mainEl && $("save-btn")) {
   $("save-btn").addEventListener("click", save);
   $("add-rule-btn").addEventListener("click", addRule);
-  if (!hosted) {
-    $("add-wallet-btn").addEventListener("click", addWallet);
-    $("plan").addEventListener("change", loadAccounts);
-    renderWallets();
-    loadPlans();
+  $("plan").addEventListener("change", loadAccounts);
+  if ($("connect-btn")) {
+    $("connect-btn").addEventListener("click", () => {
+      window.location.href = "/oauth/login?next=/transfer-rules";
+    });
   }
   renderRules();
+  connectYnab();
 }

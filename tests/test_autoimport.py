@@ -657,16 +657,17 @@ class TransferRulesTest(RunnerTest):
     """Rows a saved transfer rule matches go to import_statement() as transfers."""
 
     def test_matching_rows_are_imported_as_transfers(self):
-        self.add_user(
-            mappings={
-                "gcash": {"source": "gcash", "account_id": ACCOUNT_ID, "enabled": True},
-                "gotyme": {"source": "gotyme", "account_id": OTHER_ACCOUNT_ID, "enabled": True},
-            },
-            password_inputs={"gcash": INPUTS},
-        )
+        self.add_user()  # GCash goes to ACCOUNT_ID; the other bank needs no mapping
         # make_pdf.BALANCED_ROWS[2] is "Cash-in from Test Bank"
-        rule = {"description": "cash-in FROM test", "from_wallet": "gcash", "to_wallet": "gotyme"}
-        self.store.save_user(SUB, transfer_rules=[rule])
+        rule = {
+            "account_1_id": ACCOUNT_ID,
+            "account_1_name": "GCash",
+            "description_1": "cash-in FROM test",
+            "account_2_id": OTHER_ACCOUNT_ID,
+            "account_2_name": "GoTyme",
+            "description_2": "",
+        }
+        self.store.save_user(SUB, transfer_pairs=[rule])
         self.import_statement.return_value = dataclasses.replace(imported(), transfers=1)
         self.gmail.add("msg-1")
 

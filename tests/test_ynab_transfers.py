@@ -157,6 +157,17 @@ class ImportTransfersTest(FakeYnabTest):
         # Nothing left to send, so only the GCash import called create_transaction
         self.assertEqual(self.ynab_calls().count("create_transaction"), 1)
 
+    def test_the_other_order_also_makes_one_transfer(self):
+        # A rule with both sides' descriptions lets either statement go first
+        first = self.import_statement(GOTYME_STATEMENT, GOTYME, {0: GCASH})
+        self.assertEqual((len(first.created), first.transfers), (1, 1))
+        second = self.import_statement(GCASH_STATEMENT, GCASH, {0: GOTYME})
+        self.assertEqual((len(second.created), second.skipped), (1, 1))  # only the coffee
+        transfers = [t for t in self.ynab.transactions(GCASH) if t.transfer_account_id]
+        self.assertEqual(
+            [(t.amount, t.transfer_account_id) for t in transfers], [(-500000, GOTYME)]
+        )
+
     def test_importing_again_skips_by_import_id(self):
         self.import_statement(GCASH_STATEMENT, GCASH, {0: GOTYME})
         again = self.import_statement(GCASH_STATEMENT, GCASH, {0: GOTYME})

@@ -39,7 +39,7 @@ from statement_etl.ynab_api.accounts import get_user
 
 YNAB_AUTHORIZE_URL = "https://app.ynab.com/oauth/authorize"
 # Pages /oauth/login?next=... is allowed to return to (no open redirects)
-NEXT_PAGES = {"/": "/", "/auto-import": "/auto-import"}
+NEXT_PAGES = {"/": "/", "/auto-import": "/auto-import", "/transfer-rules": "/transfer-rules"}
 
 blueprint = Blueprint("ynab_auth", __name__)
 
