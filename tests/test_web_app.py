@@ -709,7 +709,8 @@ class ParseTest(WebTest):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.get_json()["error"],
-            "Unknown source 'nope'. Known sources: bpi, gcash, gotyme, gotyme_goalsave",
+            "Unknown source 'nope'. Known sources: bpi, bpi_credit_card, gcash, gotyme, "
+            "gotyme_goalsave, maya, maya_credit_card",
         )
 
     def test_no_file(self):

@@ -15,7 +15,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from statement_etl.parsers import bpi, gcash, gotyme, gotyme_goalsave
+from statement_etl.parsers import (
+    bpi,
+    bpi_credit_card,
+    gcash,
+    gotyme,
+    gotyme_goalsave,
+    maya,
+    maya_credit_card,
+)
 
 
 def _no_summary(rows):
@@ -85,7 +93,9 @@ class Source:
         columns           - every column, in the order the statement prints them
         amount_columns    - money columns: right-aligned on the page and in the CLI
         money_in_columns  - shown green on the page, e.g. ("Credit",)
-        money_out_columns - shown red on the page, e.g. ("Debit",)
+        money_out_columns - shown red on the page, e.g. ("Debit",). A value
+                            with a minus sign shows the other colour: a card
+                            payment, "-60000.00", in a money-out "Amount"
         text_column       - long free text that may wrap, e.g. "Description"
         account_column    - for a statement that holds several accounts (GoTyme
                             GoalSave): the column that tells them apart, e.g.
@@ -282,6 +292,70 @@ SOURCES = {
             summary=bpi.summary,
             # No email_query: BPI doesn't email statements, so no auto-import;
             # download the PDF from BPI online banking and upload it by hand
+        ),
+        Source(
+            key="bpi_credit_card",
+            name="BPI Credit Card",
+            password_env="BPI_CREDIT_CARD_PDF_PASSWORD",
+            columns=bpi_credit_card.COLUMNS,
+            # Amount is signed: a charge positive (red), a payment negative (green)
+            amount_columns=("Amount", "Balance"),
+            money_out_columns=("Amount",),
+            text_column="Description",
+            parse=bpi_credit_card.parse_transactions,
+            statement_balances=bpi_credit_card.statement_balances,
+            to_transactions=bpi_credit_card.to_transactions,
+            summary=bpi_credit_card.summary,
+            email_query=(
+                "from:bpi_cards_estatement@bpi.com.ph "
+                'subject:"BPI Credit Card Electronic Statement of Account" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"^BPI eStatement-.+\.pdf$",
+            password_inputs=("birth_date",),
+            build_password=bpi_credit_card.build_password,
+        ),
+        Source(
+            key="maya",
+            name="Maya",
+            password_env="MAYA_PDF_PASSWORD",
+            columns=maya.COLUMNS,
+            # Amount is signed: money in positive (green), money out negative (red)
+            amount_columns=("Amount", "Running balance"),
+            money_in_columns=("Amount",),
+            text_column="Details",
+            parse=maya.parse_transactions,
+            statement_balances=maya.statement_balances,
+            to_transactions=maya.to_transactions,
+            summary=maya.summary,
+            email_query=(
+                'from:noreply@maya.ph subject:"Your Maya Wallet Statement" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"^MayaWallet_SoA_.+\.pdf$",
+            password_inputs=("first_name", "last_name", "mobile_last5"),
+            build_password=maya.build_password,
+        ),
+        Source(
+            key="maya_credit_card",
+            name="Maya Credit Card",
+            password_env="MAYA_CREDIT_CARD_PDF_PASSWORD",
+            columns=maya_credit_card.COLUMNS,
+            # Amount is signed: a charge positive (red), a payment negative (green)
+            amount_columns=("Amount", "Balance"),
+            money_out_columns=("Amount",),
+            text_column="Description",
+            parse=maya_credit_card.parse_transactions,
+            statement_balances=maya_credit_card.statement_balances,
+            to_transactions=maya_credit_card.to_transactions,
+            summary=maya_credit_card.summary,
+            email_query=(
+                'from:noreply@mayabank.ph subject:"Credit Card billing statement" '
+                "has:attachment filename:pdf"
+            ),
+            attachment_pattern=r"^MayaCreditCard_SoA_.+\.pdf$",
+            password_inputs=("birth_date", "mobile_last6"),
+            build_password=maya_credit_card.build_password,
         ),
     ]
 }
