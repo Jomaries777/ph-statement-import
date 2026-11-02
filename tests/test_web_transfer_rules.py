@@ -156,7 +156,10 @@ class LocalTransferRulesTest(LocalSettingsWebTest):
         self.connected()
         response = self.save(plan_id=PLAN_ID, rules=[{**SENT, "account_2_id": "not-in-plan"}])
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"], "Rule 1: choose both banks.")
+        self.assertEqual(
+            response.get_json()["error"],
+            "Rule 1: The account isn't an open account in this plan. Choose Bank #2 again.",
+        )
         self.assertFalse(self.path.exists())
 
     def test_rules_need_a_plan_and_ynab(self):

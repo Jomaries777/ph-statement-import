@@ -541,6 +541,110 @@ class CorrectBalancesTest(unittest.TestCase):
         )
         self.assertEqual(refund["Description"], "Refund from Received GCash from Test Sender")
 
+    def test_gap_of_the_previous_payment_refunds_that_payment(self):
+        # The statement shows two rides paid, but the balance only went down once:
+        # the first was refunded, and the refund row isn't on the statement
+        first_ride = gcash_row(
+            "2026-10-01 06:35 AM",
+            "Payment to Test Rides",
+            "1000000000001",
+            debit="59.00",
+            balance="441.00",
+        )
+        second_ride = gcash_row(
+            "2026-10-01 06:37 AM",
+            "Payment to Test Rides",
+            "1000000000002",
+            debit="58.00",
+            balance="442.00",
+        )
+        result = gcash._correct_balances([first_ride, second_ride], balances("500"))
+        self.assertEqual(
+            result,
+            [
+                first_ride,
+                gcash_row(
+                    "2026-10-01 06:35 AM",  # the refunded payment's date and Reference No.
+                    "Refund from Test Rides",
+                    "R1000000000001",
+                    credit="59.00",
+                    balance="500.00",
+                ),
+                second_ride,
+            ],
+        )
+
+    def test_refunds_of_payments_in_a_row(self):
+        # Both payments were refunded; the second refund only shows on the 5,000.00 row
+        rows = [
+            gcash_row(
+                "2026-10-01 06:35 AM",
+                "Payment to Test Shop",
+                "1000000000001",
+                debit="59.00",
+                balance="441.00",
+            ),
+            gcash_row(
+                "2026-10-01 06:37 AM",
+                "Payment to Test Rides",
+                "1000000000002",
+                debit="59.00",
+                balance="441.00",
+            ),
+            gcash_row(
+                "2026-10-02 07:48 AM",
+                "Received GCash from Test Sender",
+                "1000000000003",
+                credit="5,000.00",
+                balance="5,500.00",
+            ),
+        ]
+        refunds = [
+            (r["Date and Time"], r["Description"], r["Reference No."], r["Credit"])
+            for r in gcash._correct_balances(rows, balances("500"))
+            if gcash.is_correction_row(r)
+        ]
+        self.assertEqual(
+            refunds,
+            [
+                ("2026-10-01 06:35 AM", "Refund from Test Shop", "R1000000000001", "59.00"),
+                ("2026-10-01 06:37 AM", "Refund from Test Rides", "R1000000000002", "59.00"),
+            ],
+        )
+
+    def test_a_row_with_its_own_refund_is_not_refunded_again(self):
+        # The 30.00 gap is no payment's amount, so its refund takes row 2's
+        # Reference No.; the next 70.00 gap can't take it too
+        rows = [
+            gcash_row(
+                "2026-10-01 09:00 AM",
+                "Payment to Test Shop",
+                "1000000000001",
+                debit="10.00",
+                balance="490.00",
+            ),
+            gcash_row(
+                "2026-10-02 09:00 AM",
+                "Payment to Test Rides",
+                "1000000000002",
+                debit="70.00",
+                balance="450.00",
+            ),
+            gcash_row(
+                "2026-10-03 09:00 AM",
+                "Payment to Test Shop",
+                "1000000000003",
+                debit="5.00",
+                balance="515.00",
+            ),
+        ]
+        references = [
+            r["Reference No."]
+            for r in gcash._correct_balances(rows, balances("500"))
+            if gcash.is_correction_row(r)
+        ]
+        self.assertEqual(references, ["R1000000000002", "R1000000000003"])
+
     def test_money_missing_becomes_one_row_at_the_end(self):
         rows = [
             gcash_row(
