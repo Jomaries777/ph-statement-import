@@ -23,7 +23,15 @@ its destination. It can only take step 2: it's linked to the transfer one of
 them already made (same amount, within MATCH_DAYS), or, if none did, imported
 as an ordinary row. So the GoalSave statement is imported first.
 
+A source that charges for transfers out (Source.transfer_fee: GCash's 10.00
+InstaPay fee) shows the fee in the row's amount. Such a row is split, so the
+transfer matches what the other bank received:
+
+    GCash statement:  "Transfer to 0917123"  -510.00  -> a -500.00 transfer to GoTyme,
+                                                         and -10.00 "InstaPay fee"
+
     transfer_payee_ids() - {account id: that account's transfer payee id}
+    pays_fee()           - does a transfer row include the source's fee?
     apply_transfers()    - point transfer rows at their account's transfer
                            payee, and find the ones already in YNAB
 """
@@ -33,6 +41,7 @@ from datetime import date, timedelta
 import ynab
 
 from statement_etl.ynab_api.client import ynab_client
+from statement_etl.ynab_api.format import fee_import_id, to_milliunits
 
 # The other side of a transfer can be dated a day or two apart on the two statements
 MATCH_DAYS = 3
@@ -77,8 +86,31 @@ def _take_other_side(other_sides: list, transaction: dict, to_accounts: tuple):
     return None
 
 
+def pays_fee(transaction: dict, to, fee) -> bool:
+    """Does this transfer row include the source's fee (Source.transfer_fee)?
+    Only a transfer out to one named account, larger than the fee."""
+    return bool(fee) and isinstance(to, str) and transaction["amount"] < -to_milliunits(fee.amount)
+
+
+def _split_fee(transaction: dict, fee) -> tuple[dict, dict]:
+    """A transfer out that includes the source's fee -> (the transfer, the fee).
+
+    The fee row keeps the date and memo, so searching the memo in YNAB finds both.
+    -510000 with a 10.00 fee -> (-500000 transfer, -10000 "InstaPay fee")
+    """
+    amount = to_milliunits(fee.amount)
+    transfer = {**transaction, "amount": transaction["amount"] + amount}
+    fee_row = {
+        **transaction,
+        "payee_name": fee.payee,
+        "amount": -amount,
+        "import_id": fee_import_id(transaction["import_id"]),
+    }
+    return transfer, fee_row
+
+
 def apply_transfers(
-    transactions, transfers, account_id, plan_id, access_token=None
+    transactions, transfers, account_id, plan_id, access_token=None, fee=None
 ) -> tuple[list[dict], set[str]]:
     """Turn the rows in `transfers` into YNAB transfers.
 
@@ -87,11 +119,15 @@ def apply_transfers(
                    (statement_etl.transfers.find_transfers()). A tuple of ids
                    (empty: any account) links the row only to a transfer one
                    of them already made; otherwise it stays an ordinary row.
+    fee          - the source's TransferFee (sources.py), or None: a transfer
+                   out to one named account, larger than the fee, is split
+                   into the transfer and the fee
 
     Returns (transactions, already_in_ynab):
         transactions    - a copy; each transfer row gets "payee_id", the
                           destination's transfer payee (YNAB uses it instead
-                          of payee_name)
+                          of payee_name). Fee rows go at the end, so every
+                          row keeps its index.
         already_in_ynab - import_ids of transfer rows whose other side is
                           already in this account (see the module docstring).
                           Don't upload them: they'd be counted twice.
@@ -118,9 +154,12 @@ def apply_transfers(
     other_sides = _other_sides(
         account_id, plan_id, earliest - timedelta(days=MATCH_DAYS), access_token
     )
-    result, already_in_ynab = [], set()
+    result, already_in_ynab, fee_rows = [], set(), []
     for index, transaction in enumerate(transactions):
         to = destinations.get(index)
+        if pays_fee(transaction, to, fee):
+            transaction, fee_row = _split_fee(transaction, fee)
+            fee_rows.append(fee_row)
         if to is None:
             result.append(transaction)
         elif isinstance(to, tuple):  # one of these accounts, if it made the transfer
@@ -135,7 +174,7 @@ def apply_transfers(
             result.append({**transaction, "payee_id": payee_ids[to]})
             if _take_other_side(other_sides, transaction, (to,)):
                 already_in_ynab.add(transaction["import_id"])
-    return result, already_in_ynab
+    return result + fee_rows, already_in_ynab
 
 
 def unlinked(transfers, transactions, already_in_ynab) -> list[int]:

@@ -98,6 +98,8 @@ Your parser must also provide these functions for the `Source` entry:
 
 `statement_etl/parsers/common.py` has helpers you can reuse: `open_pdf()` (handles a wrong password), `group_lines()` (words → text lines) and `to_decimal()` (`"1,234.50"` → `Decimal`).
 
+If words run together in the printed positions ("InstaPayTransfer", "Jul27"), the statement prints them close together: read the page with a smaller gap, `page.extract_words(x_tolerance=...)`. BPI's parser uses 2.5 (`WORD_GAP` in `parsers/bpi.py`); pdfplumber's default is 3.
+
 Check your parser on your own PDF and compare the output with the PDF: the row count, the first and last rows, and a wrapped description.
 
 ```bash
@@ -257,6 +259,8 @@ Checklist:
 
 ## Auto-import from Gmail (optional)
 
+Skip this if the bank doesn't email its statements. BPI doesn't, so its `Source` has no `email_query`: it's upload-only and `/auto-import` doesn't list it.
+
 In hosted mode, `/auto-import` polls Gmail for new statement emails and imports each matching PDF attachment to the mapped YNAB account using the same `parse_statement()` and `import_statement()` pipeline as manual upload.
 
 A source opts in by setting four optional fields on its `Source` entry in `statement_etl/sources.py` (more, if one person can have several accounts there):
@@ -271,6 +275,7 @@ A source opts in by setting four optional fields on its `Source` entry in `state
 | `email_account` | `Callable \| None` | With `account_input`: `(email body text, PDF filename) -> value or None`, the account the email is for. GCash's `email_account()` reads `Mobile number: 0917123****` from the body, then `enc-0917123_….pdf` from the filename. The runner sends each email to the wallet saved with that value; an email for an account that isn't on the page is recorded as "⚠ No account". |
 | `account_column` | `str \| None` | Instead of `email_account`, for a statement that holds **several accounts in one PDF**: the column of each row that says whose it is, e.g. `"GoalSave No."`. The manual upload page shows a picker and uploads one account at a time; auto-import reads the PDF once and imports each account into the wallet saved with that value (`account_input`), all in one run with an entry per account. An account with no wallet on the page is a "⚠ No account" entry; the others still import. |
 | `own_transfers` | `OwnTransfers \| None` | Also used by the manual upload: for rows that always move money to or from the same person's account at another source, so they're YNAB transfers with no transfer rule. GoalSave's is `OwnTransfers(description="Deposit account", other_source="gotyme", other_description="GoalSave")`: its rows go to the Everyday account, and Everyday's rows, which don't say which GoalSave account, link to the transfer a GoalSave import already made. Auto-import imports such a source first. |
+| `transfer_fee` | `TransferFee \| None` | Also used by the manual upload: what the source charges for each transfer out, when its statement shows it in the row's amount. Each transfer out to one named account is split into the transfer and the fee, so the transfer matches what the other bank received. GCash's is `TransferFee(amount=Decimal("10.00"), payee="InstaPay fee")`: a 510.00 transfer out becomes a 500.00 transfer and a 10.00 "InstaPay fee". |
 | `shared_password` | `bool` | With `account_column`: one password opens every account, so `/auto-import` asks for the `password_inputs` on the source's first row only, and saves them with every row. |
 
 **Example: GCash (`gcash`)**

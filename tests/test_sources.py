@@ -84,7 +84,9 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(SOURCES["gcash"].wallet_name("0917123"), "GCash · 0917123")
 
     def test_unknown_source(self):
-        with self.assertRaisesRegex(ValueError, "Known sources: gcash, gotyme"):
+        with self.assertRaisesRegex(
+            ValueError, "Known sources: bpi, gcash, gotyme, gotyme_goalsave"
+        ):
             get_source("nope")
 
     def test_get_source(self):

@@ -41,6 +41,12 @@ def make_import_id(source, source_txn_id):
     return IMPORT_ID_PREFIX + transaction_ref(source, source_txn_id)
 
 
+def fee_import_id(import_id):
+    """The import_id of the fee split off a transfer row (ynab_api/transfers.py):
+    built from the row's own import_id, so it's as stable, and never the same."""
+    return IMPORT_ID_PREFIX + transaction_ref("fee", import_id)
+
+
 def ynab_transaction(date, payee_name, amount, import_id, memo=None, flag_color=None):
     """Build one transaction in the shape YNAB expects.
 

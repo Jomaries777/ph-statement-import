@@ -18,6 +18,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 from statement_etl import pipeline
+from statement_etl.sources import TransferFee
+from statement_etl.ynab_api.format import fee_import_id
 from statement_etl.ynab_api.transfers import apply_transfers, transfer_payee_ids, unlinked
 from tests.e2e import fake_ynab
 
@@ -126,11 +128,14 @@ class ImportTest(FakeYnabTest):
     """pipeline.import_statement() and starting_balance_check(), with the
     statements' own balances left out."""
 
+    transfer_fee = None  # the source's Source.transfer_fee
+
     def setUp(self):
         super().setUp()
         # The statements' own balances don't matter here
         source = SimpleNamespace(
-            statement_balances=lambda rows: {"starting": Decimal(0), "ending": Decimal(0)}
+            statement_balances=lambda rows: {"starting": Decimal(0), "ending": Decimal(0)},
+            transfer_fee=self.transfer_fee,
         )
         self.enterContext(mock.patch.object(pipeline, "get_source", return_value=source))
 
@@ -183,6 +188,92 @@ class ImportTransfersTest(ImportTest):
         self.import_statement(GCASH_STATEMENT, GCASH, {0: GOTYME})
         second = self.import_statement(GOTYME_STATEMENT, GOTYME, None)
         self.assertEqual((len(second.created), second.transfers), (1, 0))
+
+
+# GCash charges 10.00 for each transfer out, and its statement shows it in
+# the row: 510.00 leaves GCash, 500.00 reaches GoTyme
+FEE = TransferFee(amount=Decimal("10.00"), payee="InstaPay fee")
+GCASH_STATEMENT_WITH_FEE = [
+    transaction("ETLPH:gcash-transfer", -510000),
+    transaction("ETLPH:gcash-coffee", -150250, payee="Sample Coffee Shop"),
+]
+
+
+class TransferFeeTest(FakeYnabTest):
+    """apply_transfers() with a fee: a transfer out is split into the transfer
+    and the fee."""
+
+    def test_a_transfer_out_is_split_into_the_transfer_and_the_fee(self):
+        result, _ = apply_transfers(
+            GCASH_STATEMENT_WITH_FEE, {0: GOTYME}, GCASH, PLAN, TOKEN, fee=FEE
+        )
+        transfer, coffee, fee = result
+        self.assertEqual(
+            (transfer["amount"], transfer["payee_id"]),
+            (-500000, fake_ynab.transfer_payee_id(GOTYME)),
+        )
+        self.assertEqual(coffee, GCASH_STATEMENT_WITH_FEE[1])
+        # At the end, so every statement row keeps its index
+        self.assertEqual(
+            fee,
+            {
+                **transaction(fee_import_id("ETLPH:gcash-transfer"), -10000),
+                "payee_name": "InstaPay fee",
+            },
+        )
+        self.assertNotEqual(fee["import_id"], transfer["import_id"])
+
+    def test_no_fee_on_other_rows(self):
+        cases = {
+            "money in": (transaction("ETLPH:in", 500000), GOTYME),
+            "not more than the fee": (transaction("ETLPH:small", -10000), GOTYME),
+            "no named account": (transaction("ETLPH:any", -510000), (GOTYME,)),
+        }
+        for name, (row, to) in cases.items():
+            with self.subTest(name):
+                result, _ = apply_transfers([row], {0: to}, GCASH, PLAN, TOKEN, fee=FEE)
+                self.assertEqual([t["amount"] for t in result], [row["amount"]])
+        coffee = GCASH_STATEMENT_WITH_FEE[1]  # not a transfer
+        result, _ = apply_transfers([coffee], {}, GCASH, PLAN, TOKEN, fee=FEE)
+        self.assertEqual(result, [coffee])
+
+
+class TransferFeeImportTest(ImportTest):
+    """The round trip with GCash's fee: the 500.00 transfer matches GoTyme's
+    500.00 in either order, and the 10.00 fee is its own transaction."""
+
+    transfer_fee = FEE
+
+    def gcash_fee(self):
+        return [t for t in self.ynab.transactions(GCASH) if t.payee_name == "InstaPay fee"]
+
+    def test_gcash_first(self):
+        first = self.import_statement(GCASH_STATEMENT_WITH_FEE, GCASH, {0: GOTYME})
+        self.assertEqual((len(first.created), first.transfers), (3, 1))
+        self.assertEqual([t.amount for t in self.gcash_fee()], [-10000])
+        self.assertEqual(self.ynab.transactions(GOTYME)[-1].amount, 500000)
+
+        second = self.import_statement(GOTYME_STATEMENT, GOTYME, {0: GCASH})
+        self.assertEqual((len(second.created), second.skipped), (0, 1))
+
+    def test_gotyme_first_then_only_the_fee_and_the_coffee(self):
+        self.import_statement(GOTYME_STATEMENT, GOTYME, {0: GCASH})
+        check = pipeline.starting_balance_check(
+            [], GCASH_STATEMENT_WITH_FEE, GCASH, PLAN, TOKEN, transfers={0: GOTYME}
+        )
+        self.assertEqual((check["already_in_ynab"], check["to_upload"]), (1, 2))
+
+        second = self.import_statement(GCASH_STATEMENT_WITH_FEE, GCASH, {0: GOTYME})
+        self.assertEqual((len(second.created), second.skipped), (2, 1))
+        self.assertEqual(sorted(t.amount for t in second.created), [-150250, -10000])
+        transfers = [t for t in self.ynab.transactions(GCASH) if t.transfer_account_id]
+        self.assertEqual([t.amount for t in transfers], [-500000])
+
+    def test_importing_again_skips_the_fee_too(self):
+        self.import_statement(GCASH_STATEMENT_WITH_FEE, GCASH, {0: GOTYME})
+        again = self.import_statement(GCASH_STATEMENT_WITH_FEE, GCASH, {0: GOTYME})
+        self.assertEqual((len(again.created), again.skipped), (0, 3))
+        self.assertEqual(len(self.gcash_fee()), 1)
 
 
 # GoTyme Everyday and two GoalSave accounts. The same day, 1,500.00 goes to

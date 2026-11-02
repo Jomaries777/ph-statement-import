@@ -46,7 +46,7 @@ class RowsToTransactionsTest(unittest.TestCase):
 
     def test_unknown_source(self):
         with self.assertRaisesRegex(
-            ValueError, r"Unknown source 'nope'. Known sources: gcash, gotyme"
+            ValueError, r"Unknown source 'nope'. Known sources: bpi, gcash, gotyme, gotyme_goalsave"
         ):
             convert.rows_to_transactions([PAYMENT], "nope")
 

@@ -61,6 +61,7 @@ from statement_etl.ynab_api.balance import (
     new_account_message,
 )
 from statement_etl.ynab_api.categories import uncategorized_created
+from statement_etl.ynab_api.transfers import pays_fee
 
 blueprint = Blueprint("upload", __name__)
 
@@ -330,6 +331,13 @@ def _transfer_label(source, to, names) -> str:
     )
 
 
+def _fee_label(source, to, transaction) -> str:
+    """ " · 10.00 InstaPay fee" after the "→ …" mark of a transfer the upload
+    splits a fee off (Source.transfer_fee, ynab_api/transfers.py), else ""."""
+    fee = source.transfer_fee
+    return f" · {fee.amount:,.2f} {fee.payee}" if pays_fee(transaction, to, fee) else ""
+
+
 @blueprint.post("/api/starting-balance")
 def api_starting_balance():
     """Before the upload: YNAB account balance vs. the statement's starting balance.
@@ -367,7 +375,11 @@ def api_starting_balance():
             # rows a transfer rule matched, so the page can mark them; not
             # the ones that found no transfer to link to (they go as ordinary rows)
             "transfers": [
-                {"row": index, "to": _transfer_label(source, to, account_names)}
+                {
+                    "row": index,
+                    "to": _transfer_label(source, to, account_names)
+                    + _fee_label(source, to, transactions[index]),
+                }
                 for index, to in sorted(transfers.items())
                 if index not in unlinked
             ],

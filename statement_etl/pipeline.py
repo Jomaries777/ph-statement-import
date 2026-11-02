@@ -230,7 +230,8 @@ def starting_balance_check(
     the expected "YNAB balance AFTER upload" adds only the others, and the
     check says "X transactions already in YNAB. Only Y will be uploaded."
     transfers is as in import_statement(): a transfer whose other side YNAB
-    already has counts as already in YNAB too.
+    already has counts as already in YNAB too, and a transfer fee split off
+    it (Source.transfer_fee) is still uploaded.
     Returns the check dict from
     ynab_api.balance.check_starting_balance(); describe it with
     ynab_api.balance.balance_check_message(). A mismatch is a warning only.
@@ -239,14 +240,14 @@ def starting_balance_check(
     uploaded as ordinary rows (ynab_api.transfers.unlinked()).
     Raises ynab.ApiException if YNAB rejects the request.
     """
-    starting = get_source(source).statement_balances(rows)["starting"]
-    _, other_side_in_ynab = apply_transfers(
-        transactions, transfers, account_id, plan_id, access_token
+    src = get_source(source)
+    starting = src.statement_balances(rows)["starting"]
+    # with transfer fees split off, as import_statement() uploads them
+    to_send, other_side_in_ynab = apply_transfers(
+        transactions, transfers, account_id, plan_id, access_token, fee=src.transfer_fee
     )
-    already = (
-        find_already_imported(transactions, account_id, plan_id, access_token) | other_side_in_ynab
-    )
-    to_upload = [t for t in transactions if t["import_id"] not in already]
+    already = find_already_imported(to_send, account_id, plan_id, access_token) | other_side_in_ynab
+    to_upload = [t for t in to_send if t["import_id"] not in already]
     upload_total = Decimal(sum(t["amount"] for t in to_upload)) / 1000
     check = check_starting_balance(
         starting,
@@ -328,7 +329,10 @@ def import_statement(
     a transfer rule matched (transfers.find_transfers()). They're sent as
     YNAB transfers, except those whose other side YNAB already has
     (ynab_api/transfers.py), which are skipped like already-imported ones.
-    A tuple destination only links to a transfer YNAB already has.
+    A tuple destination only links to a transfer YNAB already has. A source
+    that charges for transfers out (Source.transfer_fee) gets each one split
+    into the transfer and the fee, e.g. GCash's -510.00 into a -500.00
+    transfer and a -10.00 "InstaPay fee".
 
         result = import_statement(rows, transactions, account_id, plan_id)
         len(result.created), result.skipped  ->  (23, 2)
@@ -352,10 +356,16 @@ def import_statement(
     # 2. YNAB balance just before the upload, for the ending-balance message
     ynab_before = get_account_balance(plan_id, account_id, access_token)
 
-    # 3. Rows a transfer rule matched become YNAB transfers; the ones YNAB
-    #    already has as the other side of a transfer aren't sent again
+    # 3. Rows a transfer rule matched become YNAB transfers, with any transfer
+    #    fee split off; the ones YNAB already has as the other side of a
+    #    transfer aren't sent again (their fee is)
     transactions, other_side_in_ynab = apply_transfers(
-        transactions, transfers, account_id, plan_id, access_token
+        transactions,
+        transfers,
+        account_id,
+        plan_id,
+        access_token,
+        fee=get_source(source).transfer_fee,
     )
     to_upload = [t for t in transactions if t["import_id"] not in other_side_in_ynab]
 

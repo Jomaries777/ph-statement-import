@@ -56,6 +56,8 @@ SAVED = {
 }
 # ROWS[2] in tests/test_web_app.py is "Payment to Test Shop"
 PAYMENT_RULE = {**SAVED, "description_1": "payment to TEST"}
+# ... money out of GCash, so the page says the upload splits GCash's fee off
+GOTYME_WITH_FEE = "GoTyme · 10.00 InstaPay fee"
 
 # GoalSave No. 22222's rows: "Earned interest", "Transfer to Deposit account"
 GOALSAVE_ROWS = TWO_ACCOUNT_ROWS[1:]
@@ -306,7 +308,7 @@ class LocalUploadTransfersTest(LocalSettingsWebTest):
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check) as start:
             response = self.client.post("/api/starting-balance", json=TARGET)
-        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
+        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": GOTYME_WITH_FEE}])
         self.assertEqual(start.call_args.kwargs["transfers"], {2: OTHER_ACCOUNT_ID})
 
     def test_the_upload_sends_them_as_transfers(self):
@@ -406,7 +408,7 @@ class HostedUploadTransfersTest(HostedRulesWebTest):
         check = starting_check()
         with mock.patch.object(upload, "starting_balance_check", return_value=check):
             response = self.client.post("/api/starting-balance", json=TARGET)
-        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": "GoTyme"}])
+        self.assertEqual(response.get_json()["transfers"], [{"row": 2, "to": GOTYME_WITH_FEE}])
 
     def test_mapped_goalsave_accounts_are_the_everyday_rows_choices(self):
         self.sign_in_google(
