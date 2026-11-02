@@ -455,7 +455,14 @@ class WebFlowTest(BrowserTest):
 
         page.click("#add-rule-btn")
         expect(page.locator("#rules-table th")).to_have_text(
-            ["Bank #1", "Bank #1 description", "Bank #2", "Bank #2 description", ""]
+            [
+                "From: Bank #1",
+                "Bank #1 shows (money out)",
+                "",
+                "To: Bank #2",
+                "Bank #2 shows (money in)",
+                "",
+            ]
         )
         rule = page.locator("#rules-table tbody tr")
         # The plan's first two accounts are picked; Bank #2 is then changed

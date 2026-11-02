@@ -116,6 +116,7 @@ td.inputs-cell { white-space: normal; min-width: 280px; vertical-align: top; }
 td.account-cell { min-width: 220px; }
 td.wallet-cell, td.account-cell, td.test-cell { vertical-align: top; padding-top: 10px; }
 td.wrap-cell { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
+td.rule-arrow { color: var(--muted); font-size: 18px; padding: 6px 0; text-align: center; }
 .input-group { display: flex; gap: 8px; flex-wrap: wrap; }
 .input-field { flex: 1 1 130px; display: flex; flex-direction: column; gap: 2px; }
 .input-field input { max-width: none; }

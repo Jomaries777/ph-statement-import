@@ -499,10 +499,10 @@
         <h3><span>Rules</span></h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Bank #1</th><th>Bank #1 description</th><th>Bank #2</th><th>Bank #2 description</th><th></th></tr></thead>
+            <thead><tr><th>From: Bank #1</th><th>Bank #1 shows (money out)</th><th></th><th>To: Bank #2</th><th>Bank #2 shows (money in)</th><th></th></tr></thead>
             <tbody>
-              <tr><td><div class="field select">GCash - 1161</div></td><td><div class="field">Transfer to 0917123</div></td><td><div class="field select">GoTyme</div></td><td><div class="field">InstaPay from GCash</div></td><td><button class="btn ghost">Remove</button></td></tr>
-              <tr><td><div class="field select">GoTyme</div></td><td><div class="field">Transfer to BPI</div></td><td><div class="field select">BPI Savings</div></td><td><div class="field muted">Optional</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field select">GCash - 1161</div></td><td><div class="field">Transfer to 0917123</div></td><td>→</td><td><div class="field select">GoTyme</div></td><td><div class="field">InstaPay from GCash</div></td><td><button class="btn ghost">Remove</button></td></tr>
+              <tr><td><div class="field select">GoTyme</div></td><td><div class="field">Transfer to BPI</div></td><td>→</td><td><div class="field select">BPI Savings</div></td><td><div class="field muted">Optional</div></td><td><button class="btn ghost">Remove</button></td></tr>
             </tbody>
           </table>
         </div>
@@ -529,7 +529,7 @@
   </div>
   <aside class="notes">
     <div class="note"><b class="pin">1</b>The banks are the plan's open YNAB accounts, so no auto-import mappings are needed. Hosted, the page reuses auto-import's saved YNAB connection, or asks you to connect; rules are saved with your Google account (Firestore). Locally, connect on the upload page; rules are saved in a file on your computer (<code>~/.config/ph-statement-import/settings.json</code>).</div>
-    <div class="note"><b class="pin">2</b>One row per pair of banks. Each description is the text that bank's statement shows for the move; capital letters and extra spaces don't matter. Import either statement first: it makes the transfer in YNAB, and the other one finds it there (same amount, within 3 days) and doesn't add it again. Bank #2's description is optional: left empty, only Bank #1's statements are matched, like the second row.</div>
+    <div class="note"><b class="pin">2</b>One row per direction: money going from Bank #1 to Bank #2. Each text is what that bank's statement shows for the move (money out of Bank #1, into Bank #2). Money going the other way reads differently (GCash's "Received GCash from …"), so it's another rule with the banks swapped; capital letters and extra spaces don't matter. Import either statement first: it makes the transfer in YNAB, and the other one finds it there (same amount, within 3 days) and doesn't add it again. Bank #2's description is optional: left empty, only Bank #1's statements are matched, like the second row.</div>
     <div class="note"><b class="pin">3</b>Once you pick the YNAB account, matching rows show "→ GoTyme" in the parsed table. They're uploaded as YNAB transfers, and YNAB adds the other side to GoTyme Everyday by itself. The auto-import run log says "1 transfer" too.</div>
   </aside>
 </div>

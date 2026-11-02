@@ -49,17 +49,19 @@
     </div>
     <div id="ynab-msg" class="msg hidden"></div>
 
-    <p class="muted">Pair two of your YNAB accounts, with the text each bank's statement shows
-      for money moved between them, e.g. GCash's "Transfer to 0917123" and GoTyme's "InstaPay
-      from GCash". Capital letters and extra spaces don't matter.</p>
+    <p class="muted">A rule is one direction: money going <b>from Bank #1 to Bank #2</b>, with
+      the text each bank's statement shows for it, e.g. from GCash ("Transfer to 0917123") to
+      GoTyme ("InstaPay from GCash"). Capital letters and extra spaces don't matter.</p>
+    <p class="muted">Money going the other way shows different text, e.g. GCash's "Received
+      GCash from …", so it needs its own rule with the banks swapped.</p>
     <p class="muted">Import either statement first: it makes the transfer in YNAB, and the other
-      one finds it there and doesn't add it again. Leave Bank #2's description empty if you
-      only import Bank #1's statements.</p>
+      one finds it there and doesn't add it again. Leave Bank #2's text empty if you only
+      import Bank #1's statements.</p>
     <div class="table-wrap">
       <table id="rules-table">
         <thead><tr>
-          <th>Bank #1</th><th>Bank #1 description</th>
-          <th>Bank #2</th><th>Bank #2 description</th><th></th>
+          <th>From: Bank #1</th><th>Bank #1 shows (money out)</th><th></th>
+          <th>To: Bank #2</th><th>Bank #2 shows (money in)</th><th></th>
         </tr></thead>
         <tbody></tbody>
       </table>
