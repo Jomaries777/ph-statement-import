@@ -709,7 +709,7 @@ class ParseTest(WebTest):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.get_json()["error"],
-            "Unknown source 'nope'. Known sources: gcash, gotyme, gotyme_goalsave",
+            "Unknown source 'nope'. Known sources: bpi, gcash, gotyme, gotyme_goalsave",
         )
 
     def test_no_file(self):

@@ -98,6 +98,8 @@ Your parser must also provide these functions for the `Source` entry:
 
 `statement_etl/parsers/common.py` has helpers you can reuse: `open_pdf()` (handles a wrong password), `group_lines()` (words → text lines) and `to_decimal()` (`"1,234.50"` → `Decimal`).
 
+If words run together in the printed positions ("InstaPayTransfer", "Jul27"), the statement prints them close together: read the page with a smaller gap, `page.extract_words(x_tolerance=...)`. BPI's parser uses 2.5 (`WORD_GAP` in `parsers/bpi.py`); pdfplumber's default is 3.
+
 Check your parser on your own PDF and compare the output with the PDF: the row count, the first and last rows, and a wrapped description.
 
 ```bash
@@ -256,6 +258,8 @@ Checklist:
 ---
 
 ## Auto-import from Gmail (optional)
+
+Skip this if the bank doesn't email its statements. BPI doesn't, so its `Source` has no `email_query`: it's upload-only and `/auto-import` doesn't list it.
 
 In hosted mode, `/auto-import` polls Gmail for new statement emails and imports each matching PDF attachment to the mapped YNAB account using the same `parse_statement()` and `import_statement()` pipeline as manual upload.
 
