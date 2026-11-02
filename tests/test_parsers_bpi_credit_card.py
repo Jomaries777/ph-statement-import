@@ -254,9 +254,40 @@ class ParseTransactionsTest(unittest.TestCase):
         pages = statement_pages()
         pages[1] = summary_page(total_due="2,000.00")
         with self.assertRaisesRegex(
-            StatementError, "ending balance 2,750.00 != statement total amount due 2,000.00"
+            StatementError,
+            "ending balance 2,750.00 means an amount due of 2,750.00, "
+            "but the statement's total amount due is 2,000.00",
         ):
             self.parse(pages)
+
+    def test_an_overpaid_card(self):
+        # Paid more than owed: the Ending Balance is below 0, the amount due 0.00
+        pages = statement_pages(
+            ending="-100.00", rows=row(377, "October 1", "October 2", "SAMPLE CAFE", "-200.00")
+        )
+        pages[1] = summary_page(total_due="0.00")
+        rows = self.parse(pages)
+        self.assertEqual(rows[-1]["Balance"], "-100.00")
+        self.assertEqual(card.statement_balances(rows)["ending"], Decimal("100.00"))
+
+    def test_the_installment_balance_summary_is_not_read_as_rows(self):
+        # What's left to pay on past installment purchases, under the transactions
+        page = table_page()
+        page.chars += (
+            chars("Installment Balance Summary", 58, 440)
+            + chars("Transaction Last Payment Description Purchase Amount Remaining", 54, 462)
+            + chars("Date Date Balance", 54, 473)
+            + chars("010125", TRANSACTION_X, 494)
+            + chars("090126", 126, 494)
+            + chars("SAMPLE GADGETS Qu", 205, 494)
+            + right_chars("6,000.00", 444, 494)
+            + right_chars("250.00", AMOUNT_X1, 494)
+            + chars("Total", 328, 505)
+            + right_chars("250.00", AMOUNT_X1, 505)
+        )
+        pages = statement_pages()
+        pages[2] = page
+        self.assertEqual(self.parse(pages), STATEMENT_ROWS)
 
     def test_a_missing_summary_line_is_an_error(self):
         pages = statement_pages()
