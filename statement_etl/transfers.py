@@ -19,6 +19,11 @@ descriptions set, either statement can be imported first: the first makes the
 YNAB transfer, and the second finds it there (ynab_api/transfers.py says how).
 description_2 may be empty: Bank #2's statements are then never matched.
 
+The page shows a rule as one direction, money from Bank #1 to Bank #2: each
+bank words the other direction differently ("Received GCash from ..."), so
+that's another rule with the banks swapped. Matching itself only looks at
+the text, not whether the row is money in or out.
+
 Matching ignores case and extra spaces, and looks at the source's text_column
 (sources.py), so it works for every source with no code of its own.
 

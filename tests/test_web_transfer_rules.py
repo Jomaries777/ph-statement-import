@@ -132,7 +132,13 @@ class LocalTransferRulesTest(LocalSettingsWebTest):
         self.assertNotIn(b"<script>", page.data)
         self.assertNotIn(b"style=", page.data)
         self.assertIn(str(self.path).encode(), page.data)
-        for column in (b"Bank #1", b"Bank #1 description", b"Bank #2", b"Bank #2 description"):
+        columns = (
+            b"From: Bank #1",
+            b"Bank #1 shows (money out)",
+            b"To: Bank #2",
+            b"Bank #2 shows (money in)",
+        )
+        for column in columns:
             self.assertIn(b"<th>" + column + b"</th>", page.data)
         with self.client.get("/static/transfer_rules.js") as script:
             self.assertEqual(script.status_code, 200)
