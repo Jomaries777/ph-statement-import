@@ -472,6 +472,46 @@ class WebFlowTest(BrowserTest):
         self.assertTrue(settings.exists())
         self.assertEqual(self.console_errors, [])
 
+    def test_a_rule_from_another_plan_switches_to_the_same_named_accounts(self):
+        # e.g. saved before a YNAB "fresh start", which gives every account a new id
+        page = self.page
+        settings = Path(self.tmp.name) / "old-plan-settings.json"
+        self.enterContext(mock.patch.dict(os.environ, {"LOCAL_SETTINGS_PATH": str(settings)}))
+        local_settings.save_settings(
+            transfer_plan_id="old-plan",
+            transfer_pairs=[
+                {
+                    "account_1_id": "old-wallet",
+                    "account_1_name": fake_ynab.EXISTING_ACCOUNT_NAME,
+                    "description_1": "Transfer to 0917123",
+                    "account_2_id": "old-closed-bank",
+                    "account_2_name": "Closed Bank",
+                    "description_2": "",
+                }
+            ],
+        )
+        self.connect()
+        page.click("#transfer-rules-link")
+        rule = page.locator("#rules-table tbody tr")
+        expect(rule.locator("select").first).to_have_value(fake_ynab.EXISTING_ACCOUNT_ID)
+        # No account of that name in this plan: marked, and saving says which bank
+        expect(rule.locator("select").last.locator("option:checked")).to_have_text(
+            "Closed Bank (not in this plan)"
+        )
+        page.click("#save-btn")
+        expect(page.locator("#save-msg")).to_have_text(
+            "Rule 1: Closed Bank isn't an open account in this plan. Choose Bank #2 again."
+        )
+
+        rule.locator("select").last.select_option(fake_ynab.NEW_ACCOUNT_ID)
+        page.click("#save-btn")
+        expect(page.locator("#save-msg")).to_have_text("Saved 1 rule.")
+        saved = local_settings.load_settings()["transfer_pairs"][0]
+        self.assertEqual(
+            (saved["account_1_id"], saved["account_2_id"]),
+            (fake_ynab.EXISTING_ACCOUNT_ID, fake_ynab.NEW_ACCOUNT_ID),
+        )
+
     def test_a_row_matching_a_transfer_rule_becomes_a_ynab_transfer(self):
         page = self.page
         settings = Path(self.tmp.name) / "rules-upload-settings.json"

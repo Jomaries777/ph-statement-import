@@ -194,7 +194,14 @@ class CleanRulesTest(unittest.TestCase):
             "not a list": ({"rules": []}, "Send the rules as a list."),
             "not a dict": (["Transfer"], "Rule 1 is not valid."),
             "no bank #2": ([page_rule(account_2="")], "Rule 1: choose both banks."),
-            "not in the plan": ([page_rule(account_2="acc-other")], "Rule 1: choose both banks."),
+            "not in the plan": (
+                [{**page_rule(account_2="acc-old-gotyme"), "account_2_name": "GoTyme"}],
+                "Rule 1: GoTyme isn't an open account in this plan. Choose Bank #2 again.",
+            ),
+            "not in the plan, no name": (
+                [page_rule(account_1="acc-other")],
+                "Rule 1: The account isn't an open account in this plan. Choose Bank #1 again.",
+            ),
             "same bank": (
                 [page_rule(account_2="acc-gcash")],
                 "Rule 1: Bank #1 and Bank #2 must differ.",

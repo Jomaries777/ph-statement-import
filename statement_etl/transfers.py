@@ -180,8 +180,16 @@ def clean_rules(
         account_2 = str(item.get("account_2_id") or "")
         description_1 = " ".join(str(item.get("description_1") or "").split())
         description_2 = " ".join(str(item.get("description_2") or "").split())
-        if account_1 not in accounts or account_2 not in accounts:
+        if not account_1 or not account_2:
             return None, f"Rule {number}: choose both banks."
+        for side, account in ((1, account_1), (2, account_2)):
+            if account not in accounts:
+                # e.g. an account of another plan, or since closed in YNAB
+                name = str(item.get(f"account_{side}_name") or "The account")
+                return None, (
+                    f"Rule {number}: {name} isn't an open account in this plan. "
+                    f"Choose Bank #{side} again."
+                )
         if account_1 == account_2:
             return None, f"Rule {number}: Bank #1 and Bank #2 must differ."
         if not description_1:

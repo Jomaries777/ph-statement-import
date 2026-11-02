@@ -42,14 +42,17 @@ function cell(...children) {
 }
 
 // A bank dropdown: the plan's accounts, plus the saved one if it isn't among
-// them (another plan, or not loaded yet), so a saved rule shows what it has
+// them (another plan, or not loaded yet), so a saved rule shows what it has.
+// Once the plan's accounts are loaded, such an account is marked: saving
+// refuses it until another bank is chosen.
 function accountSelect(rule, side, label) {
   const el = document.createElement("select");
   el.setAttribute("aria-label", label);
   el.add(new Option("Choose a bank…", ""));
   const savedId = rule[`account_${side}_id`];
   if (savedId && !state.accounts.some((a) => a.id === savedId)) {
-    el.add(new Option(rule[`account_${side}_name`] || "Saved account", savedId));
+    const name = rule[`account_${side}_name`] || "Saved account";
+    el.add(new Option(state.accounts.length ? `${name} (not in this plan)` : name, savedId));
   }
   state.accounts.forEach((a) => el.add(new Option(a.name, a.id)));
   el.value = savedId;
@@ -117,7 +120,22 @@ async function loadAccounts() {
       message("ynab-msg", err.message);
     }
   }
+  matchRulesToPlan();
   renderRules();
+}
+
+// A rule's account that isn't in the chosen plan, e.g. from the plan before a
+// YNAB "fresh start" (a copy whose accounts have new ids), switches to the
+// plan's account with the same name, if there's one
+function matchRulesToPlan() {
+  state.rules.forEach((rule) => {
+    [1, 2].forEach((side) => {
+      const id = rule[`account_${side}_id`];
+      if (!id || state.accounts.some((a) => a.id === id)) return;
+      const same = state.accounts.find((a) => a.name === rule[`account_${side}_name`]);
+      if (same) rule[`account_${side}_id`] = same.id;
+    });
+  });
 }
 
 // ---- rules -----------------------------------------------------------------
