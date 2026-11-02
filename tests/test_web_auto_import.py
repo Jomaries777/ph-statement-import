@@ -358,6 +358,24 @@ class PageViewTest(AutoImportWebTest):
         self.assertIn("Asked once. GoTyme PDF password: date of birth as MMDDYYYY.", row)
         self.assertNotIn('data-input="last_name"', row)  # GCash's inputs stay on GCash's row
 
+    def test_maya_rows_ask_for_their_password_inputs(self):
+        self.sign_in_google(given_name="Juan")
+        html = self.client.get("/auto-import").data.decode()
+
+        def row(wallet):
+            return html.split(f'<tr data-wallet="{wallet}"', 1)[1].split("</tr>", 1)[0]
+
+        wallet = row("maya")
+        self.assertRegex(wallet, r'data-input="first_name"[^>]*value="Juan"')
+        self.assertRegex(wallet, r'data-input="last_name"[^>]*value="Dela Cruz"')
+        self.assertIn('data-input="mobile_last5"', wallet)
+        self.assertIn('maxlength="5"', wallet)
+        card = row("maya_credit_card")
+        self.assertIn('data-input="birth_date"', card)
+        self.assertIn('data-input="mobile_last6"', card)
+        self.assertIn("date of birth as DDMmmYYYY + last 6 of mobile", card)
+        self.assertIn("date of birth as YYYYMMDD", row("bpi_credit_card"))
+
     def test_active_view_shows_newest_20_runs_and_status_badges(self):
         self.sign_in_google(
             enabled=True,
@@ -600,6 +618,7 @@ class GoogleSignInTest(AutoImportWebTest):
             "email": "  JUAN@EXAMPLE.TEST  ",
             "email_verified": True,
             "family_name": f"  {FAMILY_NAME}  ",
+            "given_name": " Juan ",
         }
         with (
             mock.patch.object(gmail, "exchange_code", return_value=tokens),
@@ -617,6 +636,7 @@ class GoogleSignInTest(AutoImportWebTest):
         self.assertFalse(saved["enabled"])
         self.assertEqual(saved["email"], "JUAN@EXAMPLE.TEST")
         self.assertEqual(saved["family_name"], FAMILY_NAME)
+        self.assertEqual(saved["given_name"], "Juan")  # for Maya's first-name input
         self.assertNotEqual(saved["gmail_refresh_token"], GMAIL_REFRESH_TOKEN)
         self.assertEqual(self.store.decrypt(saved["gmail_refresh_token"]), GMAIL_REFRESH_TOKEN)
 
@@ -667,7 +687,15 @@ class SaveSettingsTest(AutoImportWebTest):
         saved = self.store.get_user(SUB)
         accounts = {key: m["account_id"] for key, m in saved["mappings"].items()}
         self.assertEqual(
-            accounts, {"gcash": ACCOUNT_ID, "gotyme": OTHER_ACCOUNT_ID, "gotyme_goalsave": ""}
+            accounts,
+            {
+                "gcash": ACCOUNT_ID,
+                "gotyme": OTHER_ACCOUNT_ID,
+                "gotyme_goalsave": "",
+                "bpi_credit_card": "",
+                "maya": "",
+                "maya_credit_card": "",
+            },
         )
         self.assertEqual(
             json.loads(self.store.decrypt(saved["password_inputs"]["gotyme"])),
@@ -710,6 +738,38 @@ class SaveSettingsTest(AutoImportWebTest):
             with self.subTest(bad_inputs=bad_inputs):
                 response = self.post(payload)
                 self.assertEqual(response.status_code, 400)
+
+    def test_checks_the_maya_mobile_digits(self):
+        self.sign_in_google()
+        self.connect_ynab_oauth()
+        rotated = {"access_token": NEW_YNAB_ACCESS, "refresh_token": NEW_YNAB_REFRESH}
+        cases = {
+            "maya": (
+                {"first_name": "Juan", "last_name": "Dela Cruz", "mobile_last5": "1234"},
+                {"first_name": "Juan", "last_name": "Dela Cruz", "mobile_last5": "12345"},
+                "Last 5 of mobile must be 5 digits.",
+            ),
+            "maya_credit_card": (
+                {"birth_date": "2000-01-01", "mobile_last6": "12345"},
+                {"birth_date": "2000-01-01", "mobile_last6": "123456"},
+                "Last 6 of mobile must be 6 digits.",
+            ),
+        }
+        for key, (bad_inputs, good_inputs, error) in cases.items():
+            payload = valid_settings_payload()
+            payload["mappings"][key] = {
+                "account_id": OTHER_ACCOUNT_ID,
+                "account_name": "Maya",
+                "enabled": True,
+            }
+            with self.subTest(key):
+                payload["password_inputs"][key] = bad_inputs
+                response = self.post(payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(error, response.get_json()["error"])
+                payload["password_inputs"][key] = good_inputs
+                with mock.patch.object(ynab_oauth, "refresh", return_value=rotated):
+                    self.assertEqual(self.post(payload).status_code, 200)
 
     def test_rejects_unknown_or_unsupported_source_key(self):
         self.sign_in_google()
@@ -852,6 +912,9 @@ class SeveralWalletsTest(AutoImportWebTest):
                 "gcash-2": ("gcash", OTHER_ACCOUNT_ID),
                 "gotyme": ("gotyme", ""),
                 "gotyme_goalsave": ("gotyme_goalsave", ""),
+                "bpi_credit_card": ("bpi_credit_card", ""),
+                "maya": ("maya", ""),
+                "maya_credit_card": ("maya_credit_card", ""),
             },
         )
         inputs = json.loads(self.store.decrypt(saved["password_inputs"]["gcash-2"]))
@@ -1939,6 +2002,9 @@ class AutoImportBrowserTest(unittest.TestCase):
                 f"GCash · 0918765 {fake_ynab.NEW_ACCOUNT_NAME}",
                 "GoTyme Not imported",
                 "GoTyme GoalSave Not imported",
+                "BPI Credit Card Not imported",
+                "Maya Not imported",
+                "Maya Credit Card Not imported",
             ]
         )
         saved = self.store.get_user(SUB)["mappings"]

@@ -89,6 +89,14 @@ INPUT_FIELDS = {
         "prefill_user_field": "family_name",
         "prefill_note": "from Google · edit",
     },
+    "first_name": {
+        "label": "First name",
+        "type": "text",
+        "placeholder": "First name",
+        "autocomplete": "given-name",
+        "prefill_user_field": "given_name",
+        "prefill_note": "from Google · edit",
+    },
     "mobile_last4": {
         "label": "Last 4 of mobile",
         "type": "text",
@@ -98,6 +106,26 @@ INPUT_FIELDS = {
         "autocomplete": "off",
         "pattern": re.compile(r"^\d{4}$"),
         "pattern_error": "Last 4 of mobile must be 4 digits.",
+    },
+    "mobile_last5": {
+        "label": "Last 5 of mobile",
+        "type": "text",
+        "placeholder": "Last 5 of mobile",
+        "inputmode": "numeric",
+        "maxlength": "5",
+        "autocomplete": "off",
+        "pattern": re.compile(r"^\d{5}$"),
+        "pattern_error": "Last 5 of mobile must be 5 digits.",
+    },
+    "mobile_last6": {
+        "label": "Last 6 of mobile",
+        "type": "text",
+        "placeholder": "Last 6 of mobile",
+        "inputmode": "numeric",
+        "maxlength": "6",
+        "autocomplete": "off",
+        "pattern": re.compile(r"^\d{6}$"),
+        "pattern_error": "Last 6 of mobile must be 6 digits.",
     },
     # Tells several GCash accounts apart (Source.account_input): the email says
     # "Mobile number: 0917123****". Not secret on its own, but stored encrypted
@@ -630,6 +658,7 @@ def google_callback():
     sub = (claims.get("sub") or "").strip()
     email = (claims.get("email") or "").strip()
     family_name = (claims.get("family_name") or "").strip()
+    given_name = (claims.get("given_name") or "").strip()
     if not sub or not email:
         return redirect("/auto-import?google_error=missing_profile")
 
@@ -651,6 +680,7 @@ def google_callback():
     fields = {
         "email": email,
         "family_name": family_name,
+        "given_name": given_name,
         "gmail_refresh_token": refresh_token,
     }
     if existing is None:

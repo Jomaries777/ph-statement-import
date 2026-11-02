@@ -168,7 +168,10 @@ function showParsed(parsed) {
   renderTable($("preview-table"), parsed.columns, parsed.rows, (h, v) => {
     if (h === parsed.text_column) return "desc";
     if (!amounts.has(h)) return "";
-    return "amt" + (v && moneyOut.has(h) ? " neg" : v && moneyIn.has(h) ? " pos" : "");
+    if (!v || !(moneyIn.has(h) || moneyOut.has(h))) return "amt";
+    // A minus sign shows the other colour: a card payment in a money-out column
+    const out = moneyOut.has(h) !== String(v).startsWith("-");
+    return "amt" + (out ? " neg" : " pos");
   });
   $("preview-totals").textContent = parsed.summary || "";
   showBalanceWarning(parsed);
