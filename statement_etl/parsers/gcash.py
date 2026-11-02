@@ -342,7 +342,10 @@ def _check_totals(transactions, totals):
 #                                        the running balance stays as before
 #   gap at the first checked row      -> STARTING BALANCE CORRECTION (in or out),
 #                                        inserted before that row
-#   later gap, balance too high       -> "Refund from <payee of that row>" (in),
+#   later gap, balance too high by    -> the previous row was refunded: "Refund
+#   exactly the previous row's Debit     from <its payee>" (in), with its date and
+#                                        R + its Reference No., inserted after it
+#   any other gap, balance too high   -> "Refund from <payee of that row>" (in),
 #                                        inserted just before that row
 #   later gap, balance too low        -> no row there; it rolls into the last check:
 #   ending balance still off          -> MISSING TRANSACTIONS IN GCASH STATEMENT,
@@ -465,7 +468,9 @@ def _correct_balances(transactions, balances):
     result = []
     previous = balances.get("starting")  # running balance before the current row
     checked_any = False  # has any row's balance been checked yet?
-    # Who an unlisted refund most likely came from (used in step 3):
+    # The previous statement row, if it could have been refunded (used in step 3)
+    previous_row = None
+    # Who an unlisted refund most likely came from (used in step 4):
     last_split_payee = None  # payee of the last 0.00-balance row (e.g. Angkas)
     last_payment_payee = None  # payee of the last "Payment to ..." row
     for row in transactions:
@@ -479,8 +484,10 @@ def _correct_balances(transactions, balances):
         if printed == 0 and (credit or debit) and expected != 0 and previous is not None:
             result.extend(_split_zero_balance(row, previous))
             last_split_payee = gcash_payee(row["Description"])
+            previous_row = None  # already refunded by the split
             continue
 
+        refunded_here = False  # does a refund row belong to this row?
         if expected is not None:
             gap = printed - expected
             if gap and not checked_any:
@@ -488,22 +495,32 @@ def _correct_balances(transactions, balances):
                 result.append(
                     _correction_row(START_KIND, START_DESCRIPTION, row, gap, previous + gap)
                 )
+            elif gap > 0 and previous_row and gap == to_decimal(previous_row["Debit"]):
+                # 3. Balance higher by exactly the previous row's payment: that
+                #    payment was refunded, e.g. a cancelled Angkas ride
+                refund_text = f"Refund from {gcash_payee(previous_row['Description'])}"
+                result.append(
+                    _correction_row(REFUND_KIND, refund_text, previous_row, gap, previous + gap)
+                )
             elif gap > 0:
-                # 3. Balance higher than expected: money came in that isn't listed.
+                # 4. Balance higher than expected: money came in that isn't listed.
                 #    Name it after the merchant that most likely refunded it,
                 #    not the row where the gap shows up.
                 payee = last_split_payee or last_payment_payee or gcash_payee(row["Description"])
                 refund_text = f"Refund from {payee}"
                 result.append(_correction_row(REFUND_KIND, refund_text, row, gap, previous + gap))
-            # 4. gap < 0 (money left without a row): left for the MISSING row below
+                refunded_here = True
+            # 5. gap < 0 (money left without a row): left for the MISSING row below
             checked_any = True
 
         result.append(row)
         previous = printed
+        # A row with a refund row of its own (R + its Reference No.) can't get another
+        previous_row = None if refunded_here else row
         if GCASH_PAYMENT_RE.match(row["Description"]):
             last_payment_payee = gcash_payee(row["Description"])
 
-    # 5. Ending balance: whatever still doesn't add up becomes one MISSING row
+    # 6. Ending balance: whatever still doesn't add up becomes one MISSING row
     if "starting" in balances and "ending" in balances:
         credit = sum(to_decimal(t["Credit"]) for t in result)
         debit = sum(to_decimal(t["Debit"]) for t in result)
