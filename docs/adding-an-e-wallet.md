@@ -1,25 +1,25 @@
 # Adding an e-wallet or bank
 
-This guide walks you through adding a new statement source (Maya, GoTyme, a bank, …) next to GCash. The examples use **Maya** with the key `maya`.
+This guide walks you through adding a new statement source (an e-wallet or a bank) next to GCash. The examples use **UnionBank** with the key `unionbank`.
 
 A new source is **one parser module plus one `Source` entry**, with tests. It never touches YNAB code, HTML or the web app.
 
 | File | What you add |
 |---|---|
-| `statement_etl/parsers/maya.py` | The parser: reads the PDF into rows, and `to_transactions(rows)` turns them into neutral `Transaction`s |
-| `statement_etl/sources.py` | One `Source(...)` entry that describes Maya's columns and names its functions |
-| `tests/test_parsers_maya.py`, `tests/test_sources.py` | Tests with made-up rows |
+| `statement_etl/parsers/unionbank.py` | The parser: reads the PDF into rows, and `to_transactions(rows)` turns them into neutral `Transaction`s |
+| `statement_etl/sources.py` | One `Source(...)` entry that describes UnionBank's columns and names its functions |
+| `tests/test_parsers_unionbank.py`, `tests/test_sources.py` | Tests with made-up rows |
 
 ## How a statement flows
 
 ```
 statement PDF
-   │  parsers/maya.py      parse_transactions(pdf, password, on_page)
+   │  parsers/unionbank.py      parse_transactions(pdf, password, on_page)
    ▼
 rows, exactly as printed   [{"Date": "01/10/2026", "Details": "...", "Amount": "-50.00", ...}, ...]
-   │  parsers/maya.py      to_transactions(rows)   (called by convert.rows_to_transactions)
+   │  parsers/unionbank.py      to_transactions(rows)   (called by convert.rows_to_transactions)
    ▼
-Transactions               Transaction(source="maya", key, date, payee, amount, memo, flagged)
+Transactions               Transaction(source="unionbank", key, date, payee, amount, memo, flagged)
    │  ynab_api/format.py   to_ynab(transaction): milliunits, import_id, flag_color
    ▼
 YNAB transactions          {"date", "payee_name", "amount", "import_id", "memo", "flag_color"}
@@ -51,7 +51,7 @@ Download **your own** statement and put it in `statements/`. That folder is giti
 Print every word with its position to see how the table is laid out:
 
 ```python
-# python -I scratch.py statements/maya.pdf
+# python -I scratch.py statements/unionbank.pdf
 import sys, getpass, pdfplumber
 
 with pdfplumber.open(sys.argv[1], password=getpass.getpass("PDF password: ")) as pdf:
@@ -73,16 +73,16 @@ Write down:
 Start from the GCash parser:
 
 ```bash
-cp statement_etl/parsers/gcash.py statement_etl/parsers/maya.py
+cp statement_etl/parsers/gcash.py statement_etl/parsers/unionbank.py
 ```
 
-Work through these parts of `maya.py`:
+Work through these parts of `unionbank.py`:
 
 | Section | What to change |
 |---|---|
-| Docstring and `main()` | Say "Maya". `main()` is the `python -m statement_etl.parsers.maya` command. |
-| **STATEMENT SETTINGS** | `COLUMNS` (Maya's column names), the header labels, date/time regexes and format, amount and reference regexes, and the totals / balance / summary line patterns. |
-| **PAGE LAYOUT** | `_find_columns()` finds the header row and the column edges. `_attach_wrapped_lines()` joins wrapped description lines. Adjust them if Maya's layout differs. |
+| Docstring and `main()` | Say "UnionBank". `main()` is the `python -m statement_etl.parsers.unionbank` command. |
+| **STATEMENT SETTINGS** | `COLUMNS` (UnionBank's column names), the header labels, date/time regexes and format, amount and reference regexes, and the totals / balance / summary line patterns. |
+| **PAGE LAYOUT** | `_find_columns()` finds the header row and the column edges. `_attach_wrapped_lines()` joins wrapped description lines. Adjust them if UnionBank's layout differs. |
 | **ROW PARSING** | `_parse_transaction_line()` reads one table line. `_to_output_row()` returns the row: **one key per entry in `COLUMNS`, text exactly as printed**. |
 | **CHECKING** | Keep `_check_totals()` if the statement prints totals: a mismatch means a row was misread, so parsing stops. |
 | **BALANCE CORRECTION** | GCash adds correction rows when its own running balance doesn't add up. Optional: delete this section if you don't need it. |
@@ -100,37 +100,46 @@ Your parser must also provide these functions for the `Source` entry:
 
 If words run together in the printed positions ("InstaPayTransfer", "Jul27"), the statement prints them close together: read the page with a smaller gap, `page.extract_words(x_tolerance=...)`. BPI's parser uses 2.5 (`WORD_GAP` in `parsers/bpi.py`); pdfplumber's default is 3.
 
+Some statements need more than a table reader. The existing parsers show how:
+
+| The statement… | Example | How it's read |
+|---|---|---|
+| prints each transaction on two lines | Maya Wallet (`parsers/maya.py`): the date, type, reference and amounts, then the time and details under them | A line that starts with a date starts a row; the lines right under it add to it |
+| has its labels as images, so only the values are text | Maya Credit Card (`parsers/maya_credit_card.py`) | Values are found by where they are: the first amount under the billing date is the previous balance |
+| reads as `(cid:215)(cid:153)…` | BPI Credit Card (`parsers/bpi_credit_card.py`): the font encodes letters in EBCDIC | `decode_chars()` turns each char back into its letter before the words are read |
+| is a credit card | BPI Credit Card, Maya Credit Card | One signed Amount column (a charge positive); a computed Balance column; `statement_balances` flips the sign, because YNAB shows a card's debt as negative |
+
 Check your parser on your own PDF and compare the output with the PDF: the row count, the first and last rows, and a wrapped description.
 
 ```bash
-python -m statement_etl.parsers.maya statements/maya.pdf -o /tmp/maya.json
+python -m statement_etl.parsers.unionbank statements/unionbank.pdf -o /tmp/unionbank.json
 ```
 
 ## 4. Write `to_transactions`
 
-At the end of `maya.py`, add `to_transactions(rows)`. Use `gcash.to_transactions` as the example, and put a made-up input row in a comment above it, as GCash does:
+At the end of `unionbank.py`, add `to_transactions(rows)`. Use `gcash.to_transactions` as the example, and put a made-up input row in a comment above it, as GCash does:
 
 ```python
 from statement_etl.transaction import Transaction
 
 
 def to_transactions(rows):
-    """Convert Maya rows into neutral Transactions, one per row."""
+    """Convert UnionBank rows into neutral Transactions, one per row."""
     return [
         Transaction(
-            source="maya",  # the Source key
+            source="unionbank",  # the Source key
             key=row["Reference ID"],  # stable id for this transaction
-            date=datetime.strptime(row["Date"], "%d/%m/%Y"),  # Maya's own column names
+            date=datetime.strptime(row["Date"], "%d/%m/%Y"),  # UnionBank's own column names
             payee=row["Details"],
             amount=to_decimal(row["Amount"]),  # pesos; negative = money out
-            memo="Maya Ref: " + row["Reference ID"],
+            memo="UnionBank Ref: " + row["Reference ID"],
         )
         for row in rows
     ]
 ```
 
 - **Sign**: money out is negative, money in is positive.
-- **`key`** becomes YNAB's `import_id` (`make_import_id("maya", key)` in `ynab_api/format.py`), which stops duplicates when the same statement is uploaded twice. It must be **unique and stable** for each transaction. Use the statement's reference number. If there isn't one, build a value that never changes for that row, e.g. the date, amount, running balance and a count of identical rows. `to_transactions` gets all the rows at once so it can count them. Then also put `transaction_ref("maya", key)` (`statement_etl/transaction.py`), the hash part of the `import_id`, in the memo, as GoTyme does (`GoTyme Ref: <ref>`), so the row can be found by searching YNAB.
+- **`key`** becomes YNAB's `import_id` (`make_import_id("unionbank", key)` in `ynab_api/format.py`), which stops duplicates when the same statement is uploaded twice. It must be **unique and stable** for each transaction. Use the statement's reference number. If there isn't one, build a value that never changes for that row, e.g. the date, amount, running balance and a count of identical rows. `to_transactions` gets all the rows at once so it can count them. Then also put `transaction_ref("unionbank", key)` (`statement_etl/transaction.py`), the hash part of the `import_id`, in the memo, as GoTyme does (`GoTyme Ref: <ref>`), so the row can be found by searching YNAB.
 - **Correction rows** (if your parser adds them) get `flagged=True`, so they show with a red flag for review in YNAB.
 
 ## 5. Register the source
@@ -138,38 +147,38 @@ def to_transactions(rows):
 In `statement_etl/sources.py`, import your parser and add an entry to `SOURCES`:
 
 ```python
-from statement_etl.parsers import gcash, maya
+from statement_etl.parsers import gcash, unionbank
 
         Source(
-            key="maya",
-            name="Maya",
-            password_env="MAYA_PDF_PASSWORD",
-            columns=maya.COLUMNS,
+            key="unionbank",
+            name="UnionBank",
+            password_env="UNIONBANK_PDF_PASSWORD",
+            columns=unionbank.COLUMNS,
             amount_columns=("Amount", "Running Balance"),
             money_in_columns=(),
             money_out_columns=(),
             text_column="Details",
-            parse=maya.parse_transactions,
-            statement_balances=maya.statement_balances,
-            to_transactions=maya.to_transactions,
-            summary=maya.summary,
+            parse=unionbank.parse_transactions,
+            statement_balances=unionbank.statement_balances,
+            to_transactions=unionbank.to_transactions,
+            summary=unionbank.summary,
         ),
 ```
 
 Check it. The `convert` command prints the YNAB transactions your rows become:
 
 ```bash
-python -m statement_etl.convert /tmp/maya.json --source maya
+python -m statement_etl.convert /tmp/unionbank.json --source unionbank
 ```
 
-Then add `MAYA_PDF_PASSWORD=` to `.env.example`.
+Then add `UNIONBANK_PDF_PASSWORD=` to `.env.example`.
 
 ### `Source` fields
 
 | Field | Required | Meaning |
 |---|---|---|
-| `key` | yes | `"maya"`: the `--source` value, and part of every `import_id` (as `Transaction.source`). **Never rename it after release**, or YNAB will import duplicates. |
-| `name` | yes | `"Maya"`: shown in the page's Source dropdown and in command-line output |
+| `key` | yes | `"unionbank"`: the `--source` value, and part of every `import_id` (as `Transaction.source`). **Never rename it after release**, or YNAB will import duplicates. |
+| `name` | yes | `"UnionBank"`: shown in the page's Source dropdown and in command-line output |
 | `password_env` | yes | Environment variable with the PDF password, for the command line |
 | `columns` | yes | Every column, in the order the statement prints them |
 | `parse` | yes | `parse_transactions` |
@@ -191,14 +200,14 @@ Then add `MAYA_PDF_PASSWORD=` to `.env.example`.
 - its column settings name real columns
 - its password variable name ends in `_PDF_PASSWORD`
 
-Add a `MayaTest` class modelled on `GCashTest`, using **made-up rows** in the shape your parser returns:
+Add a `UnionBankTest` class modelled on `GCashTest`, using **made-up rows** in the shape your parser returns:
 
-- every row has exactly the keys in `maya.COLUMNS`
-- `to_ynab(maya.to_transactions(rows)[0])` gives the right date, amount (in milliunits), payee and memo
+- every row has exactly the keys in `unionbank.COLUMNS`
+- `to_ynab(unionbank.to_transactions(rows)[0])` gives the right date, amount (in milliunits), payee and memo
 - the `import_id` is the same when the row is converted twice
-- `maya.statement_balances` and `maya.summary` give the expected values
+- `unionbank.statement_balances` and `unionbank.summary` give the expected values
 
-Then add `tests/test_parsers_maya.py` for the parser itself, modelled on `tests/test_parsers_gcash.py`. It fakes the PDF with word positions (helpers in `tests/fakes.py`), so you can test reading the table, wrapped lines and your totals check without a real statement. Test `to_transactions` there too, as `ToTransactionsTest` does for GCash.
+Then add `tests/test_parsers_unionbank.py` for the parser itself, modelled on `tests/test_parsers_gcash.py`. It fakes the PDF with word positions (helpers in `tests/fakes.py`), so you can test reading the table, wrapped lines and your totals check without a real statement. Test `to_transactions` there too, as `ToTransactionsTest` does for GCash.
 
 ```bash
 python -m unittest discover tests
@@ -210,7 +219,7 @@ You don't edit the HTML. The page builds itself from your `Source` entry through
 
 | `Source` field | Where it shows on the page |
 |---|---|
-| `key`, `name` | The **Source** dropdown in step ①, and "Parsing successful: N Maya transactions…" |
+| `key`, `name` | The **Source** dropdown in step ①, and "Parsing successful: N UnionBank transactions…" |
 | `columns` | The preview table's headers and cells, in this order |
 | `amount_columns` | Right-aligned numbers |
 | `money_in_columns` / `money_out_columns` | Green / red amounts |
@@ -223,7 +232,7 @@ You don't edit the HTML. The page builds itself from your `Source` entry through
 python -m statement_etl.web
 ```
 
-Open http://localhost:5050, pick **Maya**, parse your PDF, and check:
+Open http://localhost:5050, pick **UnionBank**, parse your PDF, and check:
 
 - every column is shown, in order
 - amounts are right-aligned and coloured correctly
@@ -237,8 +246,8 @@ If something looks wrong, fix your `Source` fields, not the HTML.
 Use a **test YNAB plan or account**, not your real budget.
 
 ```bash
-python -m statement_etl.pipeline statements/maya.pdf --source maya --dry-run
-python -m statement_etl.pipeline statements/maya.pdf --source maya --plan-id <test plan> --account-id <test account>
+python -m statement_etl.pipeline statements/unionbank.pdf --source unionbank --dry-run
+python -m statement_etl.pipeline statements/unionbank.pdf --source unionbank --plan-id <test plan> --account-id <test account>
 ```
 
 Then upload the same statement again, from the command line or the web page. YNAB should skip every transaction ("Skipped N already imported"). The starting and ending balance checks should match.
@@ -251,9 +260,9 @@ Checklist:
 - [ ] `python -m unittest discover tests` passes.
 - [ ] The parser returns every row and column as printed, and the totals check passes on your statement.
 - [ ] Uploading the same statement twice creates no duplicates.
-- [ ] The key (`maya`) is final.
-- [ ] `MAYA_PDF_PASSWORD=` is in `.env.example`, and Maya is in the README's "currently supports" line.
-- [ ] The PR says which statement type you tested with (e.g. "Maya Wallet transaction history, Oct 2026"), without attaching it.
+- [ ] The key (`unionbank`) is final.
+- [ ] `UNIONBANK_PDF_PASSWORD=` is in `.env.example`, and UnionBank is in the README's "currently supports" line.
+- [ ] The PR says which statement type you tested with (e.g. "UnionBank savings statement, Oct 2026"), without attaching it.
 
 ---
 

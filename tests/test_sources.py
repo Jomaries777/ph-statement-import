@@ -85,7 +85,9 @@ class RegistryTest(unittest.TestCase):
 
     def test_unknown_source(self):
         with self.assertRaisesRegex(
-            ValueError, "Known sources: bpi, gcash, gotyme, gotyme_goalsave"
+            ValueError,
+            "Known sources: bpi, bpi_credit_card, gcash, gotyme, gotyme_goalsave, maya, "
+            "maya_credit_card",
         ):
             get_source("nope")
 

@@ -5,7 +5,7 @@ ph-statement-import - Google OAuth and Gmail REST client, with no Flask session.
     redirect_uri()          - <PUBLIC_URL>/google/callback (or localhost in dev)
     authorize_url()         - Google consent URL (openid, email, profile, gmail.readonly)
     exchange_code()         - swap ?code=... for access, refresh and ID tokens
-    decode_id_token()       - read sub, email and family_name from Google's id_token
+    decode_id_token()       - read sub, email and the user's names from Google's id_token
     refresh_access_token()  - a fresh access token from a stored refresh token
     list_messages()         - search messages (adding after:<epoch>), following nextPageToken
     get_message()           - fetch one Gmail message's metadata and MIME payload
