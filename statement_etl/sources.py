@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from statement_etl.parsers import gcash, gotyme, gotyme_goalsave
+from statement_etl.parsers import bpi, gcash, gotyme, gotyme_goalsave
 
 
 def _no_summary(rows):
@@ -266,6 +266,22 @@ SOURCES = {
             # GoalSave No.; one date of birth opens it
             account_input="goalsave_last5",
             shared_password=True,
+        ),
+        Source(
+            key="bpi",
+            name="BPI",
+            password_env="BPI_PDF_PASSWORD",
+            columns=bpi.COLUMNS,
+            amount_columns=("Debit Amount", "Credit Amount", "Balance"),
+            money_in_columns=("Credit Amount",),
+            money_out_columns=("Debit Amount",),
+            text_column="Details",
+            parse=bpi.parse_transactions,
+            statement_balances=bpi.statement_balances,
+            to_transactions=bpi.to_transactions,
+            summary=bpi.summary,
+            # No email_query: BPI doesn't email statements, so no auto-import;
+            # download the PDF from BPI online banking and upload it by hand
         ),
     ]
 }
