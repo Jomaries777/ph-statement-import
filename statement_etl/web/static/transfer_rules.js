@@ -154,12 +154,17 @@ function renderRules() {
       state.rules.splice(index, 1);
       renderRules();
     });
+    // Money goes one way, from Bank #1 to Bank #2
+    const arrow = cell("→");
+    arrow.className = "rule-arrow";
+    arrow.setAttribute("aria-hidden", "true");
     const tr = document.createElement("tr");
     tr.append(
-      cell(accountSelect(rule, 1, "Bank #1")),
-      cell(descriptionInput(rule, 1, "Bank #1 description", "Transfer to 0917123")),
-      cell(accountSelect(rule, 2, "Bank #2")),
-      cell(descriptionInput(rule, 2, "Bank #2 description", "Optional")),
+      cell(accountSelect(rule, 1, "From: Bank #1")),
+      cell(descriptionInput(rule, 1, "Bank #1 shows (money out)", "Transfer to 0917123")),
+      arrow,
+      cell(accountSelect(rule, 2, "To: Bank #2")),
+      cell(descriptionInput(rule, 2, "Bank #2 shows (money in)", "Optional")),
       cell(remove),
     );
     tbody.append(tr);
