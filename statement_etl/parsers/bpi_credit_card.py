@@ -35,10 +35,11 @@ How it works:
                    Previous Balance and Ending Balance            (read_summary)
     5. Header    - find "Transaction Post Date Description Amount"
                    to learn the column edges                      (find_columns)
-    6. Rows      - every line under it with an Amount, except
-                   the balance lines                              (read_rows)
+    6. Rows      - every line under it with an Amount, up to the
+                   Installment Balance Summary, except the
+                   balance lines                                  (read_rows)
     7. Check     - Previous Balance + amounts == Ending Balance
-                   == TOTAL AMOUNT DUE                            (check_totals)
+                   == TOTAL AMOUNT DUE (0.00 if overpaid)         (check_totals)
 
 This source is registered in sources.py. To add another e-wallet or bank,
 see docs/adding-an-e-wallet.md.
@@ -95,6 +96,11 @@ BALANCE_LINES = {
     "Ending Balance": "ending",
     "Unbilled Installment Amount": "unbilled",
 }
+
+# The transactions end where the installment summary starts: its rows
+# ("010125 090126 SAMPLE GADGETS Qu 6,000.00 250.00") are what's left to pay
+# on past installment purchases, not transactions
+TABLE_END_RE = re.compile(r"^Installment Balance Summary\b", re.IGNORECASE)
 
 # Words of the table header: "Transaction Post Date Description Amount"
 HEADER_LABELS = ("Transaction", "Post", "Description", "Amount")
@@ -270,11 +276,14 @@ def read_rows(lines: list[dict], columns: dict) -> list[dict]:
 
     Lines without an Amount (each card's "<card no.> - NAME" heading,
     "Installment Amortization:") are skipped, and so are the balance lines.
+    The rows end at the Installment Balance Summary, if the page has one.
     """
     rows = []
     for line in lines:
         if line["top"] <= columns["header_top"]:
             continue
+        if TABLE_END_RE.search(line["text"]):
+            break
         row = _parse_row_line(line, columns)
         if row is not None:
             rows.append(row)
@@ -371,7 +380,8 @@ def check_totals(rows: list[dict[str, str]], summary: dict) -> None:
     """Verify the two BPI credit card checks; raise StatementError on a mismatch.
 
     1. Previous Balance + sum(Amount) == Ending Balance
-    2. Ending Balance == TOTAL AMOUNT DUE (page 3), when that line is found
+    2. TOTAL AMOUNT DUE (page 3), when that line is found, == Ending Balance,
+       or 0.00 for an overpaid card (Ending Balance below 0)
     """
     expected = summary["previous"] + _total(rows)
     if expected != summary["ending"]:
@@ -380,10 +390,11 @@ def check_totals(rows: list[dict[str, str]], summary: dict) -> None:
             f"+ amounts {_total(rows):,.2f} = {expected:,.2f} "
             f"!= statement ending balance {summary['ending']:,.2f}"
         )
-    if "total_due" in summary and summary["total_due"] != summary["ending"]:
+    due = max(summary["ending"], Decimal("0.00"))
+    if "total_due" in summary and summary["total_due"] != due:
         raise StatementError(
-            f"ending balance {summary['ending']:,.2f} "
-            f"!= statement total amount due {summary['total_due']:,.2f}"
+            f"ending balance {summary['ending']:,.2f} means an amount due of {due:,.2f}, "
+            f"but the statement's total amount due is {summary['total_due']:,.2f}"
         )
 
 

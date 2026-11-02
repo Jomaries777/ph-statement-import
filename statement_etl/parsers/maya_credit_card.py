@@ -10,30 +10,36 @@ Output fields per transaction (amounts without "PHP" or commas):
     Posting date     - e.g. "21 Sep 2026"
     Description      - e.g. "SAMPLE STORE QUEZON CITY PH", as printed
     Amount           - signed like the statement: a charge "2099.00",
-                       a payment or credit "-2099.00"
+                       a payment or credit "-2099.00" (printed "- 2,099.00")
     Balance          - what is owed after this row, e.g. "500.95". Not printed
                        on the statement: the previous balance plus every
-                       Amount so far, so the last row's is the amount due
+                       Amount so far. The last row's is the statement's
+                       balance: below 0 when the card is overpaid
 
 to_transactions() turns these rows into neutral Transactions (transaction.py).
 
 Most of page 1's labels ("Previous balance", "Total amount due", the table's
 column names) are images, not text. Only the values can be read, by where
 they are:
-    - the previous balance is the first amount in the right-hand column under
-      "Billing date: 20 October 2026"
+    - the right-hand column under "Billing date: 20 October 2026" lists the
+      statement's balance in parts: the previous balance first, then the
+      payments ("- 1,000.00 PHP"), purchases, fees and so on. The balance
+      itself isn't printed
     - the amount due is on the line that starts with the due date:
-      "9 Nov 2026 ... 1,234.56 PHP"
+      "9 Nov 2026 ... 1,234.56 PHP". It's the balance, or 0.00 when the card
+      is overpaid
     - the rows come after the period line: "21 Sep 2026 to 20 Oct 2026"
-So the one check left is: previous balance + every Amount == amount due.
+So the checks are: the rows add up to the parts after the previous balance,
+and the amount due matches the balance they give.
 
 How it works:
     1. Open      - open the password-protected PDF                (open_pdf)
-    2. Summary   - read the billing date, the previous balance,
+    2. Summary   - read the billing date, the balance's parts,
                    the amount due and the period                  (read_summary)
     3. Rows      - one row per line that starts with two dates:
                    "20 Sep 21 Sep SAMPLE STORE ... 2,099.00"      (read_rows)
-    4. Check     - previous balance + amounts == amount due       (check_totals)
+    4. Check     - the rows add up to the parts; the amount due
+                   matches the balance                            (check_totals)
 
 This source is registered in sources.py. To add another e-wallet or bank,
 see docs/adding-an-e-wallet.md.
@@ -91,7 +97,11 @@ RIGHT_COLUMN_X = 400
 DAY_RE = re.compile(r"^\d{1,2}$")
 MONTH_RE = re.compile(r"^[A-Z][a-z]{2}$")
 
-# A payment or credit printed as "2,099.00 CR" instead of "-2,099.00"
+# Maya prints a payment's minus sign as a word of its own, "- 2,099.00",
+# just left of the amount: at most this far (pt) from it
+SIGN_WORD = "-"
+SIGN_GAP = 6
+# A payment or credit printed as "2,099.00 CR" instead
 CREDIT_MARK = "CR"
 
 
@@ -104,13 +114,33 @@ def _date(text: str, fmt: str = DATE_FORMAT) -> date:
     return datetime.strptime(text, fmt).date()
 
 
+def _read_amount(words: list[dict]) -> tuple[Decimal, int] | None:
+    """The signed amount at the end of `words`, and how many words it takes:
+    "2,099.00" -> (2099.00, 1), "- 2,099.00" -> (-2099.00, 2),
+    "2,099.00 CR" -> (-2099.00, 2). None if they don't end with an amount."""
+    texts = [w["text"] for w in words]
+    if texts and texts[-1] == CREDIT_MARK:
+        if len(texts) >= 2 and AMOUNT_RE.match(texts[-2]):
+            return -abs(to_decimal(texts[-2])), 2
+        return None
+    if not texts or not AMOUNT_RE.match(texts[-1]):
+        return None
+    amount = to_decimal(texts[-1])
+    if len(words) >= 2 and texts[-2] == SIGN_WORD and words[-1]["x0"] - words[-2]["x1"] <= SIGN_GAP:
+        return -amount, 2
+    return amount, 1
+
+
 def read_summary(lines: list[dict]) -> dict:
     """Read page 1's values by where they are (their labels are images).
 
     Returns a dict with any of "billing_date", "start" and "end" (dates of the
-    period line), and "previous" and "due" (Decimals) found on the page.
+    period line), "parts" (the right-hand column's amounts between the billing
+    date and the due date, previous balance first) and "due" (Decimal) found
+    on the page.
     """
     summary = {}
+    parts = []
     for line in lines:
         text = line["text"]
         billing = BILLING_DATE_RE.search(text)
@@ -122,16 +152,14 @@ def read_summary(lines: list[dict]) -> dict:
             summary["start"], summary["end"] = _date(period.group(1)), _date(period.group(2))
         elif due:
             summary["due"] = to_decimal(due.group(1))
-        elif "billing_date" in summary and "previous" not in summary:
-            # The first amount of the right-hand column is the previous balance
+        elif "billing_date" in summary and "due" not in summary:
+            # A right-hand "1,500.00 PHP" or "- 2,000.00 PHP": one of the parts
             words = line["words"]
-            if (
-                len(words) >= 2
-                and words[-1]["text"] == "PHP"
-                and AMOUNT_RE.match(words[-2]["text"])
-                and words[-2]["x0"] > RIGHT_COLUMN_X
-            ):
-                summary["previous"] = to_decimal(words[-2]["text"])
+            amount = _read_amount(words[:-1]) if words[-1]["text"] == "PHP" else None
+            if amount is not None and words[-2]["x0"] > RIGHT_COLUMN_X:
+                parts.append(amount[0])
+    if parts:
+        summary["parts"] = parts
     return summary
 
 
@@ -151,24 +179,23 @@ def _row_date(day_month: str, end: date) -> str:
 
 
 def _parse_row_line(line: dict) -> dict | None:
-    """Read "20 Sep 21 Sep DESCRIPTION 2,099.00" (or "... 2,099.00 CR"). None
-    if the line isn't a row."""
-    words = [w["text"] for w in line["words"]]
-    credit = bool(words) and words[-1] == CREDIT_MARK
-    if credit:
-        words = words[:-1]
-    if len(words) < 6 or not AMOUNT_RE.match(words[-1]):
+    """Read "20 Sep 21 Sep DESCRIPTION 2,099.00", or a payment's
+    "... - 2,099.00". None if the line isn't a row."""
+    amount = _read_amount(line["words"])
+    if amount is None:
+        return None
+    words = [w["text"] for w in line["words"][: -amount[1]]]
+    if len(words) < 5:
         return None
     if not (DAY_RE.match(words[0]) and MONTH_RE.match(words[1])):
         return None
     if not (DAY_RE.match(words[2]) and MONTH_RE.match(words[3])):
         return None
-    amount = to_decimal(words[-1])
     return {
         "transaction": f"{words[0]} {words[1]}",
         "posting": f"{words[2]} {words[3]}",
-        "Description": " ".join(words[4:-1]),
-        "Amount": -abs(amount) if credit else amount,
+        "Description": " ".join(words[4:]),
+        "Amount": amount[0],
     }
 
 
@@ -189,7 +216,7 @@ def parse_transactions(
 
     Each dict has keys equal to COLUMNS. on_page(page, pages), if given, is
     called as each page is read: (1, 5), (2, 5), ... Raises StatementError if
-    the previous balance, amount due or period can't be found, or they don't
+    the balance's parts, amount due or period can't be found, or they don't
     add up; PasswordError if the password is wrong.
     """
     raw_rows = []
@@ -208,7 +235,7 @@ def parse_transactions(
             raw_rows.extend(read_rows(lines))
 
     for key, what in (
-        ("previous", 'the previous balance (the first amount under "Billing date")'),
+        ("parts", 'the previous balance (the first amount under "Billing date")'),
         ("due", 'the amount due (the line starting with the due date, "9 Nov 2026 ... PHP")'),
         ("end", 'the period ("21 Sep 2026 to 20 Oct 2026")'),
     ):
@@ -217,7 +244,7 @@ def parse_transactions(
 
     # 3. Add the year to the dates, and the balance after each row
     rows = []
-    balance = statement_summary["previous"]
+    balance = statement_summary["parts"][0]  # the previous balance
     for raw in raw_rows:
         balance += raw["Amount"]
         rows.append(
@@ -230,13 +257,13 @@ def parse_transactions(
             }
         )
 
-    # 4. Verify previous balance + amounts == amount due
+    # 4. Verify the rows against the balance's parts and the amount due
     check_totals(rows, statement_summary)
     return rows
 
 
 # =============================================================================
-# CHECKING - verify the amount due
+# CHECKING - verify the rows and the amount due
 # =============================================================================
 
 
@@ -245,14 +272,28 @@ def _total(rows) -> Decimal:
 
 
 def check_totals(rows: list[dict[str, str]], summary: dict) -> None:
-    """Verify previous balance + sum(Amount) == amount due; raise
-    StatementError on a mismatch, e.g. if a row couldn't be read."""
-    expected = summary["previous"] + _total(rows)
-    if expected != summary["due"]:
+    """Verify the two Maya credit card checks; raise StatementError on a
+    mismatch, e.g. if a row couldn't be read.
+
+    1. sum(Amount) == the sum of the parts after the previous balance
+    2. amount due == previous balance + sum(Amount), or 0.00 for an overpaid
+       card (a balance below 0)
+    """
+    previous, changes = summary["parts"][0], summary["parts"][1:]
+    total = _total(rows)
+    expected = sum(changes, Decimal("0.00"))
+    if total != expected:
         raise StatementError(
-            f"amount due check failed: previous balance {summary['previous']:,.2f} "
-            f"+ amounts {_total(rows):,.2f} = {expected:,.2f} "
-            f"!= statement amount due {summary['due']:,.2f}"
+            f"the rows add up to {total:,.2f}, "
+            f"but the statement's summary adds up to {expected:,.2f}"
+        )
+    balance = previous + total
+    due = max(balance, Decimal("0.00"))
+    if summary["due"] != due:
+        raise StatementError(
+            f"amount due check failed: previous balance {previous:,.2f} + amounts "
+            f"{total:,.2f} = {balance:,.2f}, so the amount due should be {due:,.2f}, "
+            f"not {summary['due']:,.2f}"
         )
 
 
@@ -263,7 +304,7 @@ def statement_balances(rows: list[dict[str, str]]) -> dict[str, Decimal]:
     The statement counts what is owed as positive; YNAB shows a credit card's
     debt as a negative balance, so both are flipped:
       starting = -(first row's Balance - its Amount)   (-previous balance)
-      ending   = -(last row's Balance)                 (-amount due)
+      ending   = -(last row's Balance)                 (-the statement's balance)
 
     Returns {"starting": Decimal, "ending": Decimal}, or {} if there are no rows.
     """
@@ -275,7 +316,7 @@ def statement_balances(rows: list[dict[str, str]]) -> dict[str, Decimal]:
 
 
 def summary(rows: list[dict[str, str]]) -> str | None:
-    """One line shown under the parsed rows: previous balance + amounts = amount due.
+    """One line shown under the parsed rows: previous balance + amounts = ending balance.
 
     check_totals() already stopped parsing if this doesn't add up.
     """
@@ -284,7 +325,7 @@ def summary(rows: list[dict[str, str]]) -> str | None:
     previous = Decimal(rows[0]["Balance"]) - Decimal(rows[0]["Amount"])
     return (
         f"Previous balance {previous:,.2f} + amounts {_total(rows):,.2f} "
-        f"= amount due {Decimal(rows[-1]['Balance']):,.2f} · matches statement ✓"
+        f"= ending balance {Decimal(rows[-1]['Balance']):,.2f} · matches statement ✓"
     )
 
 

@@ -39,11 +39,15 @@ RIGHT_COLUMN_X1 = 514  # right edge of the right-hand column's amounts
 
 
 def php(amount, top, x1=RIGHT_COLUMN_X1):
-    """ "-500.00 PHP" in the right-hand column."""
-    return [right_word(amount, x1, top), word("PHP", x1 + 3, top)]
+    """ "500.00 PHP", or a payment's "- 500.00 PHP", in the right-hand column."""
+    sign, number = ("-", amount[2:]) if amount.startswith("- ") else ("", amount)
+    number_word = right_word(number, x1, top)
+    sign_words = [right_word(sign, number_word["x0"] - 4, top)] if sign else []
+    return sign_words + [number_word, word("PHP", x1 + 3, top)]
 
 
 def card_row(top, transaction, posting, description, amount):
+    """A row; `amount` as printed: "2,000.00", or a payment's "- 600.00"."""
     return (
         words_from(transaction, TRANSACTION_X, top)
         + words_from(posting, POSTING_X, top)
@@ -52,27 +56,41 @@ def card_row(top, transaction, posting, description, amount):
     )
 
 
-def statement_pages(previous="-500.00", due="3,000.00", period="21 Sep 2026 to 20 Oct 2026"):
-    """A made-up statement: page 1 with every value and three rows, then a
-    page that is an image (only its page number is text)."""
+ROWS = (
+    ("20 Sep", "21 Sep", "SAMPLE STORE QUEZON CITY PH", "2,000.00"),
+    ("30 Sep", "1 Oct", "SAMPLE CAFE PH", "300.00"),
+    ("2 Oct", "5 Oct", "SAMPLE ONLINE US", "1,200.00"),
+)
+
+
+def statement_pages(
+    parts=("-500.00", "0.00", "3,500.00", "0.00"),
+    due="3,000.00",
+    period="21 Sep 2026 to 20 Oct 2026",
+    rows=ROWS,
+):
+    """A made-up statement: page 1 with every value and the rows, then a page
+    that is an image (only its page number is text).
+
+    `parts` is the right-hand column under the billing date: the previous
+    balance, then what changed it (payments, purchases, fees).
+    """
+    right_column = []
+    for number, part in enumerate(parts):
+        right_column += php(part, 146 + 24 * number)
     page1 = FakePage(
         words_from("Statement of Account", 339, 42)
         + words_from("Billing date: 20 October 2026", 391, 73)
-        + php(previous, 146)
+        + right_column
         + words_from("SAMPLE NAME", 51, 173)
-        + php("0.00", 170)
         + [word("0000", 111, 217)]
-        + php("3,500.00", 217)
         + words_from("10,000.00 PHP", 51, 260)  # the credit limit, on the left
-        + php("0.00", 267)
         + words_from("9 Nov 2026", 222, 399)
         + php(due, 399)
-        + php("500.00", 426)
+        + php("500.00", 426)  # the minimum due
         + words_from("Transactions", 34, 507)
         + words_from(period, 34, 525)
-        + card_row(572, "20 Sep", "21 Sep", "SAMPLE STORE QUEZON CITY PH", "2,000.00")
-        + card_row(590, "30 Sep", "1 Oct", "SAMPLE CAFE PH", "300.00")
-        + card_row(608, "2 Oct", "5 Oct", "SAMPLE ONLINE US", "1,200.00")
+        + [w for n, r in enumerate(rows) for w in card_row(572 + 18 * n, *r)]
         + words_from("Page 1 of5", 512, 809)
     )
     return [page1, FakePage(words_from("Page 2 of5", 512, 785))]
@@ -108,22 +126,20 @@ class ReadSummaryTest(unittest.TestCase):
             card.read_summary(group_lines(statement_pages()[0].words)),
             {
                 "billing_date": date(2026, 10, 20),
-                "previous": Decimal("-500.00"),
+                "parts": [Decimal("-500.00"), Decimal("0.00"), Decimal("3500.00"), Decimal("0.00")],
                 "due": Decimal("3000.00"),
                 "start": date(2026, 9, 21),
                 "end": date(2026, 10, 20),
             },
         )
 
-    def test_the_previous_balance_is_the_first_right_hand_amount(self):
-        # The credit limit on the left, and the amounts under the first, aren't it
-        lines = group_lines(
-            words_from("Billing date: 20 October 2026", 391, 73)
-            + words_from("10,000.00 PHP", 51, 100)
-            + php("1,234.56", 146)
-            + php("0.00", 170)
+    def test_the_parts_are_the_right_hand_amounts_above_the_due_date(self):
+        # Not the credit limit on the left, nor the minimum due under the due date
+        page = statement_pages(parts=("1,234.56", "- 1,000.00"))[0]
+        self.assertEqual(
+            card.read_summary(group_lines(page.words))["parts"],
+            [Decimal("1234.56"), Decimal("-1000.00")],
         )
-        self.assertEqual(card.read_summary(lines)["previous"], Decimal("1234.56"))
 
 
 # =============================================================================
@@ -148,46 +164,91 @@ class ParseTransactionsTest(unittest.TestCase):
         self.assertEqual(on_page.call_args_list, [mock.call(1, 2), mock.call(2, 2)])
 
     def test_a_period_across_new_year(self):
-        pages = statement_pages(period="21 Dec 2026 to 20 Jan 2027")
+        pages = statement_pages(
+            parts=("0.00", "500.00"),
+            due="500.00",
+            period="21 Dec 2026 to 20 Jan 2027",
+            rows=(
+                ("28 Dec", "29 Dec", "SAMPLE STORE", "250.00"),
+                ("3 Jan", "4 Jan", "SAMPLE CAFE", "250.00"),
+            ),
+        )
         rows = self.parse(pages)
-        # Sep and Oct are after January: the year before the period's end
-        self.assertEqual([r["Transaction date"] for r in rows][0], "20 Sep 2026")
-        [page1, _] = statement_pages(due="0.00", period="21 Dec 2026 to 20 Jan 2027")
-        page1.words = [w for w in page1.words if w["top"] < 570]
-        page1.words += card_row(572, "28 Dec", "29 Dec", "SAMPLE STORE", "250.00")
-        page1.words += card_row(590, "3 Jan", "4 Jan", "SAMPLE CAFE", "250.00")
-        rows = self.parse([page1])
         self.assertEqual([r["Transaction date"] for r in rows], ["28 Dec 2026", "3 Jan 2027"])
 
-    def test_a_payment_printed_with_a_minus_or_cr(self):
-        [page1, _] = statement_pages(previous="1,000.00", due="0.00")
-        page1.words = [w for w in page1.words if w["top"] < 570]
-        page1.words += card_row(572, "1 Oct", "1 Oct", "PAYMENT - THANK YOU", "-600.00")
-        page1.words += card_row(590, "2 Oct", "2 Oct", "PAYMENT - THANK YOU", "400.00")
-        page1.words.append(word("CR", AMOUNT_X1 + 3, 590))
-        rows = self.parse([page1])
-        self.assertEqual([r["Amount"] for r in rows], ["-600.00", "-400.00"])
+    def test_payments(self):
+        # Maya prints "- 600.00"; a leading "-" and a trailing "CR" are read too.
+        # A "-" in the description, away from the amount, stays in it.
+        pages = statement_pages(
+            parts=("1,000.00", "- 1,000.00"),
+            due="0.00",
+            rows=(
+                ("1 Oct", "1 Oct", "BILL PAYMENT - THANK YOU", "- 600.00"),
+                ("2 Oct", "2 Oct", "BILL PAYMENT", "-300.00"),
+                ("3 Oct", "3 Oct", "BILL PAYMENT", "100.00 CR"),
+            ),
+        )
+        rows = self.parse(pages)
+        self.assertEqual(
+            [(r["Description"], r["Amount"]) for r in rows],
+            [
+                ("BILL PAYMENT - THANK YOU", "-600.00"),
+                ("BILL PAYMENT", "-300.00"),
+                ("BILL PAYMENT", "-100.00"),
+            ],
+        )
         self.assertEqual(rows[-1]["Balance"], "0.00")
 
+    def test_an_overpaid_card(self):
+        # Paid more than owed: the balance is below 0 and the amount due is 0.00
+        pages = statement_pages(
+            parts=("1,000.00", "- 1,500.00", "200.00"),
+            due="0.00",
+            rows=(
+                ("1 Oct", "1 Oct", "BILL PAYMENT", "- 1,500.00"),
+                ("2 Oct", "3 Oct", "SAMPLE CAFE", "200.00"),
+            ),
+        )
+        rows = self.parse(pages)
+        self.assertEqual(rows[-1]["Balance"], "-300.00")
+        self.assertEqual(
+            card.statement_balances(rows),
+            {"starting": Decimal("-1000.00"), "ending": Decimal("300.00")},
+        )
+
     def test_rows_on_a_later_page(self):
-        pages = statement_pages(due="3,100.00")
+        pages = statement_pages(parts=("-500.00", "3,600.00"), due="3,100.00")
         pages[1].words += card_row(100, "3 Oct", "6 Oct", "SAMPLE SHOP", "100.00")
         self.assertEqual(self.parse(pages)[-1]["Description"], "SAMPLE SHOP")
 
-    def test_the_amount_due_check(self):
-        with self.assertRaisesRegex(
-            StatementError,
-            r"amount due check failed: previous balance -500.00 \+ amounts 3,500.00 "
-            "= 3,000.00 != statement amount due 2,900.00",
-        ):
-            self.parse(statement_pages(due="2,900.00"))
+    def test_checks(self):
+        cases = {
+            "rows and parts": (
+                statement_pages(parts=("-500.00", "3,400.00"), due="2,900.00"),
+                "the rows add up to 3,500.00, but the statement's summary adds up to 3,400.00",
+            ),
+            "amount due": (
+                statement_pages(due="2,900.00"),
+                r"amount due check failed: previous balance -500.00 \+ amounts 3,500.00 "
+                "= 3,000.00, so the amount due should be 3,000.00, not 2,900.00",
+            ),
+            "overpaid amount due": (
+                statement_pages(
+                    parts=("1,000.00", "- 1,500.00"),
+                    due="500.00",
+                    rows=(("1 Oct", "1 Oct", "BILL PAYMENT", "- 1,500.00"),),
+                ),
+                "= -500.00, so the amount due should be 0.00, not 500.00",
+            ),
+        }
+        for name, (pages, message) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(StatementError, message):
+                self.parse(pages)
 
     def test_a_missing_value_is_an_error(self):
         [page1, _] = statement_pages()
         cases = {
-            # The previous balance is found under the billing date. (Without the
-            # amount itself, the next one is read instead, and the amount due
-            # check fails.)
+            # The parts, previous balance first, are read under the billing date
             "previous balance": lambda w: w["top"] == 73,
             "amount due": lambda w: w["top"] == 399,
             "period": lambda w: w["top"] == 525,
@@ -213,7 +274,7 @@ class BalancesAndSummaryTest(unittest.TestCase):
     def test_summary(self):
         self.assertEqual(
             card.summary(STATEMENT_ROWS),
-            "Previous balance -500.00 + amounts 3,500.00 = amount due 3,000.00 "
+            "Previous balance -500.00 + amounts 3,500.00 = ending balance 3,000.00 "
             "· matches statement ✓",
         )
         self.assertIsNone(card.summary([]))
