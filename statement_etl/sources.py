@@ -13,6 +13,7 @@ To add another e-wallet / bank, see docs/adding-an-e-wallet.md.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 
 from statement_etl.parsers import gcash, gotyme, gotyme_goalsave
 
@@ -50,6 +51,21 @@ class OwnTransfers:
     description: str  # in this source's text_column, e.g. "Deposit account"
     other_source: str  # the other source's key, e.g. "gotyme"
     other_description: str  # in the other source's text_column, e.g. "GoalSave"
+
+
+@dataclass(frozen=True)
+class TransferFee:
+    """What a source charges for each transfer out, included in the row's amount:
+
+        TransferFee(amount=Decimal("10.00"), payee="InstaPay fee")
+
+    on gcash: a 510.00 GCash row that's a transfer out goes to YNAB as a
+    500.00 transfer, which matches the 500.00 the other bank received, and a
+    10.00 "InstaPay fee" (ynab_api/transfers.py).
+    """
+
+    amount: Decimal  # in pesos, e.g. Decimal("10.00")
+    payee: str  # the fee row's payee in YNAB, e.g. "InstaPay fee"
 
 
 @dataclass(frozen=True)
@@ -100,6 +116,10 @@ class Source:
         own_transfers - an OwnTransfers: those rows become YNAB transfers with
                         no transfer rule (transfers.find_transfers)
 
+    Optional, for a source that charges for transfers out (GCash does):
+        transfer_fee  - a TransferFee: each transfer out is split into the
+                        transfer and the fee (ynab_api/transfers.py)
+
     Optional, for Gmail auto-import (/auto-import in hosted mode):
         email_query        - Gmail search for this source's statement emails.
                              Sources without it don't appear on /auto-import.
@@ -141,6 +161,7 @@ class Source:
     balance_corrections: Callable = _no_corrections
     balance_warning: Callable = _no_warning
     own_transfers: OwnTransfers | None = None
+    transfer_fee: TransferFee | None = None
     email_query: str | None = None
     attachment_pattern: str | None = None
     password_inputs: tuple = ()
@@ -178,6 +199,7 @@ SOURCES = {
             is_correction_row=gcash.is_correction_row,
             balance_corrections=gcash.balance_corrections,
             balance_warning=gcash.balance_warning,
+            transfer_fee=TransferFee(amount=Decimal("10.00"), payee="InstaPay fee"),
             email_query=(
                 'from:noreply-transhistory@gcash.com subject:"Your GCash Transaction History" '
                 "has:attachment filename:pdf"

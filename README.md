@@ -38,6 +38,8 @@ Money you move between your own wallets (say GCash to GoTyme) shows on both stat
 
 When you upload (or auto-import) a statement, the rows a rule matches are marked "→ GoTyme" and imported as YNAB transfers, so YNAB adds the other side to the GoTyme account. Import the other statement later, in either order, and its row is found already in YNAB and not added again. Bank #2's text is optional; without it only Bank #1's statements are matched.
 
+GCash charges ₱10 for each transfer out and its statement shows it in the row, so a 510.00 transfer out of GCash goes to YNAB as two transactions: a 500.00 transfer, which matches the 500.00 the other bank received, and a 10.00 "InstaPay fee". The upload page marks such a row "→ GoTyme · 10.00 InstaPay fee".
+
 GoTyme GoalSave and GoTyme Everyday need no rule: a GoalSave "Transfer to/from Deposit account" row is always a transfer with your Everyday account (pick it in step ③, under **Transfers to/from Deposit account go to**; auto-import uses the one you mapped). The Everyday "Transfer to/from GoalSave" rows don't say which GoalSave account, so import the GoalSave statement first: each Everyday row then finds the transfer its GoalSave account made. Auto-import does GoalSave first by itself.
 
 ### Saving your YNAB token
