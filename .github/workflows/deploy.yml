@@ -21,7 +21,7 @@ jobs:
       PROJECT: ${{ vars.GCP_PROJECT_ID }}
       IMAGE: us-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/app/ph-statement-import:${{ github.sha }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # Unit tests only. The browser tests run in tests.yml; here they skip,
       # because Playwright isn't installed.
