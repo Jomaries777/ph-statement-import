@@ -22,7 +22,7 @@ jobs:
       # Made up, like the docker run example in the README
       APP_CONFIG: '{"FLASK_SECRET_KEY": "local-test", "YNAB_CLIENT_SECRET": "made-up-client-secret"}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the image
         run: docker build -t "$IMAGE" .
